@@ -343,6 +343,23 @@ go test ./... && go vet ./...
 cd web && npm run typecheck
 ```
 
+推送后 GitHub Actions 会跑同样的检查，外加 `gofmt` 与一次前端试构建。
+
+### 提交信息
+
+用 [Conventional Commits](https://www.conventionalcommits.org/)：类型前缀用英文，
+描述用中文。
+
+```
+feat(billing): 接入 OCI Usage API
+fix(billing): 补服务名翻译与截断
+ci: 多架构镜像推送到 GHCR
+```
+
+主题行只说**做了什么**，不带解释性从句——GitHub Actions 拿它当运行标题，
+拖着「，服务器不必再本地构建」这种后半句会很难读。原因、权衡、踩过的坑
+写进正文，正文可以尽情写长。
+
 > 若你的 `go env` 把 `GOOS` 设成了 `linux`（便于直接产出部署二进制），
 > 在 Windows 上跑测试需临时覆盖目标平台：
 >
