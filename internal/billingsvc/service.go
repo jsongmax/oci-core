@@ -464,18 +464,29 @@ func serviceName(s string) string {
 // 键一律写成全大写下划线形式，由 serviceName 负责把 Oracle 的实际写法
 // （"Block Storage"）归一化过来。
 var serviceLabels = map[string]string{
-	"COMPUTE":              "计算",
-	"BLOCK_STORAGE":        "块存储",
-	"OBJECT_STORAGE":       "对象存储",
-	"VCN":                  "网络",
-	"NETWORK":              "网络",
+	"COMPUTE":               "计算",
+	"BLOCK_STORAGE":         "块存储",
+	"OBJECT_STORAGE":        "对象存储",
+	"ARCHIVE_STORAGE":       "归档存储",
+	"FILE_STORAGE":          "文件存储",
+	"VCN":                   "网络",
+	"NETWORK":               "网络",
+	"VIRTUAL_CLOUD_NETWORK": "网络",
+	// 出网流量单独计费，超出免费额度后往往是免费号账单上最大的一项，
+	// 不该混进「网络」里看不见。
+	"DATA_TRANSFER":        "数据传输",
 	"LOAD_BALANCER":        "负载均衡",
 	"DATABASE":             "数据库",
 	"AUTONOMOUS_DATABASE":  "自治数据库",
 	"MONITORING":           "监控",
+	"TELEMETRY":            "监控",
+	"LOGGING":              "日志",
 	"NOTIFICATION_SERVICE": "通知",
+	"NOTIFICATIONS":        "通知",
 	"VAULT":                "密钥管理",
-	"FILE_STORAGE":         "文件存储",
+	"KEY_MANAGEMENT":       "密钥管理",
+	"IDENTITY":             "身份",
+	"RESOURCE_MANAGER":     "资源管理器",
 }
 
 // classify 把 OCI 错误映射成账单状态。

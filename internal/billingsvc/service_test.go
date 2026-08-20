@@ -224,6 +224,14 @@ func TestServiceNameFallsBackToRawIdentifier(t *testing.T) {
 	if got := serviceName("Block Storage"); got != "块存储" {
 		t.Errorf("带空格的服务名应能匹配，实际 %q", got)
 	}
+	// 这两个是真实账单里实际出现过、而第一版表里漏掉的。
+	// 表写的是 VCN，Oracle 返回的却是 Virtual Cloud Network。
+	if got := serviceName("Virtual Cloud Network"); got != "网络" {
+		t.Errorf("Virtual Cloud Network 应翻成网络，实际 %q", got)
+	}
+	if got := serviceName("Telemetry"); got != "监控" {
+		t.Errorf("Telemetry 应翻成监控，实际 %q", got)
+	}
 	if got := serviceName("SOME_NEW_ORACLE_SERVICE"); got != "SOME_NEW_ORACLE_SERVICE" {
 		t.Errorf("未知服务应原样显示，实际 %q", got)
 	}

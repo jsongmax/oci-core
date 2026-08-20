@@ -413,7 +413,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             <div v-if="hasCost && serviceRows.length" class="split">
               <p class="split__head t-2xs dim-3">按服务</p>
               <div v-for="b in serviceRows" :key="b.key" class="brow">
-                <span class="t-xs brow__k">{{ b.key }}</span>
+                <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
                   <span class="brow__fill" :style="{ width: share(serviceRows, b.amount) + '%' }" />
                 </span>
@@ -424,7 +424,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             <div v-if="hasCost && regionRows.length" class="split">
               <p class="split__head t-2xs dim-3">按区域</p>
               <div v-for="b in regionRows" :key="b.key" class="brow">
-                <span class="mono t-xs brow__k">{{ b.key }}</span>
+                <span class="mono t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
                   <span class="brow__fill" :style="{ width: share(regionRows, b.amount) + '%' }" />
                 </span>
@@ -435,7 +435,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             <div v-if="usageRows.length" class="split" :class="{ 'split--wide': !hasCost }">
               <p class="split__head t-2xs dim-3">用量 · 按服务</p>
               <div v-for="b in usageRows" :key="b.key" class="brow">
-                <span class="t-xs brow__k">{{ b.key }}</span>
+                <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
                   <span class="brow__fill brow__fill--usage"
                         :style="{ width: shareQty(usageRows, b.quantity) + '%' }" />
@@ -534,18 +534,27 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
   display: flex; gap: 28px; flex-wrap: wrap;
   padding: 16px; border-top: 1px solid var(--border-subtle); margin-top: 8px;
 }
-.split { flex: 1 1 260px; min-width: 260px; }
+/* 260px 装不下「名字 + 条 + 数值」三段：名字一加宽，条就被挤成零宽。
+   放到 300px，下面三段的宽度之和才留得出条的位置。 */
+.split { flex: 1 1 300px; min-width: 300px; }
 .split--wide { flex: 1 1 100%; }
 .split__head { margin: 0 0 10px; }
 .splits__none { margin: 0; line-height: 1.7; }
 
 .brow { display: flex; align-items: center; gap: 10px; height: 26px; }
+/* 定宽而不是按内容伸缩：各行左边界对齐才扫得动。
+   放宽到 124px 能容下「负载均衡」「资源管理器」这类四五个字的译名，
+   以及翻译表没覆盖到的中等长度英文原名。
+   再长的仍会截断，所以每一行都带 title，悬停能看全名。 */
 .brow__k {
-  width: 96px; flex: 0 0 auto;
+  width: 124px; flex: 0 0 auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .brow__track {
-  flex: 1 1 auto; height: 6px; border-radius: var(--radius-full);
+  /* min-width 是保命的：没有它，窄容器里条会被两侧挤成 0 宽度，
+     整列看起来像"数据没加载出来"。 */
+  flex: 1 1 auto; min-width: 40px;
+  height: 6px; border-radius: var(--radius-full);
   background: var(--bg-inset); overflow: hidden;
 }
 .brow__fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-full); }
