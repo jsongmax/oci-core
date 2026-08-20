@@ -74,6 +74,30 @@
 
 <img src="docs/screenshots/instances.png" alt="实例列表" width="100%">
 
+### 实例详情
+
+点开任意一台机器，右侧抽屉里是它的全部操作面。
+
+**存储** —— 引导卷扩容与 VPU 调整都是滑块，旁边实时算出预估 IOPS 和吞吐。
+改配置时 OCPU 与内存联动，并直说 Oracle 会在应用变更时重启实例一次——
+这句话不该等到点下去之后才出现。
+
+<img src="docs/screenshots/instance-storage.png" alt="实例详情 · 存储与配置" width="100%">
+
+**救援模式** —— 机器起不来时把系统盘卸下来，挂到另一台能 SSH 的机器上改文件，
+再挂回去。补 SSH 公钥、修坏掉的 fstab 都靠它。
+
+<img src="docs/screenshots/instance-rescue.png" alt="实例详情 · 救援模式" width="100%">
+
+**监控** —— 出入站流量与 CPU 使用率，粒度随时间跨度自适应。
+
+<img src="docs/screenshots/instance-metrics.png" alt="实例详情 · 监控" width="100%">
+
+**串行控制台** —— 不依赖网络配置，SSH 连不上时用它排障。这里明说了两件容易踩的事：
+Oracle 只接受 RSA 公钥（不支持 ed25519），以及本工具不会代管你的私钥。
+
+<img src="docs/screenshots/instance-console.png" alt="实例详情 · 串行控制台" width="100%">
+
 ### 容量监控
 
 调 Oracle 官方的只读容量报告接口，查某个规格在各可用域此刻有没有货。

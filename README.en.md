@@ -77,6 +77,34 @@ is open in the shot below, with the public IP column switched off.
 
 <img src="docs/screenshots/instances.png" alt="Instance list" width="100%">
 
+### Instance detail
+
+Open any instance and the right-hand drawer holds everything you can do to it.
+
+**Storage** — boot volume resize and VPU tuning are sliders with live estimates of IOPS
+and throughput. Reshaping links OCPU and memory, and states plainly that Oracle will
+restart the instance once when the change is applied — that sentence should not wait
+until after you click.
+
+<img src="docs/screenshots/instance-storage.png" alt="Instance detail — storage and reshape" width="100%">
+
+**Rescue mode** — when a machine will not boot, detach its boot volume, mount it on
+another instance you can still SSH into, fix the files, and attach it back. This is how
+you restore a lost SSH key or repair a broken fstab.
+
+<img src="docs/screenshots/instance-rescue.png" alt="Instance detail — rescue mode" width="100%">
+
+**Metrics** — inbound and outbound traffic plus CPU utilization, with resolution that
+adapts to the selected time span.
+
+<img src="docs/screenshots/instance-metrics.png" alt="Instance detail — metrics" width="100%">
+
+**Serial console** — independent of network configuration, for when SSH will not connect.
+Two easily-missed facts are stated up front: Oracle accepts RSA keys only (not ed25519),
+and this tool never holds your private key.
+
+<img src="docs/screenshots/instance-console.png" alt="Instance detail — serial console" width="100%">
+
 ### Capacity monitor
 
 Queries Oracle's official read-only capacity report to see whether a shape has capacity
