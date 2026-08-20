@@ -47,6 +47,18 @@ jobs:
             exit 1
           fi
 
+      # gofmt 不会自己失败，它只是打印有问题的文件名——必须自己判空。
+      # 直接 `gofmt -l . && echo ok` 是无效的门槛：有问题时它照样退 0。
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal)
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件未经 gofmt 格式化："
+            echo "$unformatted"
+            gofmt -d cmd internal
+            exit 1
+          fi
+
       - name: go vet
         run: go vet ./...
 
