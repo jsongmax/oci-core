@@ -101,7 +101,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # 覆盖掉仓库里那份，确保打进二进制的是本次构建的前端。
+      # 必须先清空再解压。
+      #
+      # download-artifact 是往目标目录里**解压**，不会清理已有内容，而 checkout
+      # 之后 internal/web/dist 里已经躺着仓库提交的那份产物了。Vite 用内容哈希
+      # 命名，本地构建（Windows，CRLF）与 CI 构建（Linux，.gitattributes 归一成
+      # LF）的哈希对不上，于是两套资源并存，go:embed all:dist 会把它们全打进去——
+      # 二进制平白多背一份完整前端，而且"在 CI 重新构建以避免陈旧产物"这个用意
+      # 也被架空了：旧文件根本没被替换掉，只是没人引用。
+      - name: 清空 embed 目录
+        run: rm -rf internal/web/dist && mkdir -p internal/web/dist
+
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
