@@ -589,3 +589,73 @@ export interface CapacityProbeInput {
   ocpus?: number
   memoryGb?: number
 }
+
+/* ---------- 账单 ---------- */
+
+/**
+ * 账单状态。
+ *
+ * free 与 no_permission 都不是错误，但含义完全相反：前者是"确实没花钱"，
+ * 后者是"不知道花没花钱"。合成一个状态会让用户误以为账号免费。
+ */
+export type BillingStatusDTO = 'ok' | 'free' | 'no_permission' | 'disabled' | 'error'
+
+export interface BillingSummaryDTO {
+  accountId: string
+  status: BillingStatusDTO
+  /** Oracle 返回的币种。免费号常常为空 */
+  currency: string
+  thisMonth: number
+  lastMonth: number
+  region: string
+  error?: string
+  fetchedAt: string
+}
+
+/** 按币种分开的跨账号合计。不同币种绝不相加 */
+export interface BillingCurrencyTotalDTO {
+  currency: string
+  thisMonth: number
+  lastMonth: number
+  accounts: number
+}
+
+export interface BillingListDTO {
+  summaries: BillingSummaryDTO[]
+  totals: BillingCurrencyTotalDTO[]
+  countedAccounts: number
+  noPermissionCount: number
+  notice: string
+}
+
+/** 按维度（服务 / 区域）分组的一项 */
+export interface BillingBucketDTO {
+  key: string
+  amount: number
+  /** 用量视角的数字，免费号只有这一半有内容 */
+  quantity: number
+  unit: string
+}
+
+export interface BillingDayDTO {
+  /** UTC 日期，YYYY-MM-DD */
+  date: string
+  amount: number
+}
+
+export interface BillingDetailDTO {
+  accountId: string
+  status: BillingStatusDTO
+  currency: string
+  region: string
+  start: string
+  end: string
+  days: number
+  total: number
+  series: BillingDayDTO[] | null
+  services: BillingBucketDTO[] | null
+  regions: BillingBucketDTO[] | null
+  usage: BillingBucketDTO[] | null
+  error?: string
+  fetchedAt: string
+}

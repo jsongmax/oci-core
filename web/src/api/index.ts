@@ -374,3 +374,17 @@ export const settings = {
   update: (patch: Partial<D.SettingsDTO>) =>
     http.patch<{ settings: D.SettingsDTO; notice: string }>('/api/settings', patch)
 }
+
+/* ---------- 账单 ---------- */
+
+export const billing = {
+  list: (refresh = false) =>
+    http.get<D.BillingListDTO>('/api/billing', {
+      query: { refresh: refresh ? 'true' : undefined }
+    }),
+
+  detail: (accountId: string, days = 30, refresh = false) =>
+    http.get<D.BillingDetailDTO>(`/api/billing/${accountId}`, {
+      query: { days, refresh: refresh ? 'true' : undefined }
+    })
+}

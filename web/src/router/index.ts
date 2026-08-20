@@ -14,6 +14,7 @@ const router = createRouter({
     { path: '/hunt', name: 'hunt', component: () => import('@/views/HuntView.vue'), meta: { title: '容量守候' } },
     { path: '/capacity', name: 'capacity', component: () => import('@/views/CapacityView.vue'), meta: { title: '容量监控' } },
     { path: '/storage', name: 'storage', component: () => import('@/views/StorageView.vue'), meta: { title: '存储' } },
+    { path: '/billing', name: 'billing', component: () => import('@/views/BillingView.vue'), meta: { title: '账单' } },
     { path: '/notifications', name: 'notifications', component: () => import('@/views/NotificationsView.vue'), meta: { title: '通知' } },
     { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '设置' } },
     // 兜底。移除移动端路由（/m/*）后，旧书签会匹配不到任何路由，

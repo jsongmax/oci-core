@@ -28,6 +28,8 @@ var (
 	ServiceMonitoring = Service{Host: "telemetry", Version: "20180401"}
 	// 订阅信息挂在 organizations 服务下,不是 identity。
 	ServiceOrganizations = Service{Host: "organizations", Version: "20230401", OCIInfix: true}
+	// 用量与成本。数据是租户全局的,但请求仍要发往一个已订阅的区域。
+	ServiceUsage = Service{Host: "usageapi", Version: "20200107", OCIInfix: true}
 )
 
 // realmOf 返回区域所属 realm 的域名后缀。绝大多数商业区域属于 OC1。

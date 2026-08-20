@@ -14,6 +14,7 @@ const items = computed(() => [
   { to: '/network', icon: '⌗', label: '网络' },
   { to: '/storage', icon: '◱', label: '存储' },
   { to: '/capacity', icon: '◇', label: '容量' },
+  { to: '/billing', icon: '¤', label: '账单' },
   { to: '/hunt', icon: '◈', label: '守候' },
   { to: '/notifications', icon: '✎', label: '通知' },
   { to: '/settings', icon: '⚙', label: '设置' }

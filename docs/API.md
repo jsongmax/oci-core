@@ -437,6 +437,77 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 ---
 
+## 账单
+
+用量与成本，数据来自 OCI Usage API（`RequestSummarizedUsages`）。**只读接口，查询本身不产生费用。**
+
+需要一项本工具其余功能都用不到的权限：
+
+```
+Allow group <你的组> to read usage-report in tenancy
+```
+
+已有 `read all-resources in tenancy` 的账号无需再加，那条已覆盖。
+缺这项权限时接口**不报错**，而是把该账号的 `status` 置为 `no_permission`。
+
+**`GET /api/billing`** — `?accountId=` 限定单账号，`?refresh=true` 跳过缓存（默认缓存 30 分钟）
+
+```json
+{ "summaries": [
+    { "accountId": "a3f1c2d4", "status": "ok", "currency": "USD",
+      "thisMonth": 6.4231, "lastMonth": 4.1, "region": "ap-tokyo-1", "fetchedAt": "…" },
+    { "accountId": "b7e2…", "status": "free", "currency": "",
+      "thisMonth": 0, "lastMonth": 0, "region": "ap-osaka-1", "fetchedAt": "…" },
+    { "accountId": "c9d1…", "status": "no_permission", "region": "eu-frankfurt-1", "fetchedAt": "…" }
+  ],
+  "totals": [{ "currency": "USD", "thisMonth": 6.4265, "lastMonth": 4.1, "accounts": 3 }],
+  "countedAccounts": 3, "noPermissionCount": 1, "notice": "…" }
+```
+
+`status` 取值：
+
+| 值 | 含义 |
+|---|---|
+| `ok` | 查到费用，金额大于零 |
+| `free` | 查到数据但金额为零——免费额度内，**不是错误** |
+| `no_permission` | 缺 `read usage-report` 权限，**不是账号故障** |
+| `disabled` | 账号在本面板里被停用 |
+| `error` | 其余失败，`error` 字段给原因 |
+
+> **`free` 与 `no_permission` 必须分开显示。** 前者是"确实没花钱"，
+> 后者是"不知道花没花钱"，含义正好相反。合成一个状态会让用户误以为账号免费。
+
+> **`totals` 按币种分组，不给单一总数。** 不同账号可能结算在不同币种，
+> 把 USD 和 CNY 加成一个数字是错的，而且错得看不出来。只有 `ok` 与 `free`
+> 的账号计入合计——把查不到的账号计成 0 会让总数看着像"这几个账号没花钱"。
+
+**`GET /api/billing/{accountId}`** — `?days=` 天数（默认 30，上限 180），`?refresh=true` 跳过缓存
+
+```json
+{ "accountId": "a3f1c2d4", "status": "ok", "currency": "USD", "region": "ap-tokyo-1",
+  "start": "2026-07-22T00:00:00Z", "end": "2026-08-21T00:00:00Z", "days": 30,
+  "total": 8.7104,
+  "series":   [{ "date": "2026-07-22", "amount": 0.4312 }, { "date": "2026-07-23", "amount": 0 }],
+  "services": [{ "key": "计算", "amount": 6.0973, "quantity": 0, "unit": "" }],
+  "regions":  [{ "key": "ap-tokyo-1", "amount": 6.9683, "quantity": 0, "unit": "" }],
+  "usage":    [{ "key": "计算", "amount": 0, "quantity": 2880, "unit": "OCPU Hours" }],
+  "fetchedAt": "…" }
+```
+
+`series` 已补齐没有用量的日子（`amount: 0`）。Oracle 只返回有用量的天，
+不补齐会把 8 月 3 日和 8 月 9 日排成相邻两根柱子，让断续的曲线看起来是连续的。
+
+`usage` 是同一区间的**用量**视角（`queryType=USAGE`），金额恒为零的免费账号
+只有这一块有内容。用量为零的服务已被过滤——免费号的响应里能有几十条零用量记录。
+
+> **数据有延迟。** Oracle 每隔几小时结算一次，最新一天通常不完整。
+> 这个接口给不出"实时消费"，界面上不要那样描述。
+
+> **发票与付款记录不在这里。** 那部分只在 Oracle 官网的账户中心，
+> 走的不是 OCI 的签名体系，没有可用的接口。
+
+---
+
 ## 通知与设置
 
 | 方法 | 路径 |

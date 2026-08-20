@@ -45,7 +45,7 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 - **No official SDK** — HTTP Signature is implemented from scratch in ~100 lines, keeping the dependency tree tiny
 - **Your data stays local** — SQLite plus the filesystem; nothing is reported to any third party
 
-> **Out of scope**: cost analysis, multi-user RBAC.
+> **Out of scope**: invoices and payment records (Oracle exposes no API for them), multi-user RBAC.
 
 ---
 
@@ -57,6 +57,7 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 | **Instances** | Cross-account aggregated list (cached), start / stop / restart, reshape, rename, notes, launch wizard, bulk actions, terminate, list & card views, configurable columns, live status over SSE |
 | **Networking** | VCN / subnet / security rule editing, automatic network provisioning, public IP replacement, IPv6 enablement, grouped by account |
 | **Storage** | Boot and block volume resize, VPU tuning, attach / detach, including **rescue mode** (detach boot volume → mount on another instance → fix files → reattach) |
+| **Billing** | Per-account cost for this month and last, daily trend, breakdown by service and region; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
 | **Capacity monitor** | Calls Oracle's official **read-only** capacity report API to watch when a shape becomes available; notifies on state change |
 | **Capacity hunter** | Repeatedly attempts to launch an instance until it succeeds. Checks capacity first by default and skips the round when there is none |
 | **Metrics** | CPU / memory / bidirectional traffic time series, resolution adapts to the time span |
@@ -122,6 +123,27 @@ currently in rotation, why the last attempt failed, and a countdown to the next 
 the task runs unattended, and without those numbers it is a black box.
 
 <img src="docs/screenshots/hunt.png" alt="Capacity hunter" width="100%">
+
+### Billing
+
+Per-account cost for this month and last, a daily trend, and a breakdown by service and
+region. Data comes from Oracle's Usage API — read-only; the query itself costs nothing.
+
+The reality this page is built around: most users of this tool run free-tier accounts where
+the amount is permanently zero. A screen full of `0.00` looks exactly like a broken feature,
+so when the cost is zero the page shows **consumption** instead — OCPU hours, GB months.
+That is the number a free-tier user should actually be watching.
+
+"Within free tier" and "permission missing" are separate states and must stay that way: the
+first means "nothing was spent", the second means "we cannot tell whether anything was
+spent". When the permission is missing the page hands you the exact policy to copy rather
+than a generic "query failed" — that policy is the only thing you need to do.
+
+Cross-account totals are grouped by currency rather than summed into one number, and
+accounts that could not be read are excluded from the total — counting them as 0 would make
+the total look like "these accounts spent nothing".
+
+<img src="docs/screenshots/billing.png" alt="Billing" width="100%">
 
 ### Notifications and settings
 
@@ -323,6 +345,8 @@ This panel holds full control over **all** of your Oracle tenancies.
    policies it needs. Do not use a key from the Administrators group.
    **This single step matters more than everything else combined.**
    The account detail page has a "permission self-check" tab with copy-pasteable policy examples.
+   The billing page additionally needs `read usage-report in tenancy` — **leave it out if you
+   would rather the tool could not read your bill**; nothing else is affected.
 2. **It listens on loopback by default.** Put a TLS reverse proxy in front for remote access.
 3. **Back up `master.key`.** It is the only key that decrypts every stored OCI private key.
    Lose it and every account must be re-entered. It must never enter version control
@@ -357,6 +381,7 @@ internal/
   netsvc            network provisioning, IP replacement, IPv6, security rule templates
   huntsvc           capacity hunter scheduler: backoff, AD rotation, duplicate-launch guard
   capacitysvc       capacity monitor polling
+  billingsvc        usage and cost aggregation (Usage API)
   notify            notification channel dispatch
   httpapi           REST layer
   web               embedded frontend assets
@@ -421,6 +446,12 @@ docs/
   reflects the host pool's overall state, not the allocation outcome at that instant.
 - The capacity monitor can only query **subscribed regions**. Always Free accounts can only
   launch in their home region and generally cannot subscribe to a second one.
+- Billing data is settled by Oracle every few hours and the most recent day is usually
+  incomplete, so the page **cannot show real-time spend**.
+- Billing needs an extra `read usage-report` permission. Without it the page shows
+  "permission missing" along with a copy-pasteable policy — that is not an account failure.
+- **Invoices and payment records are not available.** They live only in Oracle's account
+  centre, which does not use the OCI signing scheme and exposes no usable API.
 - Backup and snapshot policies are not implemented.
 
 ---

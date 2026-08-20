@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/billingsvc"
 	"ocicore/internal/capacitysvc"
 	"ocicore/internal/config"
 	"ocicore/internal/huntsvc"
@@ -54,6 +55,7 @@ type Server struct {
 	notifier  *notify.Dispatcher
 	hunter    *huntsvc.Service
 	capacity  *capacitysvc.Service
+	billing   *billingsvc.Service
 	started   time.Time
 }
 
@@ -82,6 +84,8 @@ func New(deps Deps) *Server {
 	s.capacity = capacitysvc.New(capacitysvc.Deps{
 		Store: s.st, Conns: s.conns, OnChange: s.onCapacityChange,
 	})
+	// 账单只是按需查询，没有后台轮询，所以构造得比其余 service 简单。
+	s.billing = billingsvc.New(billingsvc.Deps{Store: s.st, Conns: s.conns})
 	s.hunter = huntsvc.New(huntsvc.Deps{
 		Store:    s.st,
 		Conns:    s.conns,
@@ -187,6 +191,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/capacity", s.guard(s.requireAuth(s.handleCreateCapacityWatch)))
 	s.mux.HandleFunc("POST /api/capacity/{id}/{action}", s.guard(s.requireAuth(s.handleSetCapacityWatchEnabled)))
 	s.mux.HandleFunc("DELETE /api/capacity/{id}", s.guard(s.requireAuth(s.handleDeleteCapacityWatch)))
+
+	// 账单。纯只读查询，不走 guard——它不改变任何东西。
+	s.mux.HandleFunc("GET /api/billing", s.requireAuth(s.handleBilling))
+	s.mux.HandleFunc("GET /api/billing/{id}", s.requireAuth(s.handleBillingDetail))
 
 	// 配额与监控。
 	s.mux.HandleFunc("GET /api/quota", s.requireAuth(s.handleQuota))
