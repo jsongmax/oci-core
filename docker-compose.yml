@@ -10,7 +10,7 @@ services:
     build:
       context: .
       args:
-        VERSION: "0.2.2"
+        VERSION: "0.2.3"
     container_name: ocicore
     restart: unless-stopped
 
