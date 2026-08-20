@@ -1,0 +1,52 @@
+services:
+  ocicore:
+    build:
+      context: .
+      args:
+        VERSION: "0.1.0"
+    image: ocicore:latest
+    container_name: ocicore
+    restart: unless-stopped
+
+    # 只绑到宿主机回环。
+    #
+    # 这个面板持有你所有甲骨文账号的私钥，直接 "8080:8080" 就等于把它
+    # 挂到公网的 8080 上——任何人都能看到登录页并开始撞库。
+    # 正确做法是前面放一个带 TLS 的反向代理，或者本机 SSH 隧道过去：
+    #     ssh -L 8080:127.0.0.1:8080 你的服务器
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      OCICORE_ADDR: "0.0.0.0:8080"
+      OCICORE_DATA_DIR: "/app/data"
+      TZ: "Asia/Shanghai"
+      # 会话有效期，每次请求滑动续期。
+      OCICORE_SESSION_TTL: "12h"
+      # 只有确实在反向代理之后才开。开着而没有代理，等于让任何人
+      # 通过伪造 X-Forwarded-For 绕过登录失败限流。
+      # OCICORE_TRUST_PROXY: "true"
+      #
+      # 主密钥也可以由外部注入，此时数据目录里不再落 master.key。
+      # 适合用 docker secret / 云上的密钥管理来托管。
+      # OCICORE_MASTER_KEY: ""
+
+    volumes:
+      # 命名卷里有 master.key 与加密后的 OCI 私钥。
+      # 删掉这个卷 = 所有已保存的账号私钥永久解不开，只能重新添加。
+      # 备份时连 master.key 与数据库一起备，缺一个都还原不了。
+      - ocicore-data:/app/data
+
+    security_opt:
+      - no-new-privileges:true
+
+    # 只读根文件系统。理论上可行——程序只往数据卷和 stdout 写，
+    # SQLite 的临时文件走 TMPDIR（下面的 tmpfs）——但我没有在真实
+    # Docker 环境里验证过，所以默认不开。
+    # 自己确认容器能正常启动、能添加账号之后再打开：
+    # read_only: true
+    # tmpfs:
+    #   - /tmp
+
+volumes:
+  ocicore-data:

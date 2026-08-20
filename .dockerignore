@@ -1,0 +1,25 @@
+# 构建上下文里绝对不能出现的东西
+#
+# data/ 里有 master.key 与加密后的 OCI 私钥。它一旦被 COPY 进镜像，
+# 就会随镜像分发出去——推到任何 registry 都等于把所有账号的私钥公开了。
+# .gitignore 里已经挡过一次，这里必须再挡一次：两者互不覆盖。
+data/
+*.key
+*.pem
+*.db
+*.db-shm
+*.db-wal
+
+# 依赖与产物在镜像里重新构建，带进去只会拖慢上下文传输，
+# 还可能让宿主机上的 node_modules（含平台相关的二进制）污染构建。
+node_modules/
+web/node_modules/
+web/dist/
+internal/web/dist/
+
+.git/
+.github/
+*.exe
+Dockerfile
+docker-compose.yml
+.dockerignore

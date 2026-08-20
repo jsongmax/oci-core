@@ -1,0 +1,30 @@
+# 仓库内统一用 LF。部署目标是 Linux，行尾不一致会让 diff 充满噪音，
+# 也会让 shell 脚本在服务器上因为 \r 而诡异地失败。
+* text=auto eol=lf
+
+# 明确按文本处理（避免被启发式误判成二进制）
+*.go      text eol=lf
+*.ts      text eol=lf
+*.vue     text eol=lf
+*.js      text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.sql     text eol=lf
+*.mod     text eol=lf
+*.sum     text eol=lf
+
+# 二进制，不做任何转换
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.woff    binary
+*.woff2   binary
+
+# 前端构建产物：diff 没有阅读价值，折叠起来
+internal/web/dist/** linguist-generated=true -diff
+web/package-lock.json -diff

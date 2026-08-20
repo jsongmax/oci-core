@@ -1,0 +1,136 @@
+/* §5 设计令牌 —— 唯一色值来源，组件内禁止硬编码色值 */
+:root,
+:root[data-theme='dark'] {
+  --bg-base: #0a0b0f;
+  --bg-surface: #12141a;
+  --bg-elevated: #1a1d26;
+  --bg-inset: #08090c;
+  --bg-hover: #1f2330;
+
+  --border-subtle: #1e2129;
+  --border-default: #2a2e3a;
+  --border-strong: #3a3f4f;
+
+  --text-primary: #e8eaf0;
+  --text-secondary: #9aa0ae;
+  --text-tertiary: #5f6674;
+
+  --accent: #22d3ee;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+  --transition-color: var(--accent);
+  --neutral: #6b7280;
+
+  --accent-soft: rgba(34, 211, 238, 0.1);
+  --success-soft: rgba(16, 185, 129, 0.12);
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --danger-soft: rgba(239, 68, 68, 0.1);
+  --info-soft: rgba(59, 130, 246, 0.12);
+
+  --acct-1: #fb7185;
+  --acct-2: #fbbf24;
+  --acct-3: #a3e635;
+  --acct-4: #34d399;
+  --acct-5: #60a5fa;
+  --acct-6: #a78bfa;
+  --acct-7: #e879f9;
+  --acct-8: #94a3b8;
+
+  --glass-bg: rgba(18, 20, 26, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --scrim: rgba(4, 5, 8, 0.62);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-4: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --glow-accent: 0 0 0 1px rgba(34, 211, 238, 0.25), 0 0 24px rgba(34, 211, 238, 0.15);
+  --glow-success: 0 0 0 1px rgba(16, 185, 129, 0.3), 0 0 32px rgba(16, 185, 129, 0.2);
+  --glow-danger: 0 0 0 1px rgba(239, 68, 68, 0.3), 0 0 24px rgba(239, 68, 68, 0.18);
+}
+
+:root[data-theme='light'] {
+  --bg-base: #f7f8fa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #edeff3;
+  --bg-hover: #f0f2f6;
+
+  --border-subtle: #e8ebf0;
+  --border-default: #d8dce4;
+  --border-strong: #b8bfcc;
+
+  --text-primary: #0f1419;
+  --text-secondary: #5a6472;
+  --text-tertiary: #8a93a3;
+
+  --accent: #0891b2;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #2563eb;
+  --neutral: #9ca3af;
+
+  --accent-soft: rgba(8, 145, 178, 0.09);
+  --success-soft: rgba(5, 150, 105, 0.1);
+  --warning-soft: rgba(217, 119, 6, 0.1);
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --info-soft: rgba(37, 99, 235, 0.1);
+
+  --acct-1: #e11d48;
+  --acct-2: #d97706;
+  --acct-3: #65a30d;
+  --acct-4: #059669;
+  --acct-5: #2563eb;
+  --acct-6: #7c3aed;
+  --acct-7: #c026d3;
+  --acct-8: #475569;
+
+  --glass-bg: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(15, 20, 25, 0.06);
+  --scrim: rgba(15, 20, 25, 0.28);
+
+  --shadow-1: 0 1px 2px rgba(15, 20, 25, 0.06);
+  --shadow-2: 0 4px 12px rgba(15, 20, 25, 0.08);
+  --shadow-3: 0 12px 32px rgba(15, 20, 25, 0.1);
+  --shadow-4: 0 24px 64px rgba(15, 20, 25, 0.14);
+}
+
+/* 可选强调色（§5.3），设置 → 外观中切换 */
+:root[data-accent='sky'] { --accent: #38bdf8; }
+:root[data-accent='emerald'] { --accent: #34d399; }
+:root[data-accent='violet'] { --accent: #a78bfa; }
+
+:root {
+  /* 全部走系统字体，不引任何外部字体（理由见 index.html）。
+     Inter / JetBrains Mono 若本机装了会优先用上，没装则依次回落。 */
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas,
+    'DejaVu Sans Mono', monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  --sidebar-w: 240px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --drawer-narrow: 520px;
+  --drawer-wide: 720px;
+  --content-max: 1600px;
+
+  --dur-instant: 100ms;
+  --dur-fast: 160ms;
+  --dur-normal: 240ms;
+  --dur-slow: 400ms;
+  --dur-deliberate: 700ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}

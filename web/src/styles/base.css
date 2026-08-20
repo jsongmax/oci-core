@@ -1,0 +1,167 @@
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: color-mix(in srgb, var(--accent) 70%, white); }
+button, input, textarea, select { font-family: inherit; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: var(--radius-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.mono { font-family: var(--font-mono); }
+.t-2xs { font-size: 11px; line-height: 16px; }
+.t-xs { font-size: 12px; line-height: 18px; }
+.t-sm { font-size: 13px; line-height: 20px; }
+.t-base { font-size: 14px; line-height: 22px; }
+.t-lg { font-size: 16px; line-height: 24px; }
+.t-xl { font-size: 20px; line-height: 28px; }
+.t-2xl { font-size: 24px; line-height: 32px; }
+.t-3xl { font-size: 32px; line-height: 40px; }
+.t-4xl { font-size: 40px; line-height: 48px; }
+.dim { color: var(--text-secondary); }
+.dim-3 { color: var(--text-tertiary); }
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+.card-pad { padding: 20px; }
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid var(--glass-border);
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  flex-shrink: 0;
+  height: 36px; padding: 0 16px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-default); background: transparent;
+  color: var(--text-primary); font-size: 14px; font-weight: 500; cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
+}
+.btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--bg-base); font-weight: 600; }
+.btn--primary:hover { background: color-mix(in srgb, var(--accent) 85%, white); }
+.btn--danger { border-color: var(--danger); color: var(--danger); }
+.btn--danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+.btn--warning { border-color: var(--warning); color: var(--warning); }
+.btn--ghost { border-color: transparent; color: var(--text-secondary); }
+.btn--sm { height: 30px; padding: 0 12px; font-size: 12px; }
+.btn[disabled], .btn.is-disabled { opacity: 0.45; cursor: not-allowed; }
+
+.icon-btn {
+  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+  background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer;
+}
+.icon-btn:hover { background: var(--bg-inset); border-color: var(--border-default); }
+.icon-btn[disabled] { color: var(--text-tertiary); cursor: not-allowed; }
+
+.input, .textarea {
+  /* flex-shrink: 0 —— 这些控件有固定高度，在 flex 列里被压缩只会让内容溢出。
+     宁可让容器滚动，也不要把输入框挤成一条缝。 */
+  flex-shrink: 0;
+  height: 36px; padding: 0 12px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-default); background: var(--bg-inset);
+  color: var(--text-primary); font-size: 13px; outline: none;
+  transition: border-color var(--dur-fast);
+}
+.textarea { height: auto; padding: 10px 12px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; resize: none; }
+.input:focus, .textarea:focus { border-color: var(--border-strong); box-shadow: var(--glow-accent); }
+
+/* 原生 <select> 的箭头、内边距与聚焦环全部由浏览器决定，和满屏自绘控件
+   放在一起格外扎眼——尤其在深色主题下，系统下拉是浅色的。
+   压掉默认外观，用 background-image 画一个箭头。
+   箭头取中性灰而不是 currentColor：data URI 继承不了颜色，这个灰在
+   深浅两种主题上都够看。 */
+select.input {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2394a3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 12px; color: var(--text-secondary); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px;
+  border-radius: var(--radius-full); border: 1px solid var(--border-default);
+  background: var(--bg-inset); color: var(--text-secondary);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.pill.is-active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.table-head, .table-row { display: grid; align-items: center; }
+.table-head {
+  height: 38px; background: var(--bg-inset); border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px; color: var(--text-tertiary); font-weight: 500;
+}
+.table-row { border-bottom: 1px solid var(--border-subtle); position: relative; }
+.table-row:hover { background: var(--bg-hover); }
+.acct-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; transition: filter var(--dur-fast); }
+.table-row:hover .acct-bar { filter: brightness(1.2); }
+
+.page { max-width: var(--content-max); margin: 0 auto; padding: 24px 24px 80px; }
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; gap: 16px; }
+.page-title { font-size: 24px; line-height: 32px; font-weight: 600; }
+.page-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+
+/* §7 特效 —— 只动画 transform / opacity */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes ring { 0% { transform: scale(1); opacity: 0.5; } 70%, 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(220%); } }
+@keyframes indeterminate { 0% { transform: translateX(-40%) scaleX(0.35); } 100% { transform: translateX(240%) scaleX(0.35); } }
+@keyframes drift { 0% { transform: translate(0, 0); } 33% { transform: translate(90px, -70px); } 66% { transform: translate(-60px, 50px); } 100% { transform: translate(0, 0); } }
+@keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(240%); } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-9px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop { 0% { transform: scale(0.86); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slide-in-right { from { opacity: 0.4; transform: translateX(32px); } to { opacity: 1; transform: translateX(0); } }
+
+.skeleton {
+  position: relative; overflow: hidden; background: var(--bg-inset); border-radius: var(--radius-sm);
+}
+.skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 20%, color-mix(in srgb, var(--text-primary) 8%, transparent) 50%, transparent 80%);
+  animation: shimmer 1.4s linear infinite;
+}
+
+.view-fade-enter-active { animation: rise var(--dur-normal) var(--ease-decelerate); }
+.drawer-enter-active { animation: slide-in-right var(--dur-normal) var(--ease-decelerate); }
+.drawer-leave-active { animation: slide-in-right var(--dur-fast) var(--ease-accelerate) reverse; }
+.scrim-enter-active, .scrim-leave-active { animation: fade-in var(--dur-normal); }
+.scrim-leave-active { animation-direction: reverse; }
+
+/* §7 性能红线 / §10.2 可访问性 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+:root[data-motion='reduced'] *, :root[data-motion='reduced'] *::before, :root[data-motion='reduced'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}

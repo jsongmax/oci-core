@@ -1,0 +1,26 @@
+# 构建产物
+/dist/
+/oci-tools
+/oci-tools.exe
+/.gotmp/
+
+# 运行期数据 —— 绝对不能提交：master.key 是所有 OCI 私钥的解密钥匙
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.key
+*.pem
+
+# 前端依赖
+/web/node_modules/
+/web/.vite/
+
+# 注意：internal/web/dist 是前端构建产物，刻意提交进版本库。
+# go:embed 需要它存在，提交后没装 Node 的人也能直接 go build。
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
