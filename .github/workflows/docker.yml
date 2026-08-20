@@ -1,0 +1,93 @@
+# 构建多架构镜像并推到 GHCR。
+#
+#   ghcr.io/jsongmax/oci-core:latest    最新的 tag 版本
+#   ghcr.io/jsongmax/oci-core:0.2.3     具体版本
+#   ghcr.io/jsongmax/oci-core:0.2       次版本线，跟随补丁更新
+#   ghcr.io/jsongmax/oci-core:edge      main 的最新提交，未发版
+#
+# 有了它，服务器上不必再本地构建：
+#
+#   docker compose pull && docker compose up -d
+#
+# 推 GHCR 不需要额外配 secret，GITHUB_TOKEN 就够——但**第一次推完之后
+# 要去仓库的 Packages 设置里把这个包改成 public**，否则匿名 docker pull
+# 会 401，服务器上得先 docker login 才拉得动。
+name: Docker
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: 构建并推送镜像
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # 推 GHCR 需要这一项，其余保持只读。
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU 只为最后那层 alpine 服务：运行时阶段有一条 apk add，
+      # 它必须在目标架构上执行。前端与 Go 的构建阶段都固定在 runner 的
+      # 原生架构（Dockerfile 里的 --platform=$BUILDPLATFORM），不走模拟，
+      # 所以整体耗时是"几分钟"而不是"二十分钟"。
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 计算镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # github.repository 是 jsongmax/oci-core，本身就是小写——
+          # GHCR 只接受小写路径，仓库名一旦带大写字母这里要另行转换。
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=OCI Core
+            org.opencontainers.image.description=自托管的 Oracle Cloud 多账号管理面板
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          # 缓存 npm ci 与 go mod download 那两层。没有它，每次推送
+          # 都要重新拉一遍依赖。
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 输出镜像信息
+        run: |
+          echo "### 镜像已推送" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

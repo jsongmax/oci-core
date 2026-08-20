@@ -184,11 +184,35 @@ tar xzf ocicore_0.2.1_linux_arm64.tar.gz && ./ocicore
 
 **推荐方式。** 需要 Docker 与 Docker Compose。
 
+### 拉现成镜像（快）
+
+CI 已经构建好多架构镜像推到了 GHCR，服务器上不需要 Node 和 Go：
+
 ```bash
 git clone https://github.com/jsongmax/oci-core.git
 cd oci-core
+docker compose pull && docker compose up -d
+```
+
+镜像同时提供 `linux/amd64` 与 `linux/arm64`，Docker 会自动挑对应架构——
+甲骨文那台免费 ARM 机器上照样是这条命令。
+
+| 标签 | 指向 |
+|---|---|
+| `latest` | 最新发布版本 |
+| `0.2.3` | 具体版本 |
+| `0.2` | 该次版本线的最新补丁 |
+| `edge` | main 的最新提交，未发版 |
+
+### 自己构建
+
+改了代码想立刻验证，或者不想依赖 GHCR：
+
+```bash
 docker compose up -d --build
 ```
+
+`docker-compose.yml` 里 `image` 与 `build` 都保留着，两条路都能走。
 
 浏览器打开 `http://127.0.0.1:8080`，按引导完成首次设置与两步验证绑定。
 

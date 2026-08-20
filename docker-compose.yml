@@ -1,10 +1,16 @@
 services:
   ocicore:
+    # image 与 build 同时保留，两条路都能走：
+    #
+    #   docker compose pull && docker compose up -d   拉 GHCR 上由 CI 构建的镜像
+    #   docker compose up -d --build                  在本机构建，打成同一个名字
+    #
+    # 前者服务器上不需要 node 和 go，几秒钟的事；后者适合改了代码想立刻验证。
+    image: ghcr.io/jsongmax/oci-core:latest
     build:
       context: .
       args:
         VERSION: "0.2.2"
-    image: ocicore:latest
     container_name: ocicore
     restart: unless-stopped
 

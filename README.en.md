@@ -198,11 +198,35 @@ tar xzf ocicore_0.2.1_linux_arm64.tar.gz && ./ocicore
 
 **Recommended.** Requires Docker and Docker Compose.
 
+### Pull the prebuilt image (fast)
+
+CI publishes a multi-arch image to GHCR, so the server needs neither Node nor Go:
+
 ```bash
 git clone https://github.com/jsongmax/oci-core.git
 cd oci-core
+docker compose pull && docker compose up -d
+```
+
+The image ships `linux/amd64` and `linux/arm64`; Docker picks the right one
+automatically — the same command works on that free Oracle ARM box.
+
+| Tag | Points at |
+|---|---|
+| `latest` | Latest released version |
+| `0.2.3` | A specific version |
+| `0.2` | Latest patch on that minor line |
+| `edge` | Latest commit on main, unreleased |
+
+### Build it yourself
+
+If you changed the code and want to see it immediately, or would rather not depend on GHCR:
+
+```bash
 docker compose up -d --build
 ```
+
+`docker-compose.yml` keeps both `image` and `build`, so either path works.
 
 Open `http://127.0.0.1:8080` and follow the first-run setup and two-factor binding.
 

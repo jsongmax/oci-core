@@ -6,7 +6,7 @@
 # 必须先于 Go 构建：后端用 //go:embed all:dist 把前端产物编进二进制，
 # 那个目录不存在的话 Go 直接编译失败（embed 的路径在编译期解析）。
 # ---------------------------------------------------------------------------
-FROM node:24-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 
 WORKDIR /src/web
 # 先只拷依赖清单：改业务代码时这一层还能命中缓存，不必重装依赖。
@@ -21,7 +21,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # 2. 后端
 # ---------------------------------------------------------------------------
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -37,7 +37,18 @@ COPY --from=web /src/internal/web/dist ./internal/web/dist
 # -trimpath 去掉构建机的绝对路径，-s -w 去掉调试符号。
 # 版本注到 main.version：httpapi.Version 在 run() 里会被 main.version 覆盖。
 ARG VERSION=docker
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# TARGETOS / TARGETARCH 由 buildx 按目标平台自动注入。
+#
+# 这两个 ARG 配合上面的 --platform=$BUILDPLATFORM，是多架构构建不至于慢到
+# 不可用的关键：前端与后端两个构建阶段全部跑在 runner 的原生架构上，靠 Go
+# 自己交叉编译产出目标架构的二进制。反过来（让 buildx 用 QEMU 模拟 arm64
+# 去跑 npm ci 和 go build）结果一样正确，但要十几二十分钟。
+#
+# 前提仍然是 CGO_ENABLED=0——纯 Go 的 SQLite 不链 libc，
+# 交叉编译不需要任何目标平台的工具链。
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
       -trimpath \
       -ldflags="-s -w -X main.version=${VERSION}" \
       -o /out/ocicore ./cmd/server
