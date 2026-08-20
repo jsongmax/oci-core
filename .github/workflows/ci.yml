@@ -1,0 +1,80 @@
+# 每次推送与 PR 都跑的检查。
+#
+# 只做验证，不产出任何东西——发布产物在 release.yml 里，由打 tag 触发。
+# 这一份要快，它的价值在于推完两分钟内就能知道有没有把主干推坏。
+name: CI
+
+on:
+  # 只写 branches 时，tag 推送本身就不会命中这个工作流——
+  # release.yml 里已经把测试作为发布的前置门槛，不必在这里重复。
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# 默认只读。这个工作流不写仓库、不发包，不需要更多权限。
+permissions:
+  contents: read
+
+concurrency:
+  # 同一分支连续推送时，取消还在跑的旧任务——只有最新那次的结果有意义。
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # 跟着 go.mod 走，不在这里写死版本号——两处版本号早晚会分叉。
+          go-version-file: go.mod
+          cache: true
+
+      # 前端产物是 go:embed 的输入，且在**编译期**解析：
+      # internal/web/dist 不存在的话，go build / go vet 会直接失败，
+      # 报的还是一个和前端毫无关系的 embed 错误。
+      #
+      # 仓库里提交了一份 dist，所以这里不必重新构建前端——
+      # 测试关心的是 Go 代码，不是产物新旧。
+      - name: 确认 embed 目录存在
+        run: |
+          if [ ! -d internal/web/dist ]; then
+            echo "::error::internal/web/dist 不存在，go:embed 会在编译期失败"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+  frontend:
+    name: 前端类型检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        working-directory: web
+        run: npm ci
+
+      - name: vue-tsc
+        working-directory: web
+        run: npm run typecheck
+
+      # 顺带确认前端构建不会挂。构建产物在这里用不上，但如果 Vite 编不过，
+      # 等到发版时才发现就晚了——那时 release 已经跑了一半。
+      - name: 试构建
+        working-directory: web
+        run: npm run build

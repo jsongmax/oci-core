@@ -1,0 +1,216 @@
+# 打 tag 时编译全平台二进制并建 Release。
+#
+#     git tag v0.2.1 && git push origin v0.2.1
+#
+# 也可以在 Actions 页面手动触发（workflow_dispatch），用于试跑整条流水线
+# 而不真的发版——手动触发时只上传 artifact，不建 Release。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. 测试
+  #
+  # 作为发布的前置门槛。没有这一步，一个编得过但跑不起来的版本会直接
+  # 挂上 Release 页面——而 Release 一旦发出去就有人下载了。
+  # ---------------------------------------------------------------------------
+  test:
+    name: 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test ./... -count=1
+
+  # ---------------------------------------------------------------------------
+  # 2. 前端
+  #
+  # 单独一个 job 而不是塞进下面的矩阵：前端产物与目标平台无关，
+  # 在矩阵里构建等于把同一份 npm ci + vite build 重复五遍。
+  #
+  # 这里**重新构建**而不是用仓库里提交的那份 dist：提交的产物可能落后于
+  # 前端源码（改了 .vue 忘了 npm run build 是常事），照着旧产物发版
+  # 会得到一个"后端是新的、界面是旧的"的二进制，而且完全不报错。
+  # ---------------------------------------------------------------------------
+  web:
+    name: 构建前端
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        working-directory: web
+        run: npm ci
+
+      # vite.config.ts 的 outDir 指向 ../internal/web/dist
+      - name: 构建
+        working-directory: web
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: internal/web/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3. 二进制
+  #
+  # CGO_ENABLED=0 是这里能做交叉编译的全部前提：SQLite 用的是
+  # modernc.org/sqlite（纯 Go 实现），不链 libc，所以五个平台都能在
+  # 同一台 ubuntu runner 上编出来，不需要任何交叉工具链。
+  # ---------------------------------------------------------------------------
+  binaries:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [test, web]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          # 甲骨文免费额度给的是 ARM（Ampere A1），自托管在自己那台
+          # 免费机器上的人需要这个。
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 覆盖掉仓库里那份，确保打进二进制的是本次构建的前端。
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/web/dist
+
+      - name: 确定版本号
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "构建版本: ${version}"
+
+      - name: 编译
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="ocicore"
+          [ "$GOOS" = "windows" ] && out="ocicore.exe"
+          # -trimpath 去掉构建机的绝对路径，-s -w 去掉调试符号。
+          # 版本注到 main.version，程序启动日志与 /api/status 都读它。
+          go build -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "dist/${out}" ./cmd/server
+          ls -lh "dist/${out}"
+
+      - name: 打包
+        id: pack
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="ocicore_${VERSION}_${GOOS}_${GOARCH}"
+          cp README.md LICENSE dist/
+          cd dist
+          if [ "$GOOS" = "windows" ]; then
+            zip -q "../${name}.zip" ocicore.exe README.md LICENSE
+            echo "asset=${name}.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar czf "../${name}.tar.gz" ocicore README.md LICENSE
+            echo "asset=${name}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.asset }}
+          path: ${{ steps.pack.outputs.asset }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 4. 发布
+  #
+  # 只有 tag 触发才建 Release。手动触发时前面的产物照样能在
+  # Actions 页面下载，但不会污染 Releases 列表。
+  # ---------------------------------------------------------------------------
+  release:
+    name: 建 Release
+    needs: binaries
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # 唯一需要写权限的 job，单独提升，不放在工作流顶层。
+    permissions:
+      contents: write
+    steps:
+      # 只取发布产物。不加 pattern 会把 web-dist 那个中间产物也拉下来，
+      # 混进 artifacts/ 里等着被 glob 扫到。
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ocicore_*
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成校验和
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -lh
+          sha256sum *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/checksums.txt
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            下载对应平台的压缩包，解开后直接运行：
+
+            ```bash
+            ./ocicore
+            ```
+
+            默认监听 `127.0.0.1:8080`，数据写入 `./data/`，首次启动自动生成主密钥。
+
+            > **这个面板持有你所有 Oracle 租户的完整控制权。**
+            > 不要直接暴露到公网，部署前请读 README 的「安全须知」。
+
+            Docker 部署见 README。校验和在 `checksums.txt`。

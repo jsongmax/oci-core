@@ -7,6 +7,7 @@
 Brings instances scattered across several Oracle Cloud tenancies into one view,
 so you stop switching tenants and regions in the official console.
 
+[![CI](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml/badge.svg)](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org)
@@ -26,6 +27,7 @@ so you stop switching tenants and regions in the official console.
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Tech stack](#tech-stack)
+- [Prebuilt binaries](#prebuilt-binaries)
 - [Docker deployment](#docker-deployment)
 - [Local development](#local-development)
 - [Configuration](#configuration)
@@ -164,6 +166,31 @@ the total look like "these accounts spent nothing".
 | Frontend | **Vue 3 + TypeScript + Vite** | Composition API, no UI framework, hand-written CSS |
 | Realtime | **SSE** | Server-pushed state changes |
 | Container | **Docker** (three-stage build) | node → golang → alpine |
+
+---
+
+## Prebuilt binaries
+
+If you would rather not build it yourself, grab one from
+[Releases](https://github.com/jsongmax/oci-core/releases). Every tag is built for five
+platforms by GitHub Actions and ships with `checksums.txt`:
+
+| Platform | File |
+|---|---|
+| Linux x86_64 | `ocicore_<version>_linux_amd64.tar.gz` |
+| **Linux ARM64** | `ocicore_<version>_linux_arm64.tar.gz` |
+| macOS Apple Silicon | `ocicore_<version>_darwin_arm64.tar.gz` |
+| macOS Intel | `ocicore_<version>_darwin_amd64.tar.gz` |
+| Windows x86_64 | `ocicore_<version>_windows_amd64.zip` |
+
+> Oracle's Always Free tier gives you ARM (Ampere A1). If you want to self-host the panel
+> on that free machine, **linux_arm64** is the one you need.
+
+Extract and run — there are no runtime dependencies:
+
+```bash
+tar xzf ocicore_0.2.1_linux_arm64.tar.gz && ./ocicore
+```
 
 ---
 

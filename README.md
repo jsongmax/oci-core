@@ -6,6 +6,7 @@
 
 把分散在多个甲骨文账号下的云主机收进一个视图，不用再在官方控制台之间反复切换租户和区域。
 
+[![CI](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml/badge.svg)](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org)
@@ -25,6 +26,7 @@
 - [功能](#功能)
 - [界面](#界面)
 - [技术栈](#技术栈)
+- [下载预编译二进制](#下载预编译二进制)
 - [Docker 部署](#docker-部署)
 - [本地开发](#本地开发)
 - [配置](#配置)
@@ -151,6 +153,30 @@ Oracle 只接受 RSA 公钥（不支持 ed25519），以及本工具不会代管
 | 前端 | **Vue 3 + TypeScript + Vite** | 组合式 API，无 UI 框架，样式手写 |
 | 实时 | **SSE** | 状态变化服务端推送 |
 | 容器 | **Docker**（三阶段构建） | node → golang → alpine |
+
+---
+
+## 下载预编译二进制
+
+不想自己编译就去 [Releases](https://github.com/jsongmax/oci-core/releases) 拿。
+每个 tag 由 GitHub Actions 自动构建五个平台，附 `checksums.txt`：
+
+| 平台 | 文件 |
+|---|---|
+| Linux x86_64 | `ocicore_<版本>_linux_amd64.tar.gz` |
+| **Linux ARM64** | `ocicore_<版本>_linux_arm64.tar.gz` |
+| macOS Apple Silicon | `ocicore_<版本>_darwin_arm64.tar.gz` |
+| macOS Intel | `ocicore_<版本>_darwin_amd64.tar.gz` |
+| Windows x86_64 | `ocicore_<版本>_windows_amd64.zip` |
+
+> 甲骨文免费额度给的是 ARM（Ampere A1）。想把面板自托管在自己那台免费机器上，
+> 要的是 **linux_arm64** 那个。
+
+解开直接跑，无运行时依赖：
+
+```bash
+tar xzf ocicore_0.2.1_linux_arm64.tar.gz && ./ocicore
+```
 
 ---
 
