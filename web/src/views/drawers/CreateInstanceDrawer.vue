@@ -138,6 +138,34 @@ const account = computed(() => accountById(form.accountId))
 const region = computed(() => form.region || account.value.regions[0] || '')
 
 const selectedShape = computed(() => shapes.value.find(s => s.shape === form.shape))
+
+/**
+ * 当前可用域实际提供的规格名。
+ *
+ * 空集有两种含义——还没查到，或查询失败。两种情况下都**不做**可用性判断：
+ * 误把所有预设标成不可用，比漏拦一次糟糕得多。
+ */
+const availableShapes = computed(() => new Set(shapes.value.map(s => s.shape)))
+
+/**
+ * 预设的规格在当前可用域不存在。
+ *
+ * 预设是一张静态表（后端 launchPresets），不知道任何区域的实际情况；
+ * 而规格列表是实时查 OCI 的。两者不对一遍，用户就会在新区域点中
+ * 「免费额度 AMD」——E2 是 2018 年那代硬件，新区域普遍没有部署——
+ * 然后一路走到最后一步才被 Oracle 拒掉。
+ *
+ * 这跟第 4 步拦「子网禁公网 IP 却要分配公网 IP」是同一类判断：
+ * 创建时必然失败的组合，不该等到点下去才说。
+ */
+function presetUnavailable(p: LaunchPresetDTO): boolean {
+  if (availableShapes.value.size === 0) return false
+  return !availableShapes.value.has(p.shape)
+}
+
+/** 已选规格在当前可用域不存在。选完规格再回头改区域 / AD 时最容易撞上。 */
+const shapeUnavailable = computed(() =>
+  !!form.shape && availableShapes.value.size > 0 && !availableShapes.value.has(form.shape))
 const isFlexible = computed(() => selectedShape.value?.isFlexible ?? form.shape.includes('.Flex'))
 
 /** 每 OCPU 的内存上限。取不到规格元数据时退回 A1.Flex 的 6 GB。 */
@@ -159,7 +187,8 @@ const overQuota = computed(() => {
 const canNext = computed(() => {
   if (step.value === 0) return !!form.accountId
   if (step.value === 1) return !!region.value && !!form.ad
-  if (step.value === 2) return !overQuota.value
+  // 规格在当前可用域不存在时必然创建失败，和超配额一样在这里就拦住。
+  if (step.value === 2) return !overQuota.value && !shapeUnavailable.value
   if (step.value === 3) return !!form.imageId
   // 子网禁公网 IP 却又要分配公网 IP，创建时必然失败，不如在这里就拦住。
   if (step.value === 4) return !subnetConflict.value
@@ -201,21 +230,53 @@ async function loadRegionOptions() {
   loadingAds.value = true
   optionError.value = ''
   try {
-    const [adResult, shapeResult] = await Promise.all([
-      launchApi.availabilityDomains(form.accountId, region.value),
-      launchApi.shapes(form.accountId, region.value)
-    ])
+    // 先定可用域，再按可用域查规格——不能并发。
+    //
+    // 规格是**按可用域**而非按区域提供的：同一个区域里，E2.1.Micro 只存在于
+    // 其中一个可用域（Oracle 对永久免费资源的明确限制）。只按区域查会把
+    // 「区域里有、但这个 AD 没有」的规格也列进来，用户选了要到提交才失败。
+    const adResult = await launchApi.availabilityDomains(form.accountId, region.value)
     ads.value = adResult.availabilityDomains
-    shapes.value = shapeResult.shapes
     if (!ads.value.some(a => a.name === form.ad)) {
       form.ad = ads.value[0]?.name ?? ''
     }
+    await loadShapes()
   } catch (err) {
     optionError.value = errorText(err)
     ads.value = []
     shapes.value = []
+    shapesKey = ''
   } finally {
     loadingAds.value = false
+  }
+}
+
+/**
+ * shapes 当前对应的 (账号, 区域, 可用域)。用来跳过重复查询。
+ *
+ * 需要它是因为有两条路都会触发加载：loadRegionOptions 定完 AD 后显式调一次，
+ * 而它给 form.ad 赋值本身又会触发 watch。不去重的话每次换区域都会对 Oracle
+ * 发两次一模一样的请求。
+ */
+let shapesKey = ''
+
+/** 查当前可用域实际提供的规格。换 AD 要重查——各 AD 的硬件不一定一样。 */
+async function loadShapes() {
+  if (!form.accountId || !region.value) return
+  const key = `${form.accountId}|${region.value}|${form.ad}`
+  if (key === shapesKey) return
+  shapesKey = key
+  try {
+    const { shapes: list } = await launchApi.shapes(
+      form.accountId, region.value, form.ad || undefined)
+    shapes.value = list
+  } catch (err) {
+    optionError.value = errorText(err)
+    // 查不到就留空。下面的可用性判断会因此全部放行——
+    // 拦不住总好过把所有预设都误标成不可用。
+    shapes.value = []
+    // 失败不该被缓存住：用户重试时要能真的再查一次。
+    shapesKey = ''
   }
 }
 
@@ -462,6 +523,9 @@ watch(() => form.accountId, async () => {
 })
 
 watch(() => form.region, () => void loadRegionOptions())
+// 换可用域要重查规格：各 AD 的硬件不一定一样，永久免费的 E2.1.Micro
+// 更是只在其中一个 AD 上提供。
+watch(() => form.ad, () => void loadShapes())
 watch(() => form.shape, () => {
   if (step.value >= 3) void loadImages()
 })
@@ -535,17 +599,33 @@ watch(() => form.shape, () => {
       </template>
 
       <template v-else-if="step === 2">
-        <SectionCard title="免费额度预设">
+        <SectionCard title="免费额度预设"
+                     :note="form.ad ? `已按 ${shortAd(form.ad)} 实际提供的规格过滤` : ''">
           <button v-for="p in presets" :key="p.key" class="opt"
                   :class="{ 'is-picked': form.shape === p.shape && form.ocpu === p.ocpus && form.memGb === p.memoryInGbs }"
+                  :disabled="presetUnavailable(p)"
+                  :title="presetUnavailable(p) ? `${p.shape} 在 ${form.ad} 不提供` : ''"
                   @click="pickPreset(p)">
             <span class="opt__radio" />
             <span class="opt__text">
               <span class="opt__title">{{ p.label }}</span>
               <span class="opt__sub">{{ p.description }}</span>
             </span>
-            <span v-if="p.freeTier" class="opt__tag" style="color: var(--accent)">免费</span>
+            <!-- 不可用要盖过「免费」标：那个标此刻是误导，
+                 免费与否已经无所谓，根本开不出来 -->
+            <span v-if="presetUnavailable(p)" class="opt__tag" style="color: var(--warning)">
+              该可用域不提供
+            </span>
+            <span v-else-if="p.freeTier" class="opt__tag" style="color: var(--accent)">免费</span>
           </button>
+
+          <!-- 规格不可用是永久性的，和「暂时没有容量」完全不同：
+               等下去不会变，挂守候只是白白消耗创建请求 -->
+          <p v-if="shapeUnavailable" class="shape-warn t-xs">
+            <b>{{ form.shape }}</b> 在 <span class="mono">{{ form.ad }}</span> 不提供。
+            这不是「暂时没有容量」——该可用域没有部署这种硬件，等待或反复重试都不会成功。
+            请换一个规格，或回上一步换可用域。
+          </p>
         </SectionCard>
 
         <SectionCard v-if="isFlexible" title="算力"
@@ -847,6 +927,11 @@ watch(() => form.shape, () => {
 .opt__title { font-size: 13px; font-weight: 500; }
 .opt__sub { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .opt__tag { flex: 0 0 auto; font-size: 11px; color: var(--text-tertiary); }
+
+.shape-warn {
+  margin: 0; padding: 12px 16px; line-height: 1.8;
+  color: var(--warning); border-top: 1px solid var(--border-subtle);
+}
 
 .pad { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .slider { display: flex; flex-direction: column; gap: 8px; }
