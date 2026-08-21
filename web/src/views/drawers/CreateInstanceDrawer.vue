@@ -46,8 +46,14 @@ const huntForm = reactive({
 
 /** 低于这个值就该警告。和后端 huntsvc.WarnIntervalSeconds 对齐。 */
 const WARN_INTERVAL = 60
-/** 硬下限，后端 huntsvc.MinIntervalSeconds 会再夹一次。 */
-const MIN_INTERVAL = 30
+/**
+ * 硬下限。开局用 30 兜底，挂载后以 /api/hunt 返回的值为准。
+ *
+ * 不写死是因为这个数只有后端说了算（huntsvc.MinIntervalSeconds）。
+ * 前端另存一份，后端哪天抬到 60，这里会照旧放行 30，
+ * 还会显示一句「提交后会被抬到 30 秒」——那时它是错的。
+ */
+const minInterval = ref(30)
 
 const intervalTooFast = computed(() => huntForm.intervalSeconds < WARN_INTERVAL)
 
@@ -87,7 +93,7 @@ function pickDuration(hours: number) {
 
 const intervalHint = computed(() => {
   const n = huntForm.intervalSeconds
-  if (n < MIN_INTERVAL) return `低于硬下限，提交后会被抬到 ${MIN_INTERVAL} 秒`
+  if (n < minInterval.value) return `低于硬下限，提交后会被抬到 ${minInterval.value} 秒`
   if (n < WARN_INTERVAL) return '偏激进，被 Oracle 限流的概率明显更高'
   if (n <= 180) return '推荐范围'
   return '较保守，命中率略低但几乎不会触发限流'
@@ -128,7 +134,12 @@ const shapes = ref<ShapeDTO[]>([])
 const images = ref<ImageDTO[]>([])
 const subnets = ref<SubnetDTO[]>([])
 const loadingSubnets = ref(false)
-const quota = reactive({ ocpuUsed: 0, ocpuLimit: 0, memUsed: 0, memLimit: 0 })
+/** 上限为 0 表示「读不到」或「不设上限」，两种情况都不拦。 */
+const quota = reactive({
+  ocpuUsed: 0, ocpuLimit: 0,
+  memUsed: 0, memLimit: 0,
+  blockUsed: 0, blockLimit: 0
+})
 
 const loadingAds = ref(false)
 const loadingImages = ref(false)
@@ -178,6 +189,25 @@ const maxMem = computed(() =>
 const remainingOcpu = computed(() => Math.max(0, quota.ocpuLimit - quota.ocpuUsed))
 const remainingMem = computed(() => Math.max(0, quota.memLimit - quota.memUsed))
 
+/**
+ * 引导卷滑块的上限。
+ *
+ * 原先写死 200 —— 那是**永久免费的块存储总额**，不是单卷上限，两个方向都不对：
+ * 升级号被无理由地卡在 200 GB，免费号则是"几台加起来 200"，
+ * 拿单卷 200 当上限根本没约束到总量。
+ *
+ * 现在按账号剩余的块存储配额算。读不到或不设上限时退回界面刻度上限——
+ * OCI 单卷真实上限是 32 TB，做成滑块没法用。
+ */
+const SLIDER_MAX_BOOT_GB = 1024
+
+const maxBootGb = computed(() => {
+  if (!quota.blockLimit) return SLIDER_MAX_BOOT_GB
+  const remaining = Math.max(0, quota.blockLimit - quota.blockUsed)
+  // 至少给 50：Oracle 的引导卷下限就是 50，比它还小的滑块没有意义。
+  return Math.max(50, Math.min(SLIDER_MAX_BOOT_GB, remaining))
+})
+
 /** 配额未知（limit 为 0）时不拦——总比因为读不到配额就完全用不了强。 */
 const overQuota = computed(() => {
   if (!isFlexible.value || quota.ocpuLimit === 0) return false
@@ -198,6 +228,16 @@ const canNext = computed(() => {
 
 /* ---------- 加载 ---------- */
 
+/** 守候的间隔下限只有后端说了算，取回来覆盖兜底值。 */
+async function loadHuntLimits() {
+  try {
+    const { limits } = await huntApi.list()
+    if (limits?.minIntervalSeconds > 0) minInterval.value = limits.minIntervalSeconds
+  } catch {
+    // 取不到就用兜底的 30，提交时后端还会再夹一次。
+  }
+}
+
 async function loadPresets() {
   try {
     presets.value = (await launchApi.presets()).presets
@@ -211,16 +251,29 @@ async function loadQuota() {
   try {
     const { quotas } = await insights.quota(form.accountId)
     const items = quotas[0]?.items ?? []
-    const find = (name: string) => items.find(i => i.name === name && i.known)
-    const cores = find('standard-a1-core-count')
-    const mem = find('standard-a1-memory-count')
+    // 按 key 取，不要匹配 name。
+    //
+    // name 是 Oracle 的限额名，会变；key 是后端给的稳定语义标识，
+    // 存在的意义就是隔断这层耦合。这里原先匹配的是
+    // 'standard-a1-core-count'，而后端返回的是
+    // 'standard-a1-core-regional-count' —— 差一个 -regional，
+    // 于是 limit 恒为 0，overQuota 在 limit 为 0 时直接放行，
+    // 整个配额保护静默失效，界面上还一直显示"剩余 0 OCPU"。
+    const find = (key: string) => items.find(i => i.key === key && i.known)
+    const cores = find('ocpu')
+    const mem = find('memory')
+    const block = find('block')
     quota.ocpuUsed = cores?.used ?? 0
-    quota.ocpuLimit = cores?.limit ?? 0
+    quota.ocpuLimit = cores?.unlimited ? 0 : (cores?.limit ?? 0)
     quota.memUsed = mem?.used ?? 0
-    quota.memLimit = mem?.limit ?? 0
+    quota.memLimit = mem?.unlimited ? 0 : (mem?.limit ?? 0)
+    quota.blockUsed = block?.used ?? 0
+    // unlimited 用 0 表示"不设上限"，与"读不到"共用同一条放行分支。
+    quota.blockLimit = block?.unlimited ? 0 : (block?.limit ?? 0)
   } catch {
     quota.ocpuLimit = 0
     quota.memLimit = 0
+    quota.blockLimit = 0
   }
 }
 
@@ -508,7 +561,7 @@ async function submitHunt() {
 }
 
 onMounted(async () => {
-  await loadPresets()
+  await Promise.all([loadPresets(), loadHuntLimits()])
   if (!form.region) form.region = account.value.regions[0] ?? ''
   await Promise.all([loadRegionOptions(), loadQuota()])
   if (!form.name) {
@@ -642,7 +695,12 @@ watch(() => form.shape, () => {
             </label>
             <label class="slider">
               <span class="slider__head"><span>引导卷</span><span class="mono">{{ form.bootGb }} GB</span></span>
-              <input type="range" min="50" max="200" step="10" v-model.number="form.bootGb" />
+              <input type="range" min="50" :max="maxBootGb" step="10" v-model.number="form.bootGb" />
+              <span class="slider__hint">
+                {{ quota.blockLimit
+                  ? `账号块存储剩余 ${Math.max(0, quota.blockLimit - quota.blockUsed)} GB`
+                  : '未读到块存储配额，提交时后端会再校验一次' }}
+              </span>
             </label>
 
             <div v-if="quota.ocpuLimit" class="quota-box">
@@ -785,7 +843,7 @@ watch(() => form.shape, () => {
             <div class="field">
               <label for="hi">尝试间隔（秒）</label>
               <input id="hi" v-model.number="huntForm.intervalSeconds" class="input mono"
-                     type="number" :min="MIN_INTERVAL" max="3600" step="10" />
+                     type="number" :min="minInterval" max="3600" step="10" />
               <p class="hint" :style="{ color: intervalTooFast ? 'var(--warning)' : undefined }">
                 {{ intervalHint }}
               </p>
