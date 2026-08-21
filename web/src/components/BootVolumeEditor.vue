@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** §6.8 ShapeConfigurator + 引导卷扩容/VPU：滑块联动 + 配额校验 + 前置提示 */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Account, Instance } from '@/types'
 import { useStore } from '@/store'
-import { storage } from '@/api'
+import { storage, launch as launchApi, type ShapeDTO } from '@/api'
 import SectionCard from '@/components/SectionCard.vue'
 import CheckList from '@/components/CheckList.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
@@ -24,8 +24,57 @@ const mem = ref(props.instance.memGb)
 const applyingVolume = ref(false)
 const applyingShape = ref(false)
 
-const isArm = computed(() => props.instance.shape.includes('A1.Flex'))
-const maxMem = computed(() => (isArm.value ? ocpu.value * 6 : mem.value))
+/**
+ * 这个规格的元数据，来自 OCI 的 ListShapes。
+ *
+ * 之前这里靠字符串嗅探 `shape.includes('A1.Flex')` 判断"是不是弹性规格"，
+ * 于是 E5.Flex / E4.Flex / E3.Flex 全被当成固定配置，滑块禁用、还给出
+ * 一句错的「该规格为固定配置，无法调整」——那几种规格明明是弹性的。
+ *
+ * 创建向导早就在查这个接口了，改配置这边没用，同一个信息两套来源。
+ */
+const shapeMeta = ref<ShapeDTO | null>(null)
+
+async function loadShapeMeta() {
+  try {
+    const { shapes } = await launchApi.shapes(
+      props.instance.accountId, props.instance.region, props.instance.adFull || undefined)
+    shapeMeta.value = shapes.find(s => s.shape === props.instance.shape) ?? null
+  } catch {
+    // 查不到就回落到按名字判断。宁可少给一点能力，也不要因为一次
+    // 查询失败就把本来能改的实例锁死。
+    shapeMeta.value = null
+  }
+}
+
+onMounted(() => void loadShapeMeta())
+watch(() => [props.instance.shape, props.instance.region], () => void loadShapeMeta())
+
+/** 元数据取不到时按名字兜底：带 .Flex 的都是弹性规格，不止 A1。 */
+const isFlexible = computed(() =>
+  shapeMeta.value?.isFlexible ?? props.instance.shape.includes('.Flex'))
+
+/** 每 OCPU 的内存上限。A1.Flex 是 6，E 系列要大得多，不能写死。 */
+const maxPerOcpu = computed(() => shapeMeta.value?.memoryOptions?.maxPerOcpuInGBs ?? 6)
+
+const maxOcpu = computed(() => {
+  const shapeMax = shapeMeta.value?.ocpuOptions?.max ?? 4
+  const q = props.account.quota
+  if (q.unlimited.ocpu || !q.ocpuLimit) return shapeMax
+  // 配额只剩这么多，滑块就不该拖得更高——拖上去也是提交时被拒。
+  return Math.max(props.instance.ocpu, Math.min(shapeMax, q.ocpuLimit - q.ocpuUsed + props.instance.ocpu))
+})
+
+const maxMem = computed(() => {
+  if (!isFlexible.value) return mem.value
+  const byRatio = ocpu.value * maxPerOcpu.value
+  const shapeCap = shapeMeta.value?.memoryOptions?.maxInGBs ?? byRatio
+  const q = props.account.quota
+  const byQuota = (q.unlimited.mem || !q.memLimit)
+    ? Number.POSITIVE_INFINITY
+    : q.memLimit - q.memUsed + props.instance.memGb
+  return Math.max(props.instance.memGb, Math.min(byRatio, shapeCap, byQuota))
+})
 const running = computed(() => props.instance.state === 'RUNNING')
 const stopped = computed(() => props.instance.state === 'STOPPED')
 
@@ -45,8 +94,37 @@ const quotaText = computed(() => {
   return `账号剩余配额 ${q.ocpuLimit - q.ocpuUsed} OCPU / ${q.memLimit - q.memUsed} GB`
 })
 
-const iops = computed(() => (vpu.value >= 20 ? '25,000' : vpu.value >= 10 ? '3,000' : '600'))
-const throughput = computed(() => (vpu.value >= 20 ? '480 MB/s' : vpu.value >= 10 ? '160 MB/s' : '30 MB/s'))
+/**
+ * 块存储性能估算。
+ *
+ * 之前这里是三个写死的档位，只看 VPU 不看容量——但 OCI 的性能是**按 GB 线性**的。
+ * 结果：VPU≥10 恒显示 3,000 IOPS，那其实是 50 GB 时的值，扩到 200 GB 实际
+ * 是 12,000，而界面数字纹丝不动。滑块能拖到 120 VPU，档位判断却只到 20，
+ * 21–120 全部显示成 20 的值。
+ *
+ * Oracle 的公式（VPU ≥ 10 时线性）：
+ *   IOPS/GB       = 1.5 × VPU + 45      单卷上限 2,500 × VPU
+ *   吞吐 KB/s/GB  = 12  × VPU + 360     单卷上限 20 × VPU + 280（MB/s）
+ *
+ * VPU = 0（低成本档）不在这条线上，单列：2 IOPS/GB、上限 3,000；
+ * 240 KB/s per GB、上限 480 MB/s。
+ *
+ * 来源：https://docs.oracle.com/en-us/iaas/Content/Block/Concepts/blockvolumeperformance.htm
+ * 核对日期：2026-08-20
+ */
+function volumePerf(v: number, gb: number): { iops: number; mbps: number } {
+  if (v <= 0) {
+    return { iops: Math.min(2 * gb, 3000), mbps: Math.min(240 * gb / 1000, 480) }
+  }
+  return {
+    iops: Math.min((1.5 * v + 45) * gb, 2500 * v),
+    mbps: Math.min((12 * v + 360) * gb / 1000, 20 * v + 280)
+  }
+}
+
+const perf = computed(() => volumePerf(vpu.value, size.value))
+const iops = computed(() => Math.round(perf.value.iops).toLocaleString('en-US'))
+const throughput = computed(() => `${Math.round(perf.value.mbps)} MB/s`)
 
 /** 配额上限为 0 表示读不到，此时不拦——总比因为读不到就完全用不了强。 */
 const overQuota = computed(() => {
@@ -76,8 +154,29 @@ watch(() => [props.instance.bootGb, props.instance.vpu, props.instance.ocpu, pro
 
 function onOcpu(v: number) {
   ocpu.value = v
-  if (mem.value > v * 6) mem.value = v * 6
+  // 内存跟着 OCPU 的比例回夹。比例取自规格元数据，不再写死 A1 的 6:1。
+  const cap = v * maxPerOcpu.value
+  if (mem.value > cap) mem.value = cap
 }
+
+/**
+ * 引导卷滑块上限。
+ *
+ * 原先写死 200 —— 那是永久免费的块存储**总额**，不是单卷上限。
+ * 升级号被无理由地卡在 200 GB，免费号那边又管不住"几台加起来"。
+ * 现在按账号剩余配额算；读不到或不设上限时退回界面刻度上限
+ * （OCI 单卷真实上限 32 TB，做成滑块没法用）。
+ */
+const SLIDER_MAX_BOOT_GB = 1024
+
+const maxBootGb = computed(() => {
+  const q = props.account.quota
+  if (q.unlimited.block || !q.blockLimit) return SLIDER_MAX_BOOT_GB
+  const remaining = Math.max(0, q.blockLimit - q.blockUsed)
+  // 当前容量本身已经占着配额，扩容能到的上限是"当前 + 剩余"。
+  return Math.max(props.instance.bootGb,
+    Math.min(SLIDER_MAX_BOOT_GB, props.instance.bootGb + remaining))
+})
 
 function applyVolume() {
   if (!props.bootVolumeId) return
@@ -151,7 +250,7 @@ function applyShape() {
     <div class="pad">
       <label class="slider">
         <span class="slider__head"><span>容量</span><span class="mono">{{ size }} GB</span></span>
-        <input type="range" :min="instance.bootGb" max="200" step="1" v-model.number="size" />
+        <input type="range" :min="instance.bootGb" :max="maxBootGb" step="1" v-model.number="size" />
       </label>
       <label class="slider">
         <span class="slider__head"><span>VPU</span><span class="mono">{{ vpu }}</span></span>
@@ -174,14 +273,16 @@ function applyShape() {
     <div class="pad">
       <label class="slider">
         <span class="slider__head"><span>OCPU</span><span class="mono">{{ ocpu }}</span></span>
-        <input type="range" min="1" :max="isArm ? 4 : 1" step="1" :value="ocpu"
-               :disabled="!isArm"
+        <input type="range" min="1" :max="maxOcpu" step="1" :value="ocpu"
+               :disabled="!isFlexible"
                @input="onOcpu(Number(($event.target as HTMLInputElement).value))" />
       </label>
       <label class="slider">
         <span class="slider__head"><span>内存</span><span class="mono">{{ mem }} GB</span></span>
-        <input type="range" min="1" :max="maxMem" step="1" v-model.number="mem" :disabled="!isArm" />
-        <span class="slider__hint">{{ isArm ? 'A1.Flex 约束：每 OCPU 最多 6 GB' : '该规格为固定配置，无法调整' }}</span>
+        <input type="range" min="1" :max="maxMem" step="1" v-model.number="mem" :disabled="!isFlexible" />
+        <span class="slider__hint">{{ isFlexible
+          ? `${instance.shape} 约束：每 OCPU 最多 ${maxPerOcpu} GB`
+          : '该规格为固定配置，无法调整' }}</span>
       </label>
       <CheckList :items="[
         running
@@ -192,7 +293,7 @@ function applyShape() {
         { tone: overQuota ? 'fail' : 'info', text: quotaText }
       ]" />
       <button class="btn btn--sm"
-              :disabled="!shapeChanged || transitional || overQuota || applyingShape || !isArm"
+              :disabled="!shapeChanged || transitional || overQuota || applyingShape || !isFlexible"
               @click="applyShape()">
         {{ applyingShape ? '提交中…' : '应用配置变更' }}
       </button>
