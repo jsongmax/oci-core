@@ -659,3 +659,65 @@ export interface BillingDetailDTO {
   error?: string
   fetchedAt: string
 }
+
+/* ---------- 代理池 ---------- */
+
+/** ok=通 / fail=不通 / unknown=还没检测过 */
+export type ProxyStatusDTO = 'ok' | 'fail' | 'unknown'
+
+export interface ProxyDTO {
+  id: string
+  label: string
+  scheme: string
+  host: string
+  port: number
+  username: string
+  /** 只说明有没有配密码。密码本身永不回传 */
+  hasPassword: boolean
+  enabled: boolean
+  lastStatus: ProxyStatusDTO
+  lastLatencyMs: number
+  lastError: string
+  /** 上次检测打的区域。同一条代理连不同区域延迟差很多 */
+  lastRegion: string
+  lastCheckedAt: string
+  /** 最近一次成功。用来区分「刚挂」和「从没通过」 */
+  lastOkAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProxyListDTO {
+  proxies: ProxyDTO[] | null
+  /** accountId -> proxyId，只含已绑定的账号 */
+  bindings: Record<string, string> | null
+  checkTimeoutMs: number
+  notice: string
+}
+
+/** 批量导入里的一行 */
+export interface ProxyImportRowDTO {
+  line: number
+  masked: string
+  label?: string
+  error?: string
+  /** 已存在，跳过，不算失败 */
+  skipped?: boolean
+}
+
+export interface ProxyImportResultDTO {
+  dryRun: boolean
+  rows: ProxyImportRowDTO[] | null
+  ok: number
+  failed: number
+  skipped: number
+}
+
+export interface ProxyCheckRowDTO {
+  id: string
+  status: ProxyStatusDTO
+  latencyMs: number
+  error?: string
+  checkedAt: string
+  region: string
+}

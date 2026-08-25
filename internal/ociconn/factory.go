@@ -97,12 +97,20 @@ func (f *Factory) build(ctx context.Context, acc *store.Account) (*ociclient.Cli
 	}
 
 	opts := []ociclient.Option{ociclient.WithLimiter(f.limiter)}
-	if acc.ProxyURL != "" {
-		u, err := url.Parse(acc.ProxyURL)
+
+	proxyURL, err := f.proxyFor(ctx, acc)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("账号 %s 的代理地址无效: %w", acc.Alias, err)
 		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
+		// 用 ociclient 那份带 8 秒拨号超时的传输层，而不是
+		// http.DefaultTransport —— 代理是最容易不通的一环，
+		// 不设拨号超时会让它一路挂到 30 秒总超时。
+		transport := ociclient.NewTransport()
 		transport.Proxy = http.ProxyURL(u)
 		opts = append(opts, ociclient.WithHTTPClient(&http.Client{
 			Transport: transport,
@@ -110,4 +118,26 @@ func (f *Factory) build(ctx context.Context, acc *store.Account) (*ociclient.Cli
 		}))
 	}
 	return ociclient.New(creds, opts...)
+}
+
+// proxyFor 取该账号要走的代理地址，未绑定时返回空串（本机直连）。
+//
+// 这里**不做任何失败回落**：代理解不开或取不到就直接报错，让调用失败。
+// 静默回落直连等于在用户不知情的时候把网络隔离撤了，而且恰好发生在
+// 代理出问题、他最没在看的时候——用代理的全部目的就是不要那样。
+func (f *Factory) proxyFor(ctx context.Context, acc *store.Account) (string, error) {
+	proxyID, err := f.st.AccountProxyID(ctx, acc.ID)
+	if err != nil {
+		return "", err
+	}
+	if proxyID == "" {
+		// 兜底：代理升级成独立实体之前，地址直接存在账号行上。
+		// 启动迁移会把它搬进 proxies 表，这里是迁移没跑成时的保险。
+		return acc.ProxyURL, nil
+	}
+	u, err := f.st.ProxyURL(ctx, proxyID)
+	if err != nil {
+		return "", fmt.Errorf("账号 %s 的代理不可用: %w", acc.Alias, err)
+	}
+	return u, nil
 }

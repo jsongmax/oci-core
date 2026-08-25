@@ -42,6 +42,14 @@ type Client struct {
 // 默认的 30 秒总超时挡不住"域名能解析但 TCP 连不上"这种情况——OCI 的
 // 泛解析会让写错的服务域名照样解析出 IP，请求随后一路挂到总超时。
 // 把拨号阶段单独限到 8 秒，配错域名会很快报错而不是让界面卡半分钟。
+// NewTransport 返回一份带短拨号超时的传输层，供需要自定义 http.Client
+// 的调用方复用（例如 ociconn 要挂代理）。
+//
+// 导出它是因为之前 ociconn 走的是 http.DefaultTransport.Clone()，
+// 于是**配了代理的账号反而失去了这层保护**——而代理恰恰是最容易不通的
+// 那一环，一挂就要等满 30 秒总超时才报错。
+func NewTransport() *http.Transport { return defaultTransport() }
+
 func defaultTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = (&net.Dialer{

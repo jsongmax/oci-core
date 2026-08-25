@@ -192,6 +192,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/capacity/{id}/{action}", s.guard(s.requireAuth(s.handleSetCapacityWatchEnabled)))
 	s.mux.HandleFunc("DELETE /api/capacity/{id}", s.guard(s.requireAuth(s.handleDeleteCapacityWatch)))
 
+	// 代理池。读操作不走 guard；导入、绑定、改删都会影响所有账号出网，
+	// 一律走 guard。检测是纯出网请求，不打 Oracle 接口，也不走 guard。
+	s.mux.HandleFunc("GET /api/proxies", s.requireAuth(s.handleListProxies))
+	s.mux.HandleFunc("POST /api/proxies/import", s.guard(s.requireAuth(s.handleImportProxies)))
+	s.mux.HandleFunc("PATCH /api/proxies/{id}", s.guard(s.requireAuth(s.handleUpdateProxy)))
+	s.mux.HandleFunc("DELETE /api/proxies/{id}", s.guard(s.requireAuth(s.handleDeleteProxy)))
+	s.mux.HandleFunc("POST /api/proxies/bind", s.guard(s.requireAuth(s.handleBindProxy)))
+	s.mux.HandleFunc("POST /api/proxies/check", s.requireAuth(s.handleCheckProxies))
+	s.mux.HandleFunc("POST /api/proxies/{id}/check", s.requireAuth(s.handleCheckProxies))
+
 	// 账单。纯只读查询，不走 guard——它不改变任何东西。
 	s.mux.HandleFunc("GET /api/billing", s.requireAuth(s.handleBilling))
 	s.mux.HandleFunc("GET /api/billing/{id}", s.requireAuth(s.handleBillingDetail))

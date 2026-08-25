@@ -437,6 +437,79 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 ---
 
+## 代理池
+
+给每个账号配一条独立出口，让各账号的 API 调用不从同一个 IP 出去。
+
+> **代理只换 IP，不换身份。** 每个 OCI 请求都带该账号的私钥签名，
+> Oracle 始终知道是哪个租户在调。它降低的是「多个账号同 IP」这一个信号，
+> 不是万能的防关联手段。
+
+**`GET /api/proxies`**
+
+```json
+{ "proxies": [
+    { "id": "a1b2", "label": "香港", "scheme": "socks5", "host": "1.2.3.4", "port": 1080,
+      "username": "alice", "hasPassword": true, "enabled": true,
+      "lastStatus": "ok", "lastLatencyMs": 118, "lastError": "",
+      "lastRegion": "ap-tokyo-1", "lastCheckedAt": "…", "lastOkAt": "…" }
+  ],
+  "bindings": { "<accountId>": "<proxyId>" },
+  "checkTimeoutMs": 10000, "notice": "…" }
+```
+
+> **密码永不回传。** 只有 `hasPassword` 说明配没配。密码以 AES-256-GCM
+> 加密落库，AAD 绑定该行 id——与 OCI 私钥同等待遇。
+
+**`POST /api/proxies/import`** — `{ "text": "...", "dryRun": true }`
+
+逐行解析，认这几种写法：
+
+```
+1.2.3.4:8080
+1.2.3.4:8080:user:pass          ← 代理商最常给的
+user:pass@1.2.3.4:8080
+socks5://user:pass@1.2.3.4:1080  # 行尾注释成为备注名
+```
+
+不写协议默认 `http`。**不支持 `socks5h`**（Go 的 net/http 只支持 `socks5`），
+会显式报错而不是留到运行时神秘失败。
+
+`dryRun` 为真时只解析不落库，返回逐行结果供预览。失败行保留**原始行号**——
+粘二十行进来只报个总数，等于让用户自己找。
+
+**`POST /api/proxies/bind`** — `{ "accountId": "...", "proxyId": "..." }`
+
+`proxyId` 为空串表示解绑，回到本机直连。
+
+> **一条代理只能绑一个账号。** 重复绑定返回 409 `proxy_shared`，是硬拒绝不是警告：
+> 两个账号共用同一出口，等于把它们绑在同一个 IP 上，凭空制造一个本来不存在的
+> 关联信号——与网络隔离的目的正好相反。
+
+**`POST /api/proxies/check`** / **`POST /api/proxies/{id}/check`**
+
+通过该代理向 `https://iaas.{region}.oraclecloud.com` 发一个未认证请求，
+拿到任何 HTTP 响应即算通。
+
+选 OCI 而不是第三方 IP 回显服务，理由有三：测的是真正要走的那条路；
+不把代理列表送给任何第三方；不需要凭据、不消耗配额、不产生费用。
+
+打哪个区域按该代理**所绑账号的 home region** 定——一条美国代理连东京和连
+阿什本的延迟差好几倍，固定测一个端点给出的数字是误导。未绑定的代理用
+用户任一账号的区域，都没有时回落 `us-ashburn-1`。
+
+> **检测不了「不同代理但同一出口 IP」。** 那需要第三方回显服务。
+> 代理商给的多条 IP 是否真的独立，需要自行验证。
+
+**`PATCH /api/proxies/{id}`** — 改备注、启停、重设密码（空串清除）
+**`DELETE /api/proxies/{id}`** — 仍被绑定时返回 409 `proxy_in_use`
+
+> 删除前必须先解绑。静默解绑会让那个账号在用户不知情的情况下回落本机直连——
+> 而用代理的全部目的就是不要那样。同理，建连时**不做任何失败回落**：
+> 代理取不到或解不开就直接让调用失败。
+
+---
+
 ## 账单
 
 用量与成本，数据来自 OCI Usage API（`RequestSummarizedUsages`）。**只读接口，查询本身不产生费用。**

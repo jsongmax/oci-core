@@ -59,6 +59,7 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 | **Instances** | Cross-account aggregated list (cached), start / stop / restart, reshape, rename, notes, launch wizard, bulk actions, terminate, list & card views, configurable columns, live status over SSE |
 | **Networking** | VCN / subnet / security rule editing, automatic network provisioning, public IP replacement, IPv6 enablement, grouped by account |
 | **Storage** | Boot and block volume resize, VPU tuning, attach / detach, including **rescue mode** (detach boot volume → mount on another instance → fix files → reattach) |
+| **Proxies** | Proxy pool: bulk import (four common formats), liveness checks with latency, per-account egress binding. One proxy binds to exactly one account — a shared exit would create the very correlation signal you are trying to avoid |
 | **Billing** | Per-account cost for this month and last, daily trend, breakdown by service and region; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
 | **Capacity monitor** | Calls Oracle's official **read-only** capacity report API to watch when a shape becomes available; notifies on state change |
 | **Capacity hunter** | Repeatedly attempts to launch an instance until it succeeds. Checks capacity first by default and skips the round when there is none |
@@ -433,6 +434,7 @@ internal/
   huntsvc           capacity hunter scheduler: backoff, AD rotation, duplicate-launch guard
   capacitysvc       capacity monitor polling
   billingsvc        usage and cost aggregation (Usage API)
+  proxypool         proxy parsing, liveness checks, binding constraints
   notify            notification channel dispatch
   httpapi           REST layer
   web               embedded frontend assets

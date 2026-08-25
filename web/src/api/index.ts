@@ -388,3 +388,27 @@ export const billing = {
       query: { days, refresh: refresh ? 'true' : undefined }
     })
 }
+
+/* ---------- 代理池 ---------- */
+
+export const proxies = {
+  list: () => http.get<D.ProxyListDTO>('/api/proxies'),
+
+  /** dryRun 为真时只解析不落库，用于导入前预览 */
+  import: (text: string, dryRun = false) =>
+    http.post<D.ProxyImportResultDTO>('/api/proxies/import', { text, dryRun }),
+
+  update: (id: string, patch: { label?: string; enabled?: boolean; password?: string }) =>
+    http.patch<{ proxy: D.ProxyDTO }>(`/api/proxies/${id}`, patch),
+
+  remove: (id: string) => http.del<{ ok: boolean }>(`/api/proxies/${id}`),
+
+  /** proxyId 为空串表示解绑，回到本机直连 */
+  bind: (accountId: string, proxyId: string) =>
+    http.post<{ ok: boolean }>('/api/proxies/bind', { accountId, proxyId }),
+
+  /** 不传 id 时检测全部 */
+  check: (id?: string) =>
+    http.post<{ results: D.ProxyCheckRowDTO[] }>(
+      id ? `/api/proxies/${id}/check` : '/api/proxies/check')
+}

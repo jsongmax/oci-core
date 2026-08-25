@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,7 +71,14 @@ func Open(path string, box *cryptobox.Box) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, box: box}, nil
+
+	s := &Store{db: db, box: box}
+	// 数据迁移放在建表与列迁移之后：它要写 proxies 表，也要用到 box 加密。
+	// 失败不阻断启动——旧的 proxy_url 字段还在，建连时有兜底分支。
+	if err := s.migrateLegacyProxies(context.Background()); err != nil {
+		slog.Warn("旧代理配置迁移失败，将继续使用账号上的原字段", "err", err)
+	}
+	return s, nil
 }
 
 // migrations 是对已有库的增量变更。
@@ -92,6 +100,12 @@ var migrations = []string{
 	// hunt_tasks 在这个字段之前就已经发布过了，光靠 CREATE TABLE IF NOT EXISTS
 	// 补不上——已有的库里那张表还是旧结构。
 	`ALTER TABLE hunt_tasks ADD COLUMN precheck_capacity INTEGER NOT NULL DEFAULT 1`,
+	// 代理从"账号的一个字符串字段"升级成独立实体。
+	//
+	// 旧的 proxy_url 列保留不动：已有部署里可能填过值，启动时会被
+	// 迁移进 proxies 表并回填 proxy_id（见 migrateLegacyProxies）。
+	// 直接删列会让回滚到旧版本的人丢配置。
+	`ALTER TABLE accounts ADD COLUMN proxy_id TEXT`,
 }
 
 func migrate(db *sql.DB) error {
@@ -301,6 +315,40 @@ CREATE TABLE IF NOT EXISTS capacity_watches (
     UNIQUE(account_id, availability_domain, shape, ocpus, memory_gb)
 );
 CREATE INDEX IF NOT EXISTS idx_capacity_enabled ON capacity_watches(enabled, last_checked_at);
+
+-- 代理池。
+--
+-- 代理是一等实体而不是账号的一个字段：要能独立查看存活状态、独立管理，
+-- 而且必须能检测「同一条代理绑给了两个账号」——那种情况下隔离是假的，
+-- 反而把两个账号绑在同一个出口 IP 上，凭空制造关联信号。
+CREATE TABLE IF NOT EXISTS proxies (
+    id            TEXT PRIMARY KEY,
+    label         TEXT NOT NULL DEFAULT '',
+    -- http / https / socks5
+    scheme        TEXT NOT NULL,
+    host          TEXT NOT NULL,
+    port          INTEGER NOT NULL,
+    username      TEXT NOT NULL DEFAULT '',
+    -- 密码与 OCI 私钥同等待遇：AES-256-GCM 加密，AAD 绑定本行 id，
+    -- 明文从不落盘。无密码时两列为 NULL。
+    pass_ciphertext BLOB,
+    pass_nonce      BLOB,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+
+    -- ok / fail / unknown
+    last_status     TEXT NOT NULL DEFAULT 'unknown',
+    last_latency_ms INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT NOT NULL DEFAULT '',
+    last_region     TEXT NOT NULL DEFAULT '',
+    last_checked_at INTEGER NOT NULL DEFAULT 0,
+    last_ok_at      INTEGER NOT NULL DEFAULT 0,
+
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    -- 同一个出口不该重复录入。scheme 也算进来：同一台机器的 http 与
+    -- socks5 端口是两条独立的路。
+    UNIQUE(scheme, host, port, username)
+);
 `
 
 // newID 生成 16 位十六进制的主键。对本工具的规模而言，128 位熵远超需求。
