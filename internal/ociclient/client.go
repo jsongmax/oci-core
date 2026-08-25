@@ -139,6 +139,20 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 		region = c.creds.Region
 	}
 
+	// 在拼 URL 之前就把区域挡住。
+	//
+	// 区域名会被拼进主机名，NormalizeRegion 已经用字符集把注入挡在外面了
+	// （见 region.go 的说明与 TestNormalizeRegionRejectsHostInjection）。
+	// 但它对非法输入返回的是空串，于是这里会拼出 https://iaas..oraclecloud.com
+	// 照常发出去——安全上无害（空 DNS 标签解析不了），可报错是一句莫名其妙的
+	// DNS 失败，排障时要绕好大一圈才找得回是区域填错了。
+	//
+	// 在 sink 前显式判一次：既给出能看懂的错误，也让"主机名不受输入控制"
+	// 这个性质在代码里直接可见，而不是只存在于另一个文件的正则里。
+	if NormalizeRegion(region) == "" {
+		return nil, fmt.Errorf("ociclient: 区域名不合法: %q", region)
+	}
+
 	target := Endpoint(req.Service, region) + "/" + req.Service.Version + req.Path
 	if len(req.Query) > 0 {
 		target += "?" + req.Query.Encode()
