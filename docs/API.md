@@ -437,6 +437,52 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 ---
 
+## 身份域密码策略
+
+租户的控制台密码默认 **120 天到期**，到期必须重置。管着几个只是「留着别被回收」
+的账号时，这意味着每隔几个月就得挨个登进去改一次。
+
+> **这个设置不在经典 IAM 里。** `AuthenticationPolicy` 只管密码长度与字符类型，
+> **没有有效期字段**。有效期属于 **Identity Domains** 的 `PasswordPolicy`，
+> 端点是每个身份域独立的 URL，走 SCIM 风格接口。
+>
+> 好在身份域的 REST API 支持 OCI 请求签名，所以本工具复用同一个签名器，
+> 不需要另做一套 OAuth。
+
+**`GET /api/accounts/{id}/password-policy`**
+
+```json
+{ "policy": {
+    "accountId": "a3f1c2d4", "supported": true,
+    "domainName": "Default", "domainUrl": "https://idcs-….identity.oraclecloud.com",
+    "policyId": "…", "policyName": "Default",
+    "expiresAfterDays": 120, "warnBeforeDays": 7, "minLength": 8 },
+  "notice": "…" }
+```
+
+`supported: false` 表示该租户**没有身份域**（未迁移的老租户），压根不存在密码
+有效期这回事。这不是错误，界面应当照实说明而不是报错。
+
+**`PATCH /api/accounts/{id}/password-policy`** — `{"days": 365}` 或 `{"disable": true}`
+
+`disable` 走 SCIM 的 `remove` 操作移除该属性。
+
+> **Oracle 未公开说明哪个值代表「永不过期」。** 因此本工具改完之后会**立即回读**
+> 一次，返回并展示服务端实际存下的值，而不是提交的值。若回读发现仍有有效期，
+> 响应的 `notice` 会明说，让用户改为设置一个较大的天数——
+> **提交成功不等于生效，这两件事必须分开讲。**
+
+用 PATCH 而非 PUT：这个资源有六十多个字段，PUT 要整体回传，少传一个就可能被清掉。
+
+> **权限门槛高。** 需要身份域管理员，远超本工具其余功能所需的 compute /
+> network / volume。这条策略作用于**整个身份域**，影响该租户下所有用户的
+> 控制台登录，不只是本工具用的那个 IAM 用户。修改会写入审计日志。
+
+> 关掉过期本身不降低安全性：NIST SP 800-63B 已不推荐强制定期轮换，理由是
+> 它逼着人用可预测的变体。真正管用的是强密码加多因子。
+
+---
+
 ## 代理池
 
 给每个账号配一条独立出口，让各账号的 API 调用不从同一个 IP 出去。

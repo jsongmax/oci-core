@@ -721,3 +721,25 @@ export interface ProxyCheckRowDTO {
   checkedAt: string
   region: string
 }
+
+/* ---------- 身份域密码策略 ---------- */
+
+export interface PasswordPolicyDTO {
+  accountId: string
+  /** false 表示该租户没有身份域，压根没有「密码有效期」这回事 */
+  supported: boolean
+  domainName?: string
+  domainUrl?: string
+  policyId?: string
+  policyName?: string
+  /** null 表示该属性不存在。按 Oracle 语义应当就是不过期，但官方没有明文 */
+  expiresAfterDays: number | null
+  warnBeforeDays?: number | null
+  minLength?: number | null
+  error?: string
+}
+
+export interface PasswordPolicyResultDTO {
+  policy: PasswordPolicyDTO
+  notice: string
+}

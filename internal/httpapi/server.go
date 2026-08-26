@@ -192,6 +192,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/capacity/{id}/{action}", s.guard(s.requireAuth(s.handleSetCapacityWatchEnabled)))
 	s.mux.HandleFunc("DELETE /api/capacity/{id}", s.guard(s.requireAuth(s.handleDeleteCapacityWatch)))
 
+	// 身份域密码策略。读是只读；写会改变整个租户的登录行为，走 guard。
+	s.mux.HandleFunc("GET /api/accounts/{id}/password-policy", s.requireAuth(s.handleGetPasswordPolicy))
+	s.mux.HandleFunc("PATCH /api/accounts/{id}/password-policy", s.guard(s.requireAuth(s.handleUpdatePasswordPolicy)))
+
 	// 代理池。读操作不走 guard；导入、绑定、改删都会影响所有账号出网，
 	// 一律走 guard。检测是纯出网请求，不打 Oracle 接口，也不走 guard。
 	s.mux.HandleFunc("GET /api/proxies", s.requireAuth(s.handleListProxies))

@@ -412,3 +412,15 @@ export const proxies = {
     http.post<{ results: D.ProxyCheckRowDTO[] }>(
       id ? `/api/proxies/${id}/check` : '/api/proxies/check')
 }
+
+/* ---------- 身份域密码策略 ---------- */
+
+export const passwordPolicy = {
+  get: (accountId: string) =>
+    http.get<D.PasswordPolicyResultDTO>(`/api/accounts/${accountId}/password-policy`),
+
+  /** days 为 null 且 disable 为真时尝试取消过期 */
+  set: (accountId: string, input: { days?: number | null; disable?: boolean }) =>
+    http.patch<D.PasswordPolicyResultDTO>(
+      `/api/accounts/${accountId}/password-policy`, input)
+}

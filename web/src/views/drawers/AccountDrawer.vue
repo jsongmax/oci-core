@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
+import { passwordPolicy, type PasswordPolicyDTO } from '@/api'
 import { mask } from '@/lib/mask'
 import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
 import { ALWAYS_FREE, armFreeText } from '@/lib/freetier'
@@ -66,7 +67,72 @@ const permissionChecks = computed<CheckItem[]>(() => {
   return items
 })
 
-const TABS = ['概览', '区域订阅', '配额', '权限自检', '密钥']
+const TABS = ['概览', '区域订阅', '配额', '权限自检', '登录策略', '密钥']
+
+/* ---------- 登录策略（身份域密码有效期） ---------- */
+
+const policy = ref<PasswordPolicyDTO | null>(null)
+const policyNotice = ref('')
+const policyLoading = ref(false)
+const policySaving = ref(false)
+const policyDays = ref(365)
+
+async function loadPolicy() {
+  if (!props.id) return
+  policyLoading.value = true
+  try {
+    const res = await passwordPolicy.get(props.id)
+    policy.value = res.policy
+    policyNotice.value = res.notice
+    if (res.policy.expiresAfterDays) policyDays.value = res.policy.expiresAfterDays
+  } catch (err) {
+    policy.value = null
+    toastError('读取登录策略失败', err)
+  } finally {
+    policyLoading.value = false
+  }
+}
+
+/**
+ * 修改有效期。
+ *
+ * disable 为真时尝试移除这个属性。Oracle 没有公开说明哪个值代表永不过期，
+ * 所以后端改完会立即回读——这里显示的始终是服务端实际存下的值。
+ * 提交成功不等于生效，两者必须分开讲。
+ */
+function applyPolicy(disable: boolean) {
+  ask({
+    level: 2,
+    title: disable ? '取消密码过期' : `把密码有效期设为 ${policyDays.value} 天`,
+    body: `这会修改账号「${account.value?.alias ?? ''}」所在身份域的密码策略，` +
+      '影响该租户下所有用户的控制台登录，不只是本工具用的那个 IAM 用户。' +
+      '需要身份域管理员权限。',
+    okLabel: '确认修改',
+    onConfirm: async () => {
+      policySaving.value = true
+      try {
+        const res = await passwordPolicy.set(props.id,
+          disable ? { disable: true } : { days: policyDays.value })
+        policy.value = res.policy
+        policyNotice.value = res.notice
+        toast({ tone: 'success', title: '已修改', body: res.notice })
+      } catch (err) {
+        toastError('修改失败', err)
+      } finally {
+        policySaving.value = false
+      }
+    }
+  })
+}
+
+/** 当前有效期的一句话。null 和 0 含义不同，不能混为一谈。 */
+const expiryText = computed(() => {
+  const p = policy.value
+  if (!p?.supported) return '—'
+  if (p.expiresAfterDays === null || p.expiresAfterDays === undefined) return '未设置（应为不过期）'
+  if (p.expiresAfterDays === 0) return '0 天（服务端如此存储）'
+  return `${p.expiresAfterDays} 天`
+})
 
 /** 抽屉副标题里带着 OCID 与邮箱，跟着隐私模式一起打码。 */
 const drawerSub = computed(() => {
@@ -356,6 +422,72 @@ Allow group OCI Core to read all-resources in tenancy`" />
         </SectionCard>
       </template>
 
+      <template v-else-if="active === '登录策略'">
+        <SectionCard title="密码有效期"
+                     :note="policy?.domainName ? `身份域 ${policy.domainName}` : ''">
+          <template #action>
+            <button class="btn btn--sm" :disabled="policyLoading" @click="loadPolicy()">
+              {{ policyLoading ? '读取中…' : (policy ? '重新读取' : '读取') }}
+            </button>
+          </template>
+
+          <CheckList v-if="!policy" :items="[
+            { tone: 'info', text: '点「读取」查看该租户的密码有效期。读取只需要现有权限，不会改动任何东西。' }
+          ]" />
+
+          <!-- 老租户根本没有身份域，也就没有密码过期这回事。
+               这不是错误，说清楚比报错有用 -->
+          <CheckList v-else-if="!policy.supported" :items="[
+            { tone: policy.error ? 'fail' : 'info',
+              text: policy.error
+                ? `读取失败：${policy.error}`
+                : '该租户没有身份域，不存在密码有效期设置。这类租户的密码不会自动过期。' },
+            { tone: 'info', text: '读取失败若是权限问题，需要身份域管理员角色——这比本工具其余功能所需的权限都高。' }
+          ]" />
+
+          <template v-else>
+            <KeyValueList :items="[
+              { k: '当前有效期', v: expiryText, mono: true,
+                tone: policy.expiresAfterDays ? 'var(--warning)' : 'var(--success)' },
+              { k: '到期前提醒', v: policy.warnBeforeDays ? `${policy.warnBeforeDays} 天` : '未设置', mono: true },
+              { k: '最小长度', v: policy.minLength ? `${policy.minLength} 位` : '未设置', mono: true },
+              { k: '策略名', v: policy.policyName || '—', mono: true }
+            ]" />
+
+            <div class="pad">
+              <CheckList :items="[
+                { tone: 'info', text: policyNotice },
+                { tone: 'warn',
+                  text: '这条策略作用于整个身份域，影响该租户下所有用户的控制台登录，不只是本工具用的那个 IAM 用户。' },
+                { tone: 'info',
+                  text: '关掉过期并不降低安全性：NIST SP 800-63B 已不推荐强制定期轮换，理由是它逼着人用可预测的变体。真正管用的是强密码加多因子。' }
+              ]" />
+
+              <div class="pol">
+                <button class="btn btn--sm" :disabled="policySaving"
+                        @click="applyPolicy(true)">尝试取消过期</button>
+                <span class="pol__sep">或</span>
+                <label class="pol__num">
+                  <span class="t-2xs dim-3">设为</span>
+                  <input v-model.number="policyDays" class="input mono" type="number"
+                         min="1" max="3650" step="30" />
+                  <span class="t-2xs dim-3">天</span>
+                </label>
+                <button class="btn btn--sm btn--primary"
+                        :disabled="policySaving || !policyDays"
+                        @click="applyPolicy(false)">
+                  {{ policySaving ? '提交中…' : '应用' }}
+                </button>
+              </div>
+              <p class="t-2xs dim-3 pol__hint">
+                「取消过期」走的是移除该属性。Oracle 未公开这是否等同于永不过期，
+                所以提交后会立即回读——若服务端仍返回有效期，改用上面设一个较大的天数。
+              </p>
+            </div>
+          </template>
+        </SectionCard>
+      </template>
+
       <template v-else>
         <SectionCard title="当前密钥">
           <KeyValueList :items="[
@@ -388,6 +520,12 @@ Allow group OCI Core to read all-resources in tenancy`" />
 </template>
 
 <style scoped>
+.pol { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.pol__sep { font-size: 11px; color: var(--text-tertiary); }
+.pol__num { display: flex; align-items: center; gap: 6px; }
+.pol__num .input { width: 84px; }
+.pol__hint { margin: 10px 0 0; line-height: 1.8; }
+
 .lamp { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--radius-full); background: var(--bg-inset); color: var(--c); font-size: 12px; font-weight: 600; }
 .lamp__dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--c); }
 .lamp__dot.is-pulsing { animation: pulse 2s ease-in-out infinite; }

@@ -37,11 +37,6 @@ type Client struct {
 	tenancySlots chan struct{}
 }
 
-// defaultTransport 是带短拨号超时的传输层。
-//
-// 默认的 30 秒总超时挡不住"域名能解析但 TCP 连不上"这种情况——OCI 的
-// 泛解析会让写错的服务域名照样解析出 IP，请求随后一路挂到总超时。
-// 把拨号阶段单独限到 8 秒，配错域名会很快报错而不是让界面卡半分钟。
 // NewTransport 返回一份带短拨号超时的传输层，供需要自定义 http.Client
 // 的调用方复用（例如 ociconn 要挂代理）。
 //
@@ -50,6 +45,11 @@ type Client struct {
 // 那一环，一挂就要等满 30 秒总超时才报错。
 func NewTransport() *http.Transport { return defaultTransport() }
 
+// defaultTransport 是带短拨号超时的传输层。
+//
+// 默认的 30 秒总超时挡不住"域名能解析但 TCP 连不上"这种情况——OCI 的
+// 泛解析会让写错的服务域名照样解析出 IP，请求随后一路挂到总超时。
+// 把拨号阶段单独限到 8 秒，配错域名会很快报错而不是让界面卡半分钟。
 func defaultTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DialContext = (&net.Dialer{
@@ -110,7 +110,15 @@ type Request struct {
 	Path string
 	// Region 覆盖客户端默认区域。留空则用默认值。
 	Region string
-	Query  url.Values
+	// BaseURL 直接指定完整的基础地址（协议 + 主机 + 版本段），用于不遵循
+	// {service}.{region} 命名规则的端点——Identity Domains 每个身份域
+	// 有自己的 URL，形如 https://idcs-xxxx.identity.oraclecloud.com。
+	//
+	// 非空时 Service 与 Region 都被忽略。地址会先过一遍 oracleBaseURL 校验：
+	// 它来自 ListDomains 的响应，虽然是 Oracle 给的，但仍是流进 URL 的数据，
+	// 不该无条件相信（同 region.go 里对区域名的处理）。
+	BaseURL string
+	Query   url.Values
 	// Body 会被序列化为 JSON。为 nil 表示无请求体。
 	Body any
 }
@@ -132,6 +140,19 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 		if err != nil {
 			return nil, fmt.Errorf("ociclient: 序列化请求体失败: %w", err)
 		}
+	}
+
+	// 走绝对地址的端点（Identity Domains）不参与区域拼接。
+	if req.BaseURL != "" {
+		base, err := oracleBaseURL(req.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		target := base + req.Path
+		if len(req.Query) > 0 {
+			target += "?" + req.Query.Encode()
+		}
+		return c.doTarget(ctx, req.Method, target, payload, out)
 	}
 
 	region := req.Region
@@ -157,9 +178,13 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	if len(req.Query) > 0 {
 		target += "?" + req.Query.Encode()
 	}
+	return c.doTarget(ctx, req.Method, target, payload, out)
+}
 
+// doTarget 对一个已经拼好的完整地址执行请求，带重试与退避。
+func (c *Client) doTarget(ctx context.Context, method, target string, payload []byte, out any) (*Response, error) {
 	for attempt := 0; ; attempt++ {
-		resp, err := c.attempt(ctx, req.Method, target, payload, out)
+		resp, err := c.attempt(ctx, method, target, payload, out)
 		if err == nil {
 			return resp, nil
 		}
@@ -175,6 +200,51 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 		case <-time.After(wait):
 		}
 	}
+}
+
+// oracleBaseURL 校验并归一化一个绝对端点地址。
+//
+// 地址来自 ListDomains 的响应。虽然那是 Oracle 自己返回的，但它仍是一段
+// 流进 URL 的数据，而流进去之后我们会**带着签名**向它发请求。不校验的话，
+// 一个被污染的响应就能把带签名的请求引到别处去——这跟 region.go 里防的
+// 是同一类事，只是入口换成了响应体而不是用户输入。
+func oracleBaseURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("ociclient: 端点地址无法解析: %w", err)
+	}
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("ociclient: 端点必须是 https: %q", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("ociclient: 端点地址含非预期成分: %q", raw)
+	}
+	host := strings.ToLower(u.Hostname())
+	if !isOracleHost(host) {
+		return "", fmt.Errorf("ociclient: 端点不在 Oracle 域内: %q", host)
+	}
+	// 去掉末尾斜杠，调用方的 Path 一律以 / 开头。
+	return u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/"), nil
+}
+
+// oracleHostSuffixes 是允许的端点域名后缀。
+//
+// 身份域的地址形如 idcs-xxxx.identity.oraclecloud.com，与常规服务端点
+// 不是一个命名空间，所以单独列。
+var oracleHostSuffixes = []string{
+	".oraclecloud.com",
+	".oraclegovcloud.com",
+	".oraclegovcloud.uk",
+	".oracle.com",
+}
+
+func isOracleHost(host string) bool {
+	for _, suffix := range oracleHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // attempt 执行单次请求。每次尝试都重新构造并签名——Date 头必须是新鲜的，
