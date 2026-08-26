@@ -3,6 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
+import MaskedText from '@/components/MaskedText.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
 import { acctColor, copy } from '@/lib/format'
 import { auth, insights, http, type AuditEntryDTO } from '@/api'
@@ -564,7 +565,7 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
           <span class="mono t-xs" :style="{ color: colorOf(r.accountId), fontWeight: 600 }">{{ codeOf(r.accountId) }}</span>
           <span class="mono t-xs dim">{{ r.target || '—' }}</span>
           <span class="t-xs dim-3">{{ r.detail || '—' }}</span>
-          <span class="mono t-xs dim-3">{{ r.ip || '—' }}</span>
+          <span class="mono t-xs dim-3"><MaskedText :value="r.ip || '—'" kind="ip" /></span>
           <span class="t-xs" :style="{ color: r.result === 'ok' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
             {{ r.result === 'ok' ? '成功' : '失败' }}
           </span>

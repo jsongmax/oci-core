@@ -6,6 +6,7 @@ import { acctColor, copy } from '@/lib/format'
 import { instanceUptime } from '@/lib/adapt'
 import { MAX_CONCURRENT_PULSES, isTransitional } from '@/lib/lifecycle'
 import type { Instance } from '@/types'
+import MaskedText from '@/components/MaskedText.vue'
 import AccountChip from '@/components/AccountChip.vue'
 import StateBadge from '@/components/StateBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -228,7 +229,7 @@ const bootTone = (i: Instance) =>
             </span>
 
             <span v-if="cols.has('ip')" class="cell mono t-xs ip" :class="{ 'is-fresh': i.settledAt }">
-              <span class="ip__v">{{ i.publicIp }}</span>
+              <span class="ip__v"><MaskedText :value="i.publicIp" kind="ip" /></span>
               <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"
                       @click.stop="copyIp(i.publicIp)">⧉</button>
             </span>

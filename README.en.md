@@ -66,6 +66,7 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 | **Metrics** | CPU / memory / bidirectional traffic time series, resolution adapts to the time span |
 | **Console** | Serial console and VNC tunnel connection strings |
 | **Notifications** | Telegram / WeCom / DingTalk / Email / Webhook plus an event subscription matrix |
+| **Privacy** | Emails, public IPs, OCIDs and fingerprints are masked by default, each with a reveal button plus a one-click global toggle in the top bar. Copying always yields the real value — built for screenshots and screen sharing |
 | **Security** | argon2id password hashing, TOTP two-factor, session management with force logout, CSRF protection, login rate limiting, audit log (cursor pagination, full export, optional retention), three-tier confirmation for dangerous actions |
 
 ---

@@ -5,6 +5,7 @@ import { useStore } from '@/store'
 import { acctColor, pct, usageTone } from '@/lib/format'
 import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
 import type { Account } from '@/types'
+import MaskedText from '@/components/MaskedText.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const { state, openDrawer } = useStore()
@@ -110,8 +111,8 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
                     @click.stop="openDrawer({ kind: 'account', id: a.id, tab: '密钥' })">⋯</button>
           </header>
 
-          <p class="acct__mail">{{ a.email }}</p>
-          <p class="acct__ocid mono">ocid1.tenancy…{{ a.tenancyTail }}</p>
+          <p class="acct__mail"><MaskedText :value="a.email" kind="email" /></p>
+          <p class="acct__ocid mono">ocid1.tenancy…<MaskedText :value="a.tenancyTail" /></p>
 
           <div class="acct__tier">
             <span class="acct__tag" :class="`is-${a.tier}`">{{ tierLabel[a.tier] }}</span>
@@ -182,7 +183,7 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
             <span class="lcell__alias">{{ a.alias }}</span>
             <span class="acct__code mono">{{ a.code }}</span>
           </span>
-          <span class="lcell__sub">{{ a.email }}</span>
+          <span class="lcell__sub"><MaskedText :value="a.email" kind="email" /></span>
         </span>
 
         <span class="cell lcell">

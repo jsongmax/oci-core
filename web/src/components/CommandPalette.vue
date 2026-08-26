@@ -3,6 +3,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
+import MaskedText from '@/components/MaskedText.vue'
 import { acctColor } from '@/lib/format'
 
 const router = useRouter()
@@ -63,7 +64,7 @@ function goAccount(id: string) {
             <button v-for="i in instanceHits" :key="i.id" class="pal__row" @click="goInstance(i.id)">
               <span class="pal__bar" :style="{ background: acctColor(accountById(i.accountId).colorIndex) }" />
               <span class="pal__title">{{ i.name }}</span>
-              <span class="pal__sub mono">{{ i.publicIp }}</span>
+              <span class="pal__sub mono"><MaskedText :value="i.publicIp" kind="ip" /></span>
               <span class="pal__code mono" :style="{ color: acctColor(accountById(i.accountId).colorIndex) }">
                 {{ accountById(i.accountId).code }}
               </span>
@@ -74,7 +75,7 @@ function goAccount(id: string) {
             <button v-for="a in accountHits" :key="a.id" class="pal__row" @click="goAccount(a.id)">
               <span class="pal__bar" :style="{ background: acctColor(a.colorIndex) }" />
               <span class="pal__title">{{ a.alias }}</span>
-              <span class="pal__sub mono">ocid1…{{ a.tenancyTail }}</span>
+              <span class="pal__sub mono">ocid1…<MaskedText :value="a.tenancyTail" /></span>
               <span class="pal__code mono" :style="{ color: acctColor(a.colorIndex) }">{{ a.code }}</span>
             </button>
           </template>

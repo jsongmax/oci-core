@@ -467,9 +467,9 @@ watch(metricHours, () => void loadMetrics())
           <SectionCard title="IP 地址">
             <KeyValueList :items="[
               { k: '公网 IPv4', v: primaryVnic?.publicIp || '未分配',
-                mono: true, copyable: !!primaryVnic?.publicIp },
+                mono: true, copyable: !!primaryVnic?.publicIp, secret: 'ip' },
               { k: '类型', v: primaryVnic?.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' },
-              { k: '私网 IPv4', v: primaryVnic?.privateIp || '—', mono: true, copyable: true },
+              { k: '私网 IPv4', v: primaryVnic?.privateIp || '—', mono: true, copyable: true, secret: 'ip' },
               { k: 'IPv6', v: primaryVnic?.ipv6?.join(', ') || '未启用',
                 mono: true, tone: 'var(--text-secondary)' }
             ]" />

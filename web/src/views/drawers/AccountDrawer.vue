@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
+import { mask } from '@/lib/mask'
 import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
 import { ALWAYS_FREE, armFreeText } from '@/lib/freetier'
 import { accounts as accountsApi, type CheckStepDTO } from '@/api'
@@ -66,6 +67,15 @@ const permissionChecks = computed<CheckItem[]>(() => {
 })
 
 const TABS = ['概览', '区域订阅', '配额', '权限自检', '密钥']
+
+/** 抽屉副标题里带着 OCID 与邮箱，跟着隐私模式一起打码。 */
+const drawerSub = computed(() => {
+  const a = account.value
+  if (!a) return ''
+  const tail = state.privacyMode ? mask(a.tenancyTail) : a.tenancyTail
+  const mail = state.privacyMode ? mask(a.email, 'email') : a.email
+  return `ocid1.tenancy…${tail} · ${mail}`
+})
 const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : '概览')
 
 const account = computed(() => state.accounts.find(a => a.id === props.id))
@@ -205,7 +215,7 @@ function askDelete() {
 <template>
   <AppDrawer v-if="account" width="wide" @close="closeDrawer()">
     <DrawerHeader :color="color" :code="account.code" :title="account.alias"
-                  :sub="`ocid1.tenancy…${account.tenancyTail} · ${account.email}`" @close="closeDrawer()">
+                  :sub="drawerSub" @close="closeDrawer()">
       <template #badge>
         <span class="lamp" :style="{ '--c': statusTone[account.status] }">
           <span class="lamp__dot" :class="{ 'is-pulsing': account.status === 'checking' }" />
@@ -233,10 +243,10 @@ function askDelete() {
           <KeyValueList :items="[
             { k: '别名', v: account.alias },
             { k: '短代号', v: account.code, mono: true, tone: color },
-            { k: '租户 OCID', v: `ocid1.tenancy.oc1..aaaaaaaa${account.tenancyTail}`, mono: true, copyable: true },
-            { k: '用户邮箱', v: account.email, mono: true },
+            { k: '租户 OCID', v: `ocid1.tenancy.oc1..aaaaaaaa${account.tenancyTail}`, mono: true, copyable: true, secret: 'ocid' },
+            { k: '用户邮箱', v: account.email, mono: true, copyable: true, secret: 'email' },
             { k: '账号类型', v: tierText, tone: tierTone },
-            { k: '密钥指纹', v: account.fingerprint, mono: true, copyable: true },
+            { k: '密钥指纹', v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
             { k: '开户时间', v: openedText },
             { k: '接入本面板', v: account.createdAt, mono: true },
             { k: '最后校验', v: accountStatusText(account) }
@@ -349,7 +359,7 @@ Allow group OCI Core to read all-resources in tenancy`" />
       <template v-else>
         <SectionCard title="当前密钥">
           <KeyValueList :items="[
-            { k: '指纹', v: account.fingerprint, mono: true, copyable: true },
+            { k: '指纹', v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
             { k: '算法', v: 'RSA 2048', mono: true },
             { k: '存储', v: 'AES-256-GCM 加密于本地数据库' },
             { k: '私钥', v: '永不回显，界面无导出入口', tone: 'var(--text-secondary)' }

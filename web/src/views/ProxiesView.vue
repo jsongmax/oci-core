@@ -24,6 +24,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import CheckList from '@/components/CheckList.vue'
 import AccountChip from '@/components/AccountChip.vue'
+import MaskedText from '@/components/MaskedText.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
 
 const { state, accountById, ask, toast, toastError } = useStore()
@@ -296,7 +297,7 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
         </span>
 
         <span class="px__label">{{ p.label || '—' }}</span>
-        <span class="mono t-xs px__addr">{{ display(p) }}</span>
+        <span class="mono t-xs px__addr"><MaskedText :value="display(p)" kind="hostport" /></span>
 
         <span v-if="p.lastStatus === 'ok'" class="mono t-2xs dim-3 px__lat">
           {{ p.lastLatencyMs }}ms

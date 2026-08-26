@@ -48,6 +48,25 @@ const state = reactive({
   accentName: localStorage.getItem('oci.accent') ?? 'cyan',
   sidebarCollapsed: false,
   density: (localStorage.getItem('oci.density') as Density) ?? 'comfy',
+  /**
+   * 隐私模式：邮箱、IP、OCID、指纹默认打码，点眼睛按钮单独展开。
+   *
+   * 默认开。这个面板日常要发截图求助、录演示，而屏幕上到处是能拼出
+   * 「你的机器在哪、归谁」的信息。默认关的话，等你想起来要打码时，
+   * 截图已经发出去了。
+   *
+   * 只影响显示，不影响复制——复制永远给原文，否则这功能就从隐私保护
+   * 变成了故意添堵。
+   */
+  privacyMode: localStorage.getItem('oci.privacy') !== 'off',
+  /**
+   * 重新开启隐私模式时自增，MaskedText 据此把所有「单独展开」收回。
+   *
+   * 不收回的话会出一个很坏的错觉：你重新打开隐私模式——通常正是
+   * 「马上要截图」那一刻——以为全盖住了，实际上之前点开过的那几条
+   * 还露着原文。
+   */
+  revealEpoch: 0,
   // 分组偏好横跨实例、网络、存储三页，是"这个人习惯怎么看"，
   // 不该每次刷新都退回默认——和账号页的卡片/列表偏好同理。
   groupByAccount: localStorage.getItem('oci.groupByAccount') === '1',
@@ -155,6 +174,12 @@ watch(() => state.accentName, a => {
 
 watch(() => state.density, d => localStorage.setItem('oci.density', d))
 watch(() => state.groupByAccount, g => localStorage.setItem('oci.groupByAccount', g ? '1' : ''))
+
+watch(() => state.privacyMode, v => {
+  localStorage.setItem('oci.privacy', v ? 'on' : 'off')
+  // 只在「开启」时收回，关闭时没必要动——那时本来就全是原文。
+  if (v) state.revealEpoch++
+})
 
 watch(() => state.options.reduceMotion, r => {
   document.documentElement.dataset.motion = r ? 'reduced' : ''

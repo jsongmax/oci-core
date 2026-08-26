@@ -1,3 +1,5 @@
+import type { MaskKind } from '@/lib/mask'
+
 export type LifecycleState =
   | 'RUNNING' | 'STOPPED' | 'PROVISIONING' | 'STARTING' | 'STOPPING' | 'TERMINATING' | 'TERMINATED'
 
@@ -125,6 +127,11 @@ export interface KvItem {
   mono?: boolean
   tone?: string
   copyable?: boolean
+  /**
+   * 非空表示这是敏感值，按该类型打码并带展开按钮。
+   * 复制仍然复制原文。
+   */
+  secret?: MaskKind
 }
 
 /** CheckList 的一项（权限自检、连接校验、诊断） */
