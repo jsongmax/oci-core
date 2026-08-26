@@ -108,18 +108,6 @@ async function doLogout() {
 
     <span class="top__sep" />
 
-    <!-- 隐私模式总开关。
-         逐个点眼睛按钮在"马上要截图"这种时刻太慢，得有一个一键切换的地方。 -->
-    <button class="top__control top__privacy" :class="{ 'is-active': state.privacyMode }"
-            :title="state.privacyMode
-              ? '隐私模式已开启：邮箱、IP、OCID 等默认打码，点单条右侧的按钮可单独展开'
-              : '隐私模式已关闭：敏感数据以原文显示'"
-            :aria-pressed="state.privacyMode"
-            @click="state.privacyMode = !state.privacyMode">
-      <span>{{ state.privacyMode ? '◉' : '◡' }}</span>
-      <span class="top__privacy-label">{{ state.privacyMode ? '打码' : '原文' }}</span>
-    </button>
-
     <span class="top__sep" />
 
     <div class="top__filter-wrap">
@@ -200,10 +188,6 @@ async function doLogout() {
 }
 .top__pulse::before { animation: pulse 2s ease-in-out infinite; }
 .top__pulse > span { animation: ring 2s ease-out infinite; }
-
-.top__privacy { gap: 6px; }
-.top__privacy-label { font-size: 11px; }
-@media (max-width: 900px) { .top__privacy-label { display: none; } }
 
 .top__sep { width: 1px; height: 22px; background: var(--border-subtle); }
 .top__pop--user { min-width: 168px; }

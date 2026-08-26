@@ -478,6 +478,23 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
                  sub="按 L2 门槛处理。仅前端行为，不影响接口" />
     </SectionCard>
 
+    <SectionCard v-if="active === '操作策略'" title="隐私模式"
+                 note="为截图与共享屏幕而做——只影响显示，不影响复制" class="mt">
+      <SwitchRow v-model="state.privacyMode" title="敏感数据默认打码"
+                 sub="邮箱、公网 IP、OCID、密钥指纹、代理地址显示为打码形式，每处尾部有按钮可单独展开" />
+      <div class="pad privacy-note">
+        <p class="t-xs dim-3">
+          保留可辨识度：IP 留前两段、邮箱留域名、OCID 留类型与末四位——
+          全打成星号会让面板没法用。<b>复制永远给原文</b>，
+          重新开启时会收回所有已展开的项。
+        </p>
+        <p class="t-xs dim-3">
+          这不是安全边界：数据仍完整地经接口到达浏览器。真正的机密——
+          OCI 私钥、代理密码、通知渠道令牌——在后端就不回显，那才是边界。
+        </p>
+      </div>
+    </SectionCard>
+
     <SectionCard v-if="active === '操作策略'" title="后台同步"
                  note="全量对账的频率。状态变化走 SSE 实时推送，这里只是兜底">
       <div class="chk">
@@ -588,6 +605,10 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
 </template>
 
 <style scoped>
+.privacy-note { padding-top: 4px; }
+.privacy-note p { margin: 0 0 8px; line-height: 1.8; }
+.privacy-note p:last-child { margin-bottom: 0; }
+
 .chk { display: flex; align-items: center; gap: 16px; padding: 14px 16px; }
 .chk__text { flex: 1 1 auto; min-width: 0; }
 .chk__title { font-size: 13px; font-weight: 600; }

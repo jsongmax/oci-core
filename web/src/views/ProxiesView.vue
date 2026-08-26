@@ -255,7 +255,10 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
     <!-- 导入 -->
     <SectionCard title="导入代理" note="每行一条，认得下面几种常见格式">
       <div class="pad">
-        <textarea v-model="importText" class="input imp__box mono" rows="5"
+        <!-- 用 .textarea 而不是 .input：.input 是固定 36px 高的单行控件，
+             套在 textarea 上会把它压成一条缝，rows 属性完全不起作用。 -->
+        <textarea v-model="importText" class="textarea imp__box"
+                  style="height: 116px"
                   :placeholder="PLACEHOLDER" spellcheck="false" />
         <div class="imp__actions">
           <button class="btn" :disabled="importing || !importText.trim()"
@@ -356,7 +359,9 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
 .pad { padding: 16px 20px; }
 
 /* ---- 导入 ---- */
-.imp__box { width: 100%; resize: vertical; line-height: 1.7; }
+/* resize 覆盖 .textarea 的 none：代理列表长短差别很大，
+   拖高一点比在小窗口里滚动舒服。 */
+.imp__box { width: 100%; resize: vertical; }
 .imp__actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .imp__rows { margin-top: 16px; border-top: 1px solid var(--border-subtle); }
 .imp__row {
