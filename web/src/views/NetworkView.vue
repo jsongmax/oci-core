@@ -344,6 +344,25 @@ const manual = reactive({
   description: ''
 })
 
+/** 下拉选项。label 为空表示不画分组标题。 */
+const DIRECTION_GROUPS: SelectGroup[] = [{
+  label: '',
+  options: [
+    { value: 'ingress', label: '入站' },
+    { value: 'egress', label: '出站' }
+  ]
+}]
+
+const PROTOCOL_GROUPS: SelectGroup[] = [{
+  label: '',
+  options: [
+    { value: '6', label: 'TCP' },
+    { value: '17', label: 'UDP' },
+    { value: '1', label: 'ICMP' },
+    { value: 'all', label: 'ALL' }
+  ]
+}]
+
 /** 只有 TCP/UDP 有端口。ALL 与 ICMP 的端口框没有意义。 */
 const manualHasPorts = computed(() => manual.protocol === '6' || manual.protocol === '17')
 
@@ -645,21 +664,18 @@ watch(
 
       <SectionCard title="自定义规则" class="mt" :note="templateTargetNote">
         <div class="manual">
+          <!-- 用 SelectMenu 而不是原生 <select>：原生下拉展开后的那张列表是
+               浏览器画的，CSS 碰不到，深色主题下会弹出一片系统浅色。 -->
           <div class="field">
-            <label for="rule-dir">方向</label>
-            <select id="rule-dir" v-model="manual.direction" class="input">
-              <option value="ingress">入站</option>
-              <option value="egress">出站</option>
-            </select>
+            <span class="lbl">方向</span>
+            <SelectMenu :model-value="manual.direction" :groups="DIRECTION_GROUPS" :min-width="120"
+                        aria-label="规则方向"
+                        @update:model-value="manual.direction = $event as RuleDirection" />
           </div>
           <div class="field">
-            <label for="rule-proto">协议</label>
-            <select id="rule-proto" v-model="manual.protocol" class="input">
-              <option value="6">TCP</option>
-              <option value="17">UDP</option>
-              <option value="1">ICMP</option>
-              <option value="all">ALL</option>
-            </select>
+            <span class="lbl">协议</span>
+            <SelectMenu v-model="manual.protocol" :groups="PROTOCOL_GROUPS" :min-width="120"
+                        aria-label="规则协议" />
           </div>
           <div class="field">
             <label for="rule-cidr">{{ manual.direction === 'egress' ? '目标 CIDR' : '来源 CIDR' }}</label>
@@ -795,6 +811,10 @@ watch(
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 .manual-desc { grid-column: 1 / -1; }
+.manual .lbl { font-size: 12px; color: var(--text-secondary); }
+/* SelectMenu 的触发器是 inline-flex，不撑格子；输入框跟着降到同高度对齐。 */
+.manual :deep(.sm__trigger) { width: 100%; }
+.manual .input { height: 32px; }
 .manual-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 0 20px 16px;
