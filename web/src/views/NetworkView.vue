@@ -6,10 +6,10 @@
  * 因此这里对筛选器里的每个账号 × 其订阅区域各拉一次，再在前端合并。
  * 网络对象数量很少（一个账号通常一两个 VCN），这个代价可以接受。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
-import { network, errorText, type SubnetDTO, type VcnDTO, type SecurityListDTO, type RuleTemplateDTO, type IngressRuleDTO, type EgressRuleDTO } from '@/api'
+import { network, errorText, type SubnetDTO, type VcnDTO, type SecurityListDTO, type RuleTemplateDTO, type RuleDirection, type IngressRuleDTO, type EgressRuleDTO } from '@/api'
 import SectionCard from '@/components/SectionCard.vue'
 import PageTabs from '@/components/PageTabs.vue'
 import AccountChip from '@/components/AccountChip.vue'
@@ -248,17 +248,36 @@ async function saveRules(ingress: IngressRuleDTO[], egress: EgressRuleDTO[], suc
   }
 }
 
-function buildRule(t: RuleTemplateDTO): IngressRuleDTO {
-  const rule: IngressRuleDTO = {
-    protocol: t.protocol,
-    source: '0.0.0.0/0',
-    sourceType: 'CIDR_BLOCK',
-    description: t.description
+/**
+ * 协议相关的选项。
+ *
+ * range 为空表示不限端口，此时**不能**退化成 0-0 的区间——那会生成一条
+ * 只对端口 0 生效的规则，看着像加上了、实际什么都没放行。不限端口的
+ * 正确写法是整个 tcpOptions/udpOptions 都不出现。
+ *
+ * ICMP 固定用 type 3 / code 4（需要分片但设置了 DF）：路径 MTU 发现靠它，
+ * 丢了会表现为"小包正常、大包卡死"。
+ */
+function protocolOptions(protocol: string, range?: { min: number; max: number }) {
+  if (protocol === '1') return { icmpOptions: { type: 3, code: 4 } }
+  if (!range) return {}
+  if (protocol === '6') return { tcpOptions: { destinationPortRange: range } }
+  if (protocol === '17') return { udpOptions: { destinationPortRange: range } }
+  return {}
+}
+
+function buildIngress(protocol: string, cidr: string, desc: string, range?: { min: number; max: number }): IngressRuleDTO {
+  return {
+    protocol, source: cidr, sourceType: 'CIDR_BLOCK', description: desc,
+    ...protocolOptions(protocol, range)
   }
-  if (t.protocol === '6') rule.tcpOptions = { destinationPortRange: { min: t.port, max: t.port } }
-  if (t.protocol === '17') rule.udpOptions = { destinationPortRange: { min: t.port, max: t.port } }
-  if (t.protocol === '1') rule.icmpOptions = { type: 3, code: 4 }
-  return rule
+}
+
+function buildEgress(protocol: string, cidr: string, desc: string, range?: { min: number; max: number }): EgressRuleDTO {
+  return {
+    protocol, destination: cidr, destinationType: 'CIDR_BLOCK', description: desc,
+    ...protocolOptions(protocol, range)
+  }
 }
 
 function addTemplate(t: RuleTemplateDTO) {
@@ -269,14 +288,167 @@ function addTemplate(t: RuleTemplateDTO) {
   }
 
   const commit = () => {
-    const ingress = [...(list.ingressSecurityRules ?? []), buildRule(t)]
-    void saveRules(ingress, list.egressSecurityRules ?? [], `已追加 ${t.label} 规则`)
+    const ingress = [...(list.ingressSecurityRules ?? [])]
+    const egress = [...(list.egressSecurityRules ?? [])]
+    // ALL / ICMP 模板的 port 是 0，按"不限端口"处理。
+    const range = t.port > 0 ? { min: t.port, max: t.port } : undefined
+    if (t.direction === 'egress') {
+      egress.push(buildEgress(t.protocol, '0.0.0.0/0', t.description, range))
+    } else {
+      ingress.push(buildIngress(t.protocol, '0.0.0.0/0', t.description, range))
+    }
+    void saveRules(ingress, egress, `已追加 ${t.label} 规则`)
   }
 
   if (t.dangerous) {
     ask({
       level: 2, title: '追加全放行规则',
       body: '该规则会把实例的所有端口暴露在公网，任何人都可以尝试连接。这通常不是你想要的。',
+      okLabel: '仍然追加',
+      onConfirm: commit
+    })
+    return
+  }
+  commit()
+}
+
+/**
+ * 一键恢复默认出站规则。
+ *
+ * 不依赖模板接口是否加载成功：这条是把子网从"完全断网"里捞出来的
+ * 应急按钮，正是网络不顺时最可能用到它。
+ */
+function restoreEgress() {
+  const list = selectedList.value?.item
+  if (!list) return
+  const egress = [
+    ...(list.egressSecurityRules ?? []),
+    buildEgress('all', '0.0.0.0/0', '允许所有出站流量（OCI 默认）')
+  ]
+  void saveRules(list.ingressSecurityRules ?? [], egress, '已恢复默认出站规则')
+}
+
+/* ---------- 手动规则 ---------- */
+
+/**
+ * 手动添加一条规则。
+ *
+ * 模板覆盖不了的场景太多：只放行自己家的 IP、开一段端口给某个服务、
+ * 出站只允许到某个内网段。这里就是给这些情况留的口子。
+ */
+const manual = reactive({
+  direction: 'ingress' as RuleDirection,
+  protocol: '6',
+  cidr: '0.0.0.0/0',
+  ports: '',
+  description: ''
+})
+
+/** 只有 TCP/UDP 有端口。ALL 与 ICMP 的端口框没有意义。 */
+const manualHasPorts = computed(() => manual.protocol === '6' || manual.protocol === '17')
+
+/**
+ * 校验 CIDR。
+ *
+ * 在本地拦掉明显的错误，是为了给出"每段取值 0–255"这种人话，而不是把
+ * 一句 OCI 的 400 原样丢给用户。真正的判定仍然在服务端。
+ */
+function cidrError(cidr: string): string {
+  const v = cidr.trim()
+  if (!v) return '请填写 CIDR'
+  const parts = v.split('/')
+  if (parts.length !== 2 || parts[1] === '') return 'CIDR 要写成 地址/掩码位数，例如 203.0.113.0/24'
+  const [addr, maskText] = parts
+  const mask = Number(maskText)
+  if (!Number.isInteger(mask) || mask < 0) return '掩码位数不合法'
+
+  if (addr.includes(':')) {
+    if (mask > 128) return 'IPv6 掩码位数不能超过 128'
+    if (!/^[0-9a-fA-F:]+$/.test(addr)) return 'IPv6 地址不合法'
+    return ''
+  }
+  if (mask > 32) return 'IPv4 掩码位数不能超过 32'
+  const octets = addr.split('.')
+  if (octets.length !== 4) return 'IPv4 地址要有四段，例如 203.0.113.0'
+  for (const o of octets) {
+    if (!/^[0-9]{1,3}$/.test(o) || Number(o) > 255) return `IPv4 每段取值 0–255，${o || '空'} 超出范围`
+  }
+  return ''
+}
+
+/** 解析端口输入：空 = 全部端口，22 = 单个，8000-9000 = 区间。 */
+function parsePorts(text: string): { min: number; max: number } | null | string {
+  const v = text.trim()
+  if (!v) return null
+  const m = /^([0-9]{1,5})\s*[-~]\s*([0-9]{1,5})$/.exec(v)
+  if (m) {
+    const min = Number(m[1])
+    const max = Number(m[2])
+    if (min < 1 || max > 65535) return '端口取值 1–65535'
+    if (min > max) return '端口区间的起始值大于结束值'
+    return { min, max }
+  }
+  if (!/^[0-9]{1,5}$/.test(v)) return '端口写成 22 或 8000-9000'
+  const port = Number(v)
+  if (port < 1 || port > 65535) return '端口取值 1–65535'
+  return { min: port, max: port }
+}
+
+/** 空串表示当前输入可以提交。 */
+const manualError = computed(() => {
+  const bad = cidrError(manual.cidr)
+  if (bad) return bad
+  if (!manualHasPorts.value) return ''
+  const ports = parsePorts(manual.ports)
+  return typeof ports === 'string' ? ports : ''
+})
+
+/** 提交前把这条规则用人话念一遍——方向或 CIDR 写错的代价是断网或暴露端口。 */
+const manualPreview = computed(() => {
+  const dir = manual.direction === 'egress' ? '出站' : '入站'
+  const proto = PROTO_NAME[manual.protocol] ?? manual.protocol
+  const ports = manualHasPorts.value ? (manual.ports.trim() || '全部端口') : '全部端口'
+  const side = manual.direction === 'egress' ? '目标' : '来源'
+  return `${dir} · ${proto} · ${side} ${manual.cidr.trim() || '?'} · ${ports}`
+})
+
+function addManualRule() {
+  const list = selectedList.value?.item
+  if (!list) {
+    toast({ tone: 'warning', title: '请先选择一个安全列表' })
+    return
+  }
+  if (manualError.value) {
+    toast({ tone: 'warning', title: manualError.value })
+    return
+  }
+
+  const cidr = manual.cidr.trim()
+  const parsed = manualHasPorts.value ? parsePorts(manual.ports) : null
+  const range = typeof parsed === 'string' ? null : parsed
+  const desc = manual.description.trim()
+
+  const commit = () => {
+    const ingress = [...(list.ingressSecurityRules ?? [])]
+    const egress = [...(list.egressSecurityRules ?? [])]
+    if (manual.direction === 'egress') {
+      egress.push(buildEgress(manual.protocol, cidr, desc, range ?? undefined))
+    } else {
+      ingress.push(buildIngress(manual.protocol, cidr, desc, range ?? undefined))
+    }
+    void saveRules(ingress, egress, '已追加自定义规则')
+    manual.description = ''
+  }
+
+  // 入站 + 全网 + 不限端口 = 把所有端口挂到公网上，和模板里那条危险规则等价。
+  const wideOpen = manual.direction === 'ingress'
+    && (cidr === '0.0.0.0/0' || cidr === '::/0')
+    && (manual.protocol === 'all' || (manualHasPorts.value && !range))
+
+  if (wideOpen) {
+    ask({
+      level: 2, title: '这条规则会把端口暴露给整个公网',
+      body: `${manualPreview.value}。来源是 ${cidr} 且没有限定端口，任何人都可以尝试连接。`,
       okLabel: '仍然追加',
       onConfirm: commit
     })
@@ -443,7 +615,19 @@ watch(
     <template v-else-if="active === '安全规则'">
       <!-- note 必须写明追加目标：这几个按钮是往某个安全列表里写规则的，
            多账号时不写清楚，用户很可能给错的租户开了一个 0.0.0.0/0 的端口。 -->
-      <SectionCard title="常用端口模板" :note="templateTargetNote">
+      <!-- 没有出站规则 = 该子网完全断网，而实例本身看起来一切正常。
+           这种故障排查起来很费劲，界面必须主动说出来并给出一键修复。 -->
+      <div v-if="selectedList?.item.noEgress" class="warn-bar">
+        <span class="t-xs">
+          ⚠ 该安全列表没有任何出站规则。OCI 的安全列表是白名单，这意味着子网内的实例
+          <strong>无法访问外网</strong>——装不了软件包、解析不了 DNS，但实例状态一切正常。
+        </span>
+        <button class="btn btn--sm btn--primary" :disabled="savingRules" @click="restoreEgress">
+          恢复默认出站规则
+        </button>
+      </div>
+
+      <SectionCard title="常用规则模板" :note="templateTargetNote">
         <div v-for="t in templates" :key="t.key" class="row cols-tpl">
           <span class="acct-bar" :style="{ background: t.dangerous ? 'var(--danger)' : 'var(--success)' }" />
           <span class="t-xs" :style="{ color: t.dangerous ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }">
@@ -451,10 +635,58 @@ watch(
           </span>
           <span class="t-xs dim">{{ t.description }}</span>
           <span class="mono t-xs dim">
-            入站 {{ PROTO_NAME[t.protocol] ?? t.protocol }} 0.0.0.0/0{{ t.port ? ' : ' + t.port : '' }}
+            {{ t.direction === 'egress' ? '出站' : '入站' }}
+            {{ PROTO_NAME[t.protocol] ?? t.protocol }} 0.0.0.0/0{{ t.port ? ' : ' + t.port : '' }}
           </span>
           <button class="btn btn--sm" :class="t.dangerous ? 'btn--danger' : ''"
                   :disabled="savingRules || !selectedList" @click="addTemplate(t)">追加</button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="自定义规则" class="mt" :note="templateTargetNote">
+        <div class="manual">
+          <div class="field">
+            <label for="rule-dir">方向</label>
+            <select id="rule-dir" v-model="manual.direction" class="input">
+              <option value="ingress">入站</option>
+              <option value="egress">出站</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="rule-proto">协议</label>
+            <select id="rule-proto" v-model="manual.protocol" class="input">
+              <option value="6">TCP</option>
+              <option value="17">UDP</option>
+              <option value="1">ICMP</option>
+              <option value="all">ALL</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="rule-cidr">{{ manual.direction === 'egress' ? '目标 CIDR' : '来源 CIDR' }}</label>
+            <input id="rule-cidr" v-model="manual.cidr" class="input mono" placeholder="0.0.0.0/0" />
+          </div>
+          <div class="field">
+            <label for="rule-ports">端口</label>
+            <input id="rule-ports" v-model="manual.ports" class="input mono"
+                   :disabled="!manualHasPorts"
+                   :placeholder="manualHasPorts ? '留空为全部，如 22 或 8000-9000' : '该协议不区分端口'" />
+          </div>
+          <div class="field manual-desc">
+            <label for="rule-desc">描述</label>
+            <input id="rule-desc" v-model="manual.description" class="input" placeholder="选填，写清楚这条是给谁用的" />
+          </div>
+        </div>
+
+        <div class="manual-foot">
+          <!-- 提交前把这条规则念一遍。方向和 CIDR 写反的后果一个是断网、
+               一个是把端口挂上公网，两者都值得多看一眼再点。 -->
+          <span class="t-xs" :style="{ color: manualError ? 'var(--danger)' : 'var(--text-secondary)' }">
+            {{ manualError || manualPreview }}
+          </span>
+          <button class="btn btn--sm btn--primary"
+                  :disabled="savingRules || !selectedList || !!manualError" @click="addManualRule">
+            追加规则
+          </button>
         </div>
       </SectionCard>
 
@@ -556,6 +788,27 @@ watch(
 .cols-vcn { grid-template-columns: minmax(160px, 1.4fr) 78px 150px 130px 90px 90px; }
 .cols-subnet { grid-template-columns: minmax(160px, 1.3fr) 78px 140px 130px 90px 140px; }
 .cols-tpl { grid-template-columns: 130px minmax(160px, 1fr) 260px 90px; }
+
+/* 自定义规则表单。auto-fit 让窄屏上自动换行，不至于把输入框挤成一条缝。 */
+.manual {
+  display: grid; gap: 12px; padding: 16px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+.manual-desc { grid-column: 1 / -1; }
+.manual-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0 20px 16px;
+}
+
+/* 断网警示条。放在卡片之外、页签正下方，进这一页就先看到。
+   配色沿用上面的 .net-warn，两处说的是同一类事。 */
+.warn-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-bottom: 16px; padding: 12px 16px;
+  border: 1px solid var(--warning); border-radius: var(--radius-md);
+  background: var(--warning-soft); color: var(--warning); line-height: 18px;
+}
+.warn-bar .btn { flex-shrink: 0; }
 .cols-rule { grid-template-columns: 62px 78px 150px 120px minmax(140px, 1fr) 90px; }
 .cols-ip { grid-template-columns: 140px 78px 150px minmax(140px, 1fr) 110px 90px; }
 .cols-ipv6 { grid-template-columns: minmax(220px, 1.4fr) 78px 150px 140px 1fr; }

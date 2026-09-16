@@ -427,11 +427,17 @@ export interface SecurityListDTO {
   lifecycleState: string
   /** 后端标出的"等同全放行"规则下标，UI 需显著警示 */
   allowAllRules: number[] | null
+  /** 一条出站规则都没有——该子网无法访问外网，UI 需主动提示 */
+  noEgress?: boolean
 }
+
+export type RuleDirection = 'ingress' | 'egress'
 
 export interface RuleTemplateDTO {
   key: string
   label: string
+  /** 模板作用的方向。后端固定下发，前端据此决定追加到哪个数组 */
+  direction: RuleDirection
   protocol: string
   port: number
   description: string

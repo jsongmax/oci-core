@@ -323,6 +323,14 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 列表响应会额外标注 `allowAllRules: [索引]`，指出哪几条等同于全放行，需在 UI 上显著警示。
 
+> **`noEgress: true` 表示这个安全列表一条出站规则都没有。** 安全列表是白名单，
+> 没有出站规则等于该子网的全部对外流量被丢弃——装不了包、解析不了 DNS，
+> 而实例状态一切正常。UI 必须主动提示，并提供恢复默认出站规则的入口。
+
+`/api/network/rule-templates` 的每条模板都带 `direction`（`ingress` / `egress`），
+调用方据此决定把规则追加到哪个数组。模板的 `port` 为 `0` 表示不限端口，
+此时**不要**写成 `0-0` 的端口区间——那会生成一条只对端口 0 生效的规则。
+
 **`POST /api/instances/{ocid}/change-ip?confirm=true`**
 
 不带 `confirm=true` 返回 `confirm_required` 与后果说明。保留 IP 会被拒绝（返回 `reserved_ip`）——删掉就永久释放了。

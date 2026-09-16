@@ -82,10 +82,16 @@ func (s *Server) handleListSecurityLists(w http.ResponseWriter, r *http.Request)
 	type annotated struct {
 		ociclient.SecurityList
 		AllowAllRules []int `json:"allowAllRules"`
+		// NoEgress 表示这个安全列表一条出站规则都没有。
+		//
+		// 安全列表是白名单，没有出站规则 = 该子网的所有对外流量被丢弃：
+		// 装不了包、解析不了 DNS，而实例状态一切正常。这种故障很难自己想到，
+		// 界面必须主动说出来。
+		NoEgress bool `json:"noEgress"`
 	}
 	out := make([]annotated, 0, len(lists))
 	for _, list := range lists {
-		a := annotated{SecurityList: list}
+		a := annotated{SecurityList: list, NoEgress: !netsvc.HasEgress(list)}
 		for i, rule := range list.IngressSecurityRules {
 			if netsvc.IsAllowAllRule(rule) {
 				a.AllowAllRules = append(a.AllowAllRules, i)
@@ -132,6 +138,10 @@ func (s *Server) handleUpdateSecurityList(w http.ResponseWriter, r *http.Request
 	detail := "入站 " + itoa(len(req.Ingress)) + " 条，出站 " + itoa(len(req.Egress)) + " 条"
 	if dangerous > 0 {
 		detail += "（含 " + itoa(dangerous) + " 条全放行规则）"
+	}
+	// 出站清空会让整个子网断网，事后排查时这一行就是线索。
+	if len(req.Egress) == 0 {
+		detail += "（已无出站规则，该子网将无法访问外网）"
 	}
 
 	user := userFrom(r.Context())

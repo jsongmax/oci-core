@@ -301,10 +301,18 @@ func EnableIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, s
 	return result, nil
 }
 
+// 规则方向。
+const (
+	DirIngress = "ingress"
+	DirEgress  = "egress"
+)
+
 // RuleTemplate 是常用端口的安全规则模板。
 type RuleTemplate struct {
-	Key         string `json:"key"`
-	Label       string `json:"label"`
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	// Direction 取 DirIngress / DirEgress。空值按入站处理，兼容旧调用方。
+	Direction   string `json:"direction"`
 	Protocol    string `json:"protocol"`
 	Port        int    `json:"port"`
 	Description string `json:"description"`
@@ -312,19 +320,34 @@ type RuleTemplate struct {
 	Dangerous bool `json:"dangerous"`
 }
 
+// IsEgress 报告该模板是否为出站规则。
+func (t RuleTemplate) IsEgress() bool { return t.Direction == DirEgress }
+
 // RuleTemplates 返回安全规则的快捷模板。
+//
+// 出站那条不是可有可无的补充：OCI 的安全列表是白名单，**没有任何出站规则
+// 就等于掐断该子网的全部对外流量**——apt、DNS、下载全断，而实例本身看起来
+// 一切正常。面板此前只能删出站不能加，用户删掉之后就卡在这个状态里出不来。
 func RuleTemplates() []RuleTemplate {
 	return []RuleTemplate{
-		{Key: "ssh", Label: "SSH", Protocol: "6", Port: 22, Description: "远程登录"},
-		{Key: "http", Label: "HTTP", Protocol: "6", Port: 80, Description: "网站服务"},
-		{Key: "https", Label: "HTTPS", Protocol: "6", Port: 443, Description: "加密网站服务"},
-		{Key: "icmp", Label: "ICMP", Protocol: "1", Port: 0, Description: "允许 ping"},
-		{Key: "all", Label: "全部放行", Protocol: "all", Port: 0,
+		{Key: "ssh", Label: "SSH", Direction: DirIngress, Protocol: "6", Port: 22, Description: "远程登录"},
+		{Key: "http", Label: "HTTP", Direction: DirIngress, Protocol: "6", Port: 80, Description: "网站服务"},
+		{Key: "https", Label: "HTTPS", Direction: DirIngress, Protocol: "6", Port: 443, Description: "加密网站服务"},
+		{Key: "icmp", Label: "ICMP", Direction: DirIngress, Protocol: "1", Port: 0, Description: "允许 ping"},
+		{Key: "all", Label: "全部放行", Direction: DirIngress, Protocol: "all", Port: 0,
 			Description: "放行所有入站流量。除非你清楚自己在做什么，否则不要开启。", Dangerous: true},
+
+		// 出站全放行是 OCI 新建安全列表的默认值，也是绝大多数场景该有的样子。
+		// 它不标 Dangerous：限制出站属于进阶收紧，而缺了它才是故障。
+		{Key: "egress-all", Label: "出站全放行", Direction: DirEgress, Protocol: "all", Port: 0,
+			Description: "放行所有出站流量。这是 OCI 的默认配置——没有出站规则时实例无法访问外网。"},
 	}
 }
 
 // BuildIngressRule 按模板构造一条入站规则。source 留空默认为 0.0.0.0/0。
+//
+// Port 为 0 表示不限端口，此时不写端口区间：退化成 0-0 会生成一条只对
+// 端口 0 生效的规则，看着像加上了、实际什么都没放行。
 func BuildIngressRule(tpl RuleTemplate, source, description string) ociclient.IngressSecurityRule {
 	if source == "" {
 		source = "0.0.0.0/0"
@@ -341,17 +364,63 @@ func BuildIngressRule(tpl RuleTemplate, source, description string) ociclient.In
 	}
 	switch tpl.Protocol {
 	case "6": // TCP
-		rule.TCPOptions = &ociclient.TCPOptions{
-			DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+		if tpl.Port > 0 {
+			rule.TCPOptions = &ociclient.TCPOptions{
+				DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+			}
 		}
 	case "17": // UDP
-		rule.UDPOptions = &ociclient.UDPOptions{
-			DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+		if tpl.Port > 0 {
+			rule.UDPOptions = &ociclient.UDPOptions{
+				DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+			}
 		}
 	case "1": // ICMP
 		rule.ICMPOptions = &ociclient.ICMPOptions{Type: 3, Code: intPtr(4)}
 	}
 	return rule
+}
+
+// BuildEgressRule 按模板构造一条出站规则。destination 留空默认为 0.0.0.0/0。
+func BuildEgressRule(tpl RuleTemplate, destination, description string) ociclient.EgressSecurityRule {
+	if destination == "" {
+		destination = "0.0.0.0/0"
+	}
+	if description == "" {
+		description = tpl.Description
+	}
+
+	rule := ociclient.EgressSecurityRule{
+		Protocol:        tpl.Protocol,
+		Destination:     destination,
+		DestinationType: "CIDR_BLOCK",
+		Description:     description,
+	}
+	switch tpl.Protocol {
+	case "6":
+		if tpl.Port > 0 {
+			rule.TCPOptions = &ociclient.TCPOptions{
+				DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+			}
+		}
+	case "17":
+		if tpl.Port > 0 {
+			rule.UDPOptions = &ociclient.UDPOptions{
+				DestinationPortRange: &ociclient.PortRange{Min: tpl.Port, Max: tpl.Port},
+			}
+		}
+	case "1":
+		rule.ICMPOptions = &ociclient.ICMPOptions{Type: 3, Code: intPtr(4)}
+	}
+	return rule
+}
+
+// HasEgress 报告安全列表有没有出站规则。
+//
+// 没有出站规则的安全列表会掐断该子网的全部对外流量，而实例本身看起来
+// 一切正常——这种故障最难排查，界面必须显著提示。
+func HasEgress(list ociclient.SecurityList) bool {
+	return len(list.EgressSecurityRules) > 0
 }
 
 // IsAllowAllRule 判断一条入站规则是否等同于全放行，用于在 UI 上打警示标记。
