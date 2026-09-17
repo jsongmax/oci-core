@@ -179,6 +179,12 @@ const auditTotal = ref<number | null>(null)
 const AUDIT_PAGE = 100
 
 /**
+ * 请求代次。「加载更早」在途时切回这个页签会触发一次刷新，
+ * 两者交错回来会把旧的下一页拼到新列表后面，出现重复或断层。
+ */
+let auditSeq = 0
+
+/**
  * 读取一页审计记录。append 为真时追加到已有列表后面。
  *
  * 翻页用游标（beforeId）而不是 OFFSET：审计表持续写入，OFFSET 会在翻页
@@ -186,19 +192,21 @@ const AUDIT_PAGE = 100
  * 第 101 的位置，于是整条被跳过。id 是自增主键，天然单调，不受写入影响。
  */
 async function loadAudit(append = false) {
+  const seq = ++auditSeq
   auditLoading.value = true
   try {
     const beforeId = append && audit.value.length
       ? audit.value[audit.value.length - 1].id
       : undefined
     const res = await insights.audit({ limit: AUDIT_PAGE, beforeId })
+    if (seq !== auditSeq) return
     audit.value = append ? [...audit.value, ...res.entries] : res.entries
     auditMore.value = res.hasMore
     if (res.total !== undefined) auditTotal.value = res.total
   } catch (err) {
-    toastError('读取审计日志失败', err)
+    if (seq === auditSeq) toastError('读取审计日志失败', err)
   } finally {
-    auditLoading.value = false
+    if (seq === auditSeq) auditLoading.value = false
   }
 }
 

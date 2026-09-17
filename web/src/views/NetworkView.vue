@@ -64,8 +64,16 @@ const targets = computed(() =>
   )
 )
 
+/**
+ * 拉取代次。筛选器连点时，范围大的那一轮往往最慢，晚回来会把已经
+ * 筛掉的账号重新显示出来。
+ */
+let networkSeq = 0
+
 async function loadNetwork() {
+  const seq = ++networkSeq
   if (targets.value.length === 0) {
+    loading.value = false
     vcns.value = []
     subnets.value = []
     securityLists.value = []
@@ -98,6 +106,8 @@ async function loadNetwork() {
   // 并发拉取时每个任务在自己的响应回来后才 push，所以数组顺序 = 响应先后，
   // 每次刷新都可能不一样。多账号时用户会看到列表莫名重排，还会让安全规则页
   // 默认选中的那一条也跟着变。统一按 账号 → 区域 → 名称 排一次。
+  if (seq !== networkSeq) return
+
   nextVcns.sort(byLocation(v => v.item.displayName))
   nextSubnets.sort(byLocation(v => v.item.displayName))
   nextLists.sort(byLocation(v => v.item.displayName))

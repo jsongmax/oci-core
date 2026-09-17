@@ -46,8 +46,13 @@ const targets = computed(() =>
       .map(region => ({ accountId: a.id, region })))
 )
 
+/** 拉取代次，理由同网络页：筛选器连点时旧的一轮不能覆盖新的。 */
+let blocksSeq = 0
+
 async function loadBlocks() {
+  const seq = ++blocksSeq
   if (targets.value.length === 0) {
+    loading.value = false
     blocks.value = []
     return
   }
@@ -72,6 +77,7 @@ async function loadBlocks() {
     }))
   }
 
+  if (seq !== blocksSeq) return
   blocks.value = next
   loadError.value = failures.join('\n')
   loading.value = false

@@ -9,7 +9,7 @@
  * 的整体状态，真正的分配还要看那一瞬间的争抢。把它写成"抢到了"会得到一个
  * 总是骗人的界面。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
 import { relativeTime } from '@/lib/adapt'
@@ -92,35 +92,65 @@ const probing = ref(false)
 const probeResult = ref<CapacityProbeResult | null>(null)
 const probeError = ref('')
 
+/**
+ * 查出这份结果时用的参数。
+ *
+ * 结果里的区域和可用域只属于当时那个账号。查完再把下拉框切到别的账号，
+ * 「加入监控」如果读的是表单当前值，就会建出一个「B 账号 + A 的可用域」的
+ * 任务——它会一直拿别人租户的可用域去轮询 Oracle，次次失败。
+ */
+const probedWith = ref<{ accountId: string; shape: string; ocpus?: number; memoryGb?: number } | null>(null)
+
+/** 查询代次。查询途中换了账号或规格，回来的结果直接作废。 */
+let probeSeq = 0
+
 async function probe() {
   if (!form.value.accountId) return
+  const params = {
+    accountId: form.value.accountId,
+    shape: form.value.shape,
+    ocpus: isFlexible.value ? form.value.ocpus : undefined,
+    memoryGb: isFlexible.value ? form.value.memoryGb : undefined
+  }
   probing.value = true
   probeError.value = ''
   probeResult.value = null
+  probedWith.value = null
+  const seq = ++probeSeq
   try {
-    probeResult.value = await capApi.probe({
-      accountId: form.value.accountId,
-      shape: form.value.shape,
-      ocpus: isFlexible.value ? form.value.ocpus : undefined,
-      memoryGb: isFlexible.value ? form.value.memoryGb : undefined
-    })
+    const res = await capApi.probe(params)
+    if (seq !== probeSeq) return
+    probeResult.value = res
+    probedWith.value = params
   } catch (err) {
-    probeError.value = errorText(err)
+    if (seq === probeSeq) probeError.value = errorText(err)
   } finally {
-    probing.value = false
+    if (seq === probeSeq) probing.value = false
   }
 }
 
+// 换了账号或规格，旧结果就不再对应表单：收起它，在途的查询也作废，
+// 避免误点「加入监控」。
+watch(() => [form.value.accountId, form.value.shape], () => {
+  probeSeq++
+  probing.value = false
+  probeResult.value = null
+  probedWith.value = null
+  probeError.value = ''
+})
+
 /** 把手动查出来的某个 AD 加入持续监控。 */
 async function watchThis(ad: string) {
+  const p = probedWith.value
+  if (!p || !probeResult.value) return
   try {
     const res = await capApi.create({
-      accountId: form.value.accountId,
-      region: probeResult.value?.region,
+      accountId: p.accountId,
+      region: probeResult.value.region,
       availabilityDomain: ad,
-      shape: form.value.shape,
-      ocpus: isFlexible.value ? form.value.ocpus : undefined,
-      memoryGb: isFlexible.value ? form.value.memoryGb : undefined
+      shape: p.shape,
+      ocpus: p.ocpus,
+      memoryGb: p.memoryGb
     })
     toast({ tone: 'success', title: '已加入监控', body: res.notice })
     await load()
@@ -130,10 +160,10 @@ async function watchThis(ad: string) {
 }
 
 const alreadyWatched = (ad: string) =>
-  watches.value.some(w =>
-    w.accountId === form.value.accountId &&
+  !!probedWith.value && watches.value.some(w =>
+    w.accountId === probedWith.value!.accountId &&
     w.availabilityDomain === ad &&
-    w.shape === form.value.shape)
+    w.shape === probedWith.value!.shape)
 
 /* ---------- 监控项操作 ---------- */
 

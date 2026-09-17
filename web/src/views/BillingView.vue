@@ -146,17 +146,28 @@ const detailError = ref('')
 
 const DAY_OPTIONS = [7, 30, 90]
 
+/**
+ * 明细的请求代次。
+ *
+ * 用量接口慢的时候要好几秒。先点 A、再点 B，B 命中缓存先回来，A 后回来——
+ * 不校验的话卡片标题写着 B，数字却是 A 的，而且不会有任何报错。
+ */
+let detailSeq = 0
+
 async function loadDetail(refresh = false) {
   if (!selected.value) return
+  const seq = ++detailSeq
   detailLoading.value = true
   detailError.value = ''
   try {
-    detail.value = await billingApi.detail(selected.value, days.value, refresh)
+    const res = await billingApi.detail(selected.value, days.value, refresh)
+    if (seq === detailSeq) detail.value = res
   } catch (err) {
+    if (seq !== detailSeq) return
     detailError.value = errorText(err)
     detail.value = null
   } finally {
-    detailLoading.value = false
+    if (seq === detailSeq) detailLoading.value = false
   }
 }
 
@@ -164,6 +175,9 @@ function select(accountId: string) {
   // 再点一次收起。展开态没有独立入口，这是唯一的关闭方式。
   selected.value = selected.value === accountId ? '' : accountId
   detail.value = null
+  // 收起时也要让在途的请求作废，否则它回来会把明细写进一个已经关掉的面板。
+  detailSeq++
+  detailLoading.value = false
   if (selected.value) void loadDetail()
 }
 

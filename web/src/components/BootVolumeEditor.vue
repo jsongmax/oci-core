@@ -35,12 +35,19 @@ const applyingShape = ref(false)
  */
 const shapeMeta = ref<ShapeDTO | null>(null)
 
+/** 当前实例的定位。响应回来时它变了，说明结果属于上一台。 */
+const metaKey = () =>
+  `${props.instance.accountId}|${props.instance.region}|${props.instance.adFull}|${props.instance.shape}`
+
 async function loadShapeMeta() {
+  const key = metaKey()
   try {
     const { shapes } = await launchApi.shapes(
       props.instance.accountId, props.instance.region, props.instance.adFull || undefined)
+    if (key !== metaKey()) return
     shapeMeta.value = shapes.find(s => s.shape === props.instance.shape) ?? null
   } catch {
+    if (key !== metaKey()) return
     // 查不到就回落到按名字判断。宁可少给一点能力，也不要因为一次
     // 查询失败就把本来能改的实例锁死。
     shapeMeta.value = null
@@ -48,7 +55,7 @@ async function loadShapeMeta() {
 }
 
 onMounted(() => void loadShapeMeta())
-watch(() => [props.instance.shape, props.instance.region], () => void loadShapeMeta())
+watch(metaKey, () => void loadShapeMeta())
 
 /** 元数据取不到时按名字兜底：带 .Flex 的都是弹性规格，不止 A1。 */
 const isFlexible = computed(() =>

@@ -88,14 +88,19 @@ const metrics = ref<MetricsDTO | null>(null)
 const metricsLoading = ref(false)
 const metricHours = ref(24)
 
+/** 连续切时间范围时，大范围的查询往往更慢——晚回来会把图换成上一个范围的。 */
+let metricsSeq = 0
+
 async function loadMetrics() {
+  const seq = ++metricsSeq
   metricsLoading.value = true
   try {
-    metrics.value = await instancesApi.metrics(props.id, metricHours.value)
+    const res = await instancesApi.metrics(props.id, metricHours.value)
+    if (seq === metricsSeq) metrics.value = res
   } catch (err) {
-    toastError('读取监控数据失败', err)
+    if (seq === metricsSeq) toastError('读取监控数据失败', err)
   } finally {
-    metricsLoading.value = false
+    if (seq === metricsSeq) metricsLoading.value = false
   }
 }
 

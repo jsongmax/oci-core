@@ -11,7 +11,7 @@
  *  - 共用出口比不用代理更糟。两个账号配同一条代理，等于主动把它们绑在
  *    一个 IP 上，凭空制造一个本来不存在的关联信号。所以重复绑定是硬拒绝。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
 import { relativeTime } from '@/lib/adapt'
@@ -57,6 +57,9 @@ onMounted(() => void load())
 
 const importText = ref('')
 const preview = ref<ProxyImportResultDTO | null>(null)
+
+// 改了文本，旧预览就不再代表将要导入的内容——「确认导入 N 条」的 N 会对不上。
+watch(importText, () => { preview.value = null })
 const importing = ref(false)
 
 const PLACEHOLDER = `1.2.3.4:8080
@@ -68,8 +71,11 @@ socks5://user:pass@1.2.3.4:1080  # 香港节点`
 async function parsePreview() {
   if (!importText.value.trim()) return
   importing.value = true
+  const text = importText.value
   try {
-    preview.value = await proxyApi.import(importText.value, true)
+    const res = await proxyApi.import(text, true)
+    // 解析期间文本又被改了：这份预览已经过期，丢掉。
+    if (text === importText.value) preview.value = res
   } catch (err) {
     toastError('解析失败', err)
   } finally {
