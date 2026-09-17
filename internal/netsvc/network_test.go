@@ -93,7 +93,25 @@ func TestIsAllowAllRule(t *testing.T) {
 		{"大小写不敏感", ociclient.IngressSecurityRule{Protocol: "ALL", Source: "0.0.0.0/0"}, true},
 		// 限定来源网段的全协议规则不算全放行，不该误报警示。
 		{"限定来源", ociclient.IngressSecurityRule{Protocol: "all", Source: "10.0.0.0/8"}, false},
-		{"仅 TCP", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0"}, false},
+		// TCP/UDP 不限端口对公网开放，暴露面与全放行相当，必须同样警示。
+		{"TCP 不限端口", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0"}, true},
+		{"UDP 不限端口 v6", ociclient.IngressSecurityRule{Protocol: "17", Source: "::/0"}, true},
+		{"TCP 1-65535", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0",
+			TCPOptions: &ociclient.TCPOptions{DestinationPortRange: &ociclient.PortRange{Min: 1, Max: 65535}}}, true},
+		{"UDP 1-65535", ociclient.IngressSecurityRule{Protocol: "17", Source: "0.0.0.0/0",
+			UDPOptions: &ociclient.UDPOptions{DestinationPortRange: &ociclient.PortRange{Min: 1, Max: 65535}}}, true},
+		// 只限定了源端口，目的端口仍然不限。
+		{"TCP 仅限源端口", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0",
+			TCPOptions: &ociclient.TCPOptions{SourcePortRange: &ociclient.PortRange{Min: 1024, Max: 2048}}}, true},
+
+		// 限定了端口或来源的，都不该误报。
+		{"TCP 单端口", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0",
+			TCPOptions: &ociclient.TCPOptions{DestinationPortRange: &ociclient.PortRange{Min: 22, Max: 22}}}, false},
+		{"TCP 大区间但不满", ociclient.IngressSecurityRule{Protocol: "6", Source: "0.0.0.0/0",
+			TCPOptions: &ociclient.TCPOptions{DestinationPortRange: &ociclient.PortRange{Min: 1024, Max: 65535}}}, false},
+		{"UDP 限定来源", ociclient.IngressSecurityRule{Protocol: "17", Source: "203.0.113.0/24"}, false},
+		// ICMP 没有端口，对公网开放 ping 属于常规配置。
+		{"ICMP 全网", ociclient.IngressSecurityRule{Protocol: "1", Source: "0.0.0.0/0"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

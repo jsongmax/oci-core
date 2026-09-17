@@ -470,14 +470,16 @@ function addManualRule() {
   }
 
   // 入站 + 全网 + 不限端口 = 把所有端口挂到公网上，和模板里那条危险规则等价。
+  // 1-65535 写法不同、效果一样，必须同样拦下来——判定与后端 IsAllowAllRule 保持一致。
+  const allPorts = !range || (range.min <= 1 && range.max >= 65535)
   const wideOpen = manual.direction === 'ingress'
     && (cidr === '0.0.0.0/0' || cidr === '::/0')
-    && (manual.protocol === 'all' || (manualHasPorts.value && !range))
+    && (manual.protocol === 'all' || (manualHasPorts.value && allPorts))
 
   if (wideOpen) {
     ask({
       level: 2, title: '这条规则会把端口暴露给整个公网',
-      body: `${manualPreview.value}。来源是 ${cidr} 且没有限定端口，任何人都可以尝试连接。`,
+      body: `${manualPreview.value}。来源是 ${cidr} 且覆盖全部端口，任何人都可以尝试连接。`,
       okLabel: '仍然追加',
       onConfirm: commit
     })
@@ -737,7 +739,7 @@ watch(
             <span class="mono t-xs">{{ r.cidr }}</span>
             <span class="mono t-xs">{{ r.ports }}</span>
             <span class="t-xs" :style="{ color: r.danger ? 'var(--danger)' : 'var(--text-secondary)' }">
-              {{ r.danger ? '⚠ 全放行，建议删除' : r.desc }}
+              {{ r.danger ? '⚠ 全部端口对公网开放，建议收紧' : r.desc }}
             </span>
             <button class="btn btn--sm btn--danger" :disabled="savingRules" @click="removeRule(r)">删除</button>
           </div>

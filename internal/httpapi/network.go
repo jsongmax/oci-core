@@ -78,28 +78,39 @@ func (s *Server) handleListSecurityLists(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 标出等同于"全部放行"的规则，让前端能打醒目的警示标记。
-	type annotated struct {
-		ociclient.SecurityList
-		AllowAllRules []int `json:"allowAllRules"`
-		// NoEgress 表示这个安全列表一条出站规则都没有。
-		//
-		// 安全列表是白名单，没有出站规则 = 该子网的所有对外流量被丢弃：
-		// 装不了包、解析不了 DNS，而实例状态一切正常。这种故障很难自己想到，
-		// 界面必须主动说出来。
-		NoEgress bool `json:"noEgress"`
-	}
-	out := make([]annotated, 0, len(lists))
+	out := make([]annotatedSecurityList, 0, len(lists))
 	for _, list := range lists {
-		a := annotated{SecurityList: list, NoEgress: !netsvc.HasEgress(list)}
-		for i, rule := range list.IngressSecurityRules {
-			if netsvc.IsAllowAllRule(rule) {
-				a.AllowAllRules = append(a.AllowAllRules, i)
-			}
-		}
-		out = append(out, a)
+		out = append(out, annotateSecurityList(list))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"securityLists": out})
+}
+
+// annotatedSecurityList 是带风险标注的安全列表。
+type annotatedSecurityList struct {
+	ociclient.SecurityList
+	// AllowAllRules 是把全部端口开给整个公网的入站规则下标，前端据此打警示标记。
+	AllowAllRules []int `json:"allowAllRules"`
+	// NoEgress 表示这个安全列表一条出站规则都没有。
+	//
+	// 安全列表是白名单，没有出站规则 = 该子网的所有对外流量被丢弃：
+	// 装不了包、解析不了 DNS，而实例状态一切正常。这种故障很难自己想到，
+	// 界面必须主动说出来。
+	NoEgress bool `json:"noEgress"`
+}
+
+// annotateSecurityList 计算风险标注。
+//
+// 列表接口与保存接口必须用同一份：保存接口以前直接回原始对象，前端拿它
+// 覆盖本地数据后警示标记全部消失，刚加上的危险规则反而不显示红色，
+// 要刷新页面才出来。
+func annotateSecurityList(list ociclient.SecurityList) annotatedSecurityList {
+	a := annotatedSecurityList{SecurityList: list, NoEgress: !netsvc.HasEgress(list)}
+	for i, rule := range list.IngressSecurityRules {
+		if netsvc.IsAllowAllRule(rule) {
+			a.AllowAllRules = append(a.AllowAllRules, i)
+		}
+	}
+	return a
 }
 
 type updateSecurityListRequest struct {
@@ -150,7 +161,7 @@ func (s *Server) handleUpdateSecurityList(w http.ResponseWriter, r *http.Request
 		AccountID: r.URL.Query().Get("accountId"), Target: updated.DisplayName,
 		Detail: detail, IP: s.clientIP(r),
 	})
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, annotateSecurityList(*updated))
 }
 
 func (s *Server) handleRuleTemplates(w http.ResponseWriter, r *http.Request) {

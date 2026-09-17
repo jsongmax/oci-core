@@ -321,7 +321,7 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 > **`PUT /api/network/security-lists/{id}` 是整体替换语义，不是增量追加。** 必须先 GET 拿到完整规则集，在其基础上修改后整体提交，否则未提交的规则会被静默删掉。
 
-列表响应会额外标注 `allowAllRules: [索引]`，指出哪几条等同于全放行，需在 UI 上显著警示。
+列表响应会额外标注 `allowAllRules: [索引]`，指出哪几条入站规则把全部端口开给了整个公网（来源 `0.0.0.0/0` 或 `::/0`，且协议为 `all`，或 TCP/UDP 不限端口、端口范围覆盖 1–65535），需在 UI 上显著警示。`PUT` 的响应带同样的 `allowAllRules` 与 `noEgress` 标注，可直接覆盖本地数据。
 
 > **`noEgress: true` 表示这个安全列表一条出站规则都没有。** 安全列表是白名单，
 > 没有出站规则等于该子网的全部对外流量被丢弃——装不了包、解析不了 DNS，

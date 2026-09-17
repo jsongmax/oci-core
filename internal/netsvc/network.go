@@ -423,12 +423,33 @@ func HasEgress(list ociclient.SecurityList) bool {
 	return len(list.EgressSecurityRules) > 0
 }
 
-// IsAllowAllRule 判断一条入站规则是否等同于全放行，用于在 UI 上打警示标记。
+// IsAllowAllRule 判断一条入站规则是否把全部端口开给了整个公网，
+// 用于在 UI 上打警示标记、在审计日志里计数。
+//
+// 只看协议为 all 是不够的：TCP 或 UDP 不限端口（没有端口范围，或范围
+// 覆盖 1–65535）对公网的暴露面和全放行几乎一样，而这类规则既能从
+// 自定义规则表单建出来，也常见于在 Oracle 控制台里手工建的规则。
 func IsAllowAllRule(rule ociclient.IngressSecurityRule) bool {
-	if !strings.EqualFold(rule.Protocol, "all") {
+	if rule.Source != "0.0.0.0/0" && rule.Source != "::/0" {
 		return false
 	}
-	return rule.Source == "0.0.0.0/0" || rule.Source == "::/0"
+	switch strings.ToLower(rule.Protocol) {
+	case "all":
+		return true
+	case "6":
+		return rule.TCPOptions == nil || coversAllPorts(rule.TCPOptions.DestinationPortRange)
+	case "17":
+		return rule.UDPOptions == nil || coversAllPorts(rule.UDPOptions.DestinationPortRange)
+	}
+	return false
+}
+
+// coversAllPorts 报告目的端口范围是否等于不限端口。
+//
+// 没有范围就是不限；只写了源端口范围时目的端口同样不限，所以这里
+// 只看目的端口。
+func coversAllPorts(r *ociclient.PortRange) bool {
+	return r == nil || (r.Min <= 1 && r.Max >= 65535)
 }
 
 func intPtr(v int) *int { return &v }
