@@ -277,9 +277,22 @@ async function loadQuota() {
   }
 }
 
+/**
+ * 远端选项的请求代次。
+ *
+ * 换账号或换区域时，上一轮的请求还在路上。它晚回来的话会把**上一个账号**
+ * 的可用域写进表单，再拿这个可用域去新账号的区域查规格——可用域名带着
+ * 租户前缀，别的租户的名字 Oracle 一律回 404 NotAuthorizedOrNotFound。
+ * 表现就是：切一下账号，抽屉顶上冒出一句"未授权或不存在"。
+ */
+let optionSeq = 0
+
 async function loadRegionOptions() {
   if (!form.accountId || !region.value) return
 
+  const seq = ++optionSeq
+  const accountId = form.accountId
+  const regionName = region.value
   loadingAds.value = true
   optionError.value = ''
   try {
@@ -288,19 +301,21 @@ async function loadRegionOptions() {
     // 规格是**按可用域**而非按区域提供的：同一个区域里，E2.1.Micro 只存在于
     // 其中一个可用域（Oracle 对永久免费资源的明确限制）。只按区域查会把
     // 「区域里有、但这个 AD 没有」的规格也列进来，用户选了要到提交才失败。
-    const adResult = await launchApi.availabilityDomains(form.accountId, region.value)
+    const adResult = await launchApi.availabilityDomains(accountId, regionName)
+    if (seq !== optionSeq) return
     ads.value = adResult.availabilityDomains
     if (!ads.value.some(a => a.name === form.ad)) {
       form.ad = ads.value[0]?.name ?? ''
     }
     await loadShapes()
   } catch (err) {
-    optionError.value = errorText(err)
+    if (seq !== optionSeq) return
+    optionError.value = `查询可用域失败：${errorText(err)}`
     ads.value = []
     shapes.value = []
     shapesKey = ''
   } finally {
-    loadingAds.value = false
+    if (seq === optionSeq) loadingAds.value = false
   }
 }
 
@@ -319,12 +334,20 @@ async function loadShapes() {
   const key = `${form.accountId}|${region.value}|${form.ad}`
   if (key === shapesKey) return
   shapesKey = key
+  // 可用域必须属于当前列表。它不在列表里，说明 ads 还是上一个账号的，
+  // 这时去查只会拿到 404——等本轮可用域回来再说。
+  if (form.ad && !ads.value.some(a => a.name === form.ad)) {
+    shapesKey = ''
+    return
+  }
   try {
     const { shapes: list } = await launchApi.shapes(
       form.accountId, region.value, form.ad || undefined)
+    if (key !== shapesKey) return
     shapes.value = list
   } catch (err) {
-    optionError.value = errorText(err)
+    if (key !== shapesKey) return
+    optionError.value = `查询规格失败：${errorText(err)}`
     // 查不到就留空。下面的可用性判断会因此全部放行——
     // 拦不住总好过把所有预设都误标成不可用。
     shapes.value = []
@@ -340,9 +363,12 @@ async function loadShapes() {
 async function loadImages() {
   if (!form.accountId || !region.value || !form.shape) return
 
+  const key = `${form.accountId}|${region.value}|${form.shape}`
   loadingImages.value = true
   try {
     const { images: list } = await launchApi.images(form.accountId, region.value, form.shape)
+    // 期间换了账号、区域或规格：这批镜像已经不适用了。
+    if (key !== `${form.accountId}|${region.value}|${form.shape}`) return
     images.value = list
     if (!list.some(i => i.id === form.imageId)) {
       // 默认选 Ubuntu：社区里绝大多数教程都基于它。
@@ -350,7 +376,8 @@ async function loadImages() {
       form.imageId = (ubuntu ?? list[0])?.id ?? ''
     }
   } catch (err) {
-    optionError.value = errorText(err)
+    if (key !== `${form.accountId}|${region.value}|${form.shape}`) return
+    optionError.value = `查询镜像失败：${errorText(err)}`
     images.value = []
   } finally {
     loadingImages.value = false
@@ -365,9 +392,11 @@ async function loadImages() {
  */
 async function loadSubnets() {
   if (!form.accountId || !region.value) return
+  const key = `${form.accountId}|${region.value}`
   loadingSubnets.value = true
   try {
     const { subnets: list } = await network.subnets(form.accountId, region.value)
+    if (key !== `${form.accountId}|${region.value}`) return
     subnets.value = (list ?? []).filter(sn => sn.lifecycleState === 'AVAILABLE')
     // 选中的子网如果已经不在了（换了区域或账号），退回自动处理。
     if (form.subnetId && !subnets.value.some(sn => sn.id === form.subnetId)) {
