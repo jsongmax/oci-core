@@ -67,7 +67,7 @@ async function onCopy() {
 .toast__dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--c); }
 .toast__title { flex: 1 1 auto; font-size: 13px; font-weight: 600; }
 .toast__close { border: 0; background: none; color: var(--text-tertiary); cursor: pointer; font-size: 12px; }
-.toast__body { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); }
+.toast__body { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); white-space: pre-line; }
 .toast__cmd {
   margin-top: 10px; width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px;
   border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);

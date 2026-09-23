@@ -36,12 +36,15 @@ type Vcn struct {
 
 // Subnet 是子网。
 type Subnet struct {
-	ID                     string    `json:"id"`
-	CompartmentID          string    `json:"compartmentId"`
-	VcnID                  string    `json:"vcnId"`
-	DisplayName            string    `json:"displayName"`
-	CidrBlock              string    `json:"cidrBlock"`
-	Ipv6CidrBlock          string    `json:"ipv6CidrBlock"`
+	ID            string `json:"id"`
+	CompartmentID string `json:"compartmentId"`
+	VcnID         string `json:"vcnId"`
+	DisplayName   string `json:"displayName"`
+	CidrBlock     string `json:"cidrBlock"`
+	Ipv6CidrBlock string `json:"ipv6CidrBlock"`
+	// Ipv6CidrBlocks 是子网的全部 IPv6 前缀。一个子网可以有多段，
+	// 较新的子网可能只填这个字段，判断"有没有 IPv6"要两个都看。
+	Ipv6CidrBlocks         []string  `json:"ipv6CidrBlocks"`
 	AvailabilityDomain     string    `json:"availabilityDomain"`
 	RouteTableID           string    `json:"routeTableId"`
 	SecurityListIDs        []string  `json:"securityListIds"`
@@ -67,6 +70,9 @@ type RouteRule struct {
 	DestinationType string `json:"destinationType,omitempty"`
 	NetworkEntityID string `json:"networkEntityId"`
 	Description     string `json:"description,omitempty"`
+	// RouteType 为 LOCAL 的规则由 Oracle 自己维护，STATIC 是人加的。
+	// 改路由表前要靠它认出前者。
+	RouteType string `json:"routeType,omitempty"`
 }
 
 // RouteTable 是路由表。

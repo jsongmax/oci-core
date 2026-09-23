@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	"ocicore/internal/ociclient"
@@ -48,5 +50,21 @@ func TestAnnotateSecurityList(t *testing.T) {
 	list.EgressSecurityRules = []ociclient.EgressSecurityRule{{Protocol: "all", Destination: "0.0.0.0/0"}}
 	if annotateSecurityList(list).NoEgress {
 		t.Error("有出站规则时 NoEgress 应为 false")
+	}
+}
+
+// 开通 IPv6 失败时给用户看的文字：保留是哪一步出的错，OCI 错误压成「代码 · 说明」。
+func TestIPv6ErrText(t *testing.T) {
+	apiErr := &ociclient.APIError{StatusCode: 400, Code: "InvalidParameter",
+		Message: "ipv6CidrBlock overlaps", Class: ociclient.ClassBadRequest}
+	err := fmt.Errorf("为子网分配 IPv6 前缀 2603:c020::/64 失败: %w", apiErr)
+
+	got := ipv6ErrText(err)
+	want := "为子网分配 IPv6 前缀 2603:c020::/64 失败: InvalidParameter · ipv6CidrBlock overlaps"
+	if got != want {
+		t.Errorf("得到 %q\n期望 %q", got, want)
+	}
+	if plain := ipv6ErrText(errors.New("等待子网的 IPv6 前缀生效超时")); plain != "等待子网的 IPv6 前缀生效超时" {
+		t.Errorf("非 OCI 错误应原样返回，得到 %q", plain)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -37,7 +36,12 @@ const resourceWaitTimeout = 90 * time.Second
 type EnsureNetworkOptions struct {
 	Region        string
 	CompartmentID string
-	// EnableIPv6 为 true 时同时给 VCN 与子网分配 IPv6 前缀。
+	// EnableIPv6 为 true 时，复用优先挑已经有 IPv6 的子网，新建的 VCN 直接
+	// 带上 IPv6 前缀。
+	//
+	// 它**不负责**给子网分配前缀、补路由——那是 PrepareIPv6 的事，调用方
+	// 拿到子网之后必须自己调一次。分开是因为守候任务每一轮都会调
+	// EnsureNetwork，而 PrepareIPv6 只需要成功一次。
 	EnableIPv6 bool
 }
 
@@ -62,15 +66,28 @@ func EnsureNetwork(ctx context.Context, client *ociclient.Client, opts EnsureNet
 	if err != nil {
 		return nil, fmt.Errorf("读取子网列表失败: %w", err)
 	}
-	for _, sub := range subnets {
-		// ProhibitPublicIpOnVnic 为 true 的是私有子网，实例起来也没有公网 IP。
-		if sub.LifecycleState == "AVAILABLE" && !sub.ProhibitPublicIPOnVnic {
-			result.VcnID = sub.VcnID
-			result.SubnetID = sub.ID
-			result.SubnetName = sub.DisplayName
-			result.Steps = append(result.Steps, "复用已有公网子网 "+sub.DisplayName)
-			return result, nil
+	// ProhibitPublicIpOnVnic 为 true 的是私有子网，实例起来也没有公网 IP。
+	var pick *ociclient.Subnet
+	for i := range subnets {
+		sub := &subnets[i]
+		if sub.LifecycleState != "AVAILABLE" || sub.ProhibitPublicIPOnVnic {
+			continue
 		}
+		// 要 IPv6 时优先挑已经开通的，少改一处用户的网络。
+		if opts.EnableIPv6 && subnetHasIPv6(sub) {
+			pick = sub
+			break
+		}
+		if pick == nil {
+			pick = sub
+		}
+	}
+	if pick != nil {
+		result.VcnID = pick.VcnID
+		result.SubnetID = pick.ID
+		result.SubnetName = pick.DisplayName
+		result.Steps = append(result.Steps, "复用已有公网子网 "+pick.DisplayName)
+		return result, nil
 	}
 
 	return createNetwork(ctx, client, opts, result)
@@ -121,16 +138,6 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 		result.Steps = append(result.Steps, "已配置默认路由 0.0.0.0/0")
 	}
 
-	if opts.EnableIPv6 {
-		if err := client.AddVcnIpv6Cidr(ctx, opts.Region, vcn.ID); err != nil {
-			// IPv6 是加分项，失败不该让整个建网流程回滚。
-			slog.Warn("为 VCN 分配 IPv6 前缀失败", "vcn", vcn.ID, "err", err)
-			result.Steps = append(result.Steps, "IPv6 前缀分配失败，已跳过")
-		} else {
-			result.Steps = append(result.Steps, "已为 VCN 分配 IPv6 前缀")
-		}
-	}
-
 	// 区域级子网（不指定可用域）比 AD 级子网更灵活：
 	// 实例可以落在该区域任意可用域，抢容量时多一分余地。
 	subnet, err := client.CreateSubnet(ctx, opts.Region, ociclient.CreateSubnetRequest{
@@ -147,14 +154,10 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 	result.SubnetName = subnet.DisplayName
 	result.Steps = append(result.Steps, "已创建子网 "+subnet.DisplayName+" ("+defaultSubnetCidr+")")
 
-	if opts.EnableIPv6 {
-		if err := client.AddSubnetIpv6Cidr(ctx, opts.Region, subnet.ID, ""); err != nil {
-			slog.Warn("为子网分配 IPv6 前缀失败", "subnet", subnet.ID, "err", err)
-		} else {
-			result.Steps = append(result.Steps, "已为子网分配 IPv6 前缀")
-		}
-	}
-
+	// IPv6 不在这里处理：VCN 创建时已经带上前缀，子网前缀与路由由调用方
+	// 接着调 PrepareIPv6 完成。以前这里还会再给 VCN 申请一次前缀——每个
+	// VCN 只能有一个 Oracle 分配的前缀，那一步必然失败——失败又被吞掉，
+	// 最后创建实例时才以 "Subnet must support ipv6" 的形式暴露。
 	return result, nil
 }
 
@@ -163,7 +166,7 @@ func waitVcnAvailable(ctx context.Context, client *ociclient.Client, region, vcn
 	ctx, cancel := context.WithTimeout(ctx, resourceWaitTimeout)
 	defer cancel()
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -263,26 +266,13 @@ type EnableIPv6Result struct {
 func EnableIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, subnetID string) (*EnableIPv6Result, error) {
 	result := &EnableIPv6Result{}
 
-	subnet, err := client.GetSubnet(ctx, region, subnetID)
+	prep, err := PrepareIPv6(ctx, client, region, subnetID)
 	if err != nil {
-		return nil, fmt.Errorf("读取子网失败: %w", err)
+		return nil, err
 	}
-
-	if subnet.Ipv6CidrBlock == "" {
-		vcn, err := client.GetVcn(ctx, region, subnet.VcnID)
-		if err != nil {
-			return nil, fmt.Errorf("读取 VCN 失败: %w", err)
-		}
-		if len(vcn.Ipv6CidrBlocks) == 0 {
-			if err := client.AddVcnIpv6Cidr(ctx, region, vcn.ID); err != nil {
-				return nil, fmt.Errorf("为 VCN 分配 IPv6 前缀失败: %w", err)
-			}
-			result.Steps = append(result.Steps, "已为 VCN 分配 IPv6 前缀")
-		}
-		if err := client.AddSubnetIpv6Cidr(ctx, region, subnetID, ""); err != nil {
-			return nil, fmt.Errorf("为子网分配 IPv6 前缀失败: %w", err)
-		}
-		result.Steps = append(result.Steps, "已为子网分配 IPv6 前缀")
+	result.Steps = append(result.Steps, prep.Steps...)
+	for _, w := range prep.Warnings {
+		result.Steps = append(result.Steps, "⚠ "+w)
 	}
 
 	// 已经有地址就直接返回，重复调用不该产生第二个地址。

@@ -81,15 +81,20 @@ type Service struct {
 	// 一次尝试可能耗时数十秒（自动建网），而 tick 是 10 秒。
 	mu       sync.Mutex
 	inflight map[string]bool
+	// ipv6Ready 记录已经为哪个任务开通过哪个子网的 IPv6（任务 ID → 子网 ID）。
+	// 开通只需成功一次，守候却每分钟一轮，不必每轮都去读路由表和安全列表。
+	// 只存在内存里：重启后多查一遍，结果一样。
+	ipv6Ready map[string]string
 }
 
 func New(d Deps) *Service {
 	return &Service{
-		st:       d.Store,
-		conns:    d.Conns,
-		onLaunch: d.OnLaunch,
-		onEvent:  d.OnEvent,
-		inflight: make(map[string]bool),
+		st:        d.Store,
+		conns:     d.Conns,
+		onLaunch:  d.OnLaunch,
+		onEvent:   d.OnEvent,
+		inflight:  make(map[string]bool),
+		ipv6Ready: make(map[string]string),
 	}
 }
 
@@ -256,6 +261,20 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 		subnetID = netResult.SubnetID
 	}
 
+	// 要 IPv6 就先确认子网真能分配。不做这一步，每一轮都会以
+	// "Subnet must support ipv6" 失败，守候白跑。
+	if spec.EnableIPv6 && !s.ipv6Prepared(t.ID, subnetID) {
+		prep, err := netsvc.PrepareIPv6(ctx, client, t.Region, subnetID)
+		if err != nil {
+			s.reschedule(ctx, t, "Transient", "为子网开通 IPv6 失败："+shortErr(err), ad)
+			return
+		}
+		for _, warn := range prep.Warnings {
+			slog.Warn("守候：IPv6 未完全配置", "task", t.ID, "detail", warn)
+		}
+		s.markIPv6Prepared(t.ID, subnetID)
+	}
+
 	// 前置容量检查。
 	//
 	// 容量报告是只读接口，LaunchInstance 才是 Oracle 风控盯的那个——
@@ -284,6 +303,18 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 	}
 
 	s.succeed(ctx, t, client, acc, created, spec, ad)
+}
+
+func (s *Service) ipv6Prepared(taskID, subnetID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ipv6Ready[taskID] == subnetID
+}
+
+func (s *Service) markIPv6Prepared(taskID, subnetID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ipv6Ready[taskID] = subnetID
 }
 
 // shouldStop 判断任务是否已经该停了。

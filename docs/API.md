@@ -293,6 +293,8 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 创建前会做配额预检，不足时返回 400 `quota_exceeded`。
 
+`enableIpv6: true` 时，无论子网是手选、复用还是新建，都会先确认它能分配 IPv6：子网没有 IPv6 前缀就开通（VCN 没有前缀先申请 Oracle 分配的 /56，再从中切一段未占用的 /64 给子网；VCN 开通 IPv6 后无法关闭）。开通失败返回 502 `ipv6_unavailable`，实例不会创建。另外会照搬 IPv4 的现有配置补 `::/0` 路由与 `::/0` 出站规则：只有 IPv4 默认路由走互联网网关、且放行全部 IPv4 出站时才补；收紧过的不动，未完成的事项附在 `notice` 里。入站规则一律不自动添加。`POST /api/network/ensure?ipv6=true` 与 `POST /api/instances/{ocid}/enable-ipv6` 走同一套开通逻辑。
+
 响应 201：
 
 ```json

@@ -822,8 +822,10 @@ watch(() => form.shape, () => {
         <SectionCard title="地址">
           <SwitchRow v-model="form.publicIp" title="分配公网 IPv4"
                      sub="临时 IP，可在实例详情中更换" />
+          <!-- 说清楚会改动什么：VCN 一旦开通 IPv6 就关不掉（Oracle 的限制），
+               而入站规则不会自动加，想用 IPv6 登录得自己去网络页加。 -->
           <SwitchRow v-model="form.ipv6" title="启用 IPv6"
-                     sub="为 VCN 与子网分配前缀并给实例配置 IPv6 地址" />
+                     sub="子网没有 IPv6 时自动开通（所在 VCN 开通后无法关闭），并照 IPv4 的配置补上 ::/0 路由和出站规则。入站规则不会自动添加" />
           <p v-if="subnetConflict" class="pad t-xs" style="color: var(--warning); line-height: 1.7">
             {{ subnetConflict }}
           </p>

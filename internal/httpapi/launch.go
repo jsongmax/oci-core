@@ -268,6 +268,20 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		resp.Steps = append(resp.Steps, netResult.Steps...)
 	}
 
+	// 无论子网是手选的、复用的还是新建的，要 IPv6 就得先确认它真能分配 IPv6。
+	// 开通不了就到此为止：带着 assignIpv6Ip 去创建只会换来 Oracle 一句
+	// "Subnet must support ipv6"，用户看不出缺的是什么。
+	var ipv6Warnings []string
+	if req.EnableIPv6 {
+		prep, err := netsvc.PrepareIPv6(ctx, client, region, subnetID)
+		if err != nil {
+			writeIPv6Error(w, err)
+			return
+		}
+		resp.Steps = append(resp.Steps, prep.Steps...)
+		ipv6Warnings = prep.Warnings
+	}
+
 	assignPublicIP := true
 	if req.AssignPublicIP != nil {
 		assignPublicIP = *req.AssignPublicIP
@@ -346,7 +360,28 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Instance = *stored
 	resp.Notice = "实例正在创建，通常需要 1–3 分钟。公网 IP 会在就绪后出现。"
+	if len(ipv6Warnings) > 0 {
+		resp.Notice += "\nIPv6：" + strings.Join(ipv6Warnings, "；")
+	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// writeIPv6Error 报告子网开通 IPv6 失败。此时实例还没有创建。
+func writeIPv6Error(w http.ResponseWriter, err error) {
+	writeJSON(w, http.StatusBadGateway, errorBody{
+		Code:    "ipv6_unavailable",
+		Message: "没能为子网开通 IPv6，实例未创建：" + ipv6ErrText(err),
+		Advice:  "可以关闭 IPv6 后重试，或换一个子网，也可以先在 Oracle 控制台给这个子网分配 IPv6 前缀。",
+	})
+}
+
+// ipv6ErrText 保留出错的是哪一步，同时把 OCI 错误压成「代码 · 说明」。
+func ipv6ErrText(err error) string {
+	text := err.Error()
+	if apiErr, ok := ociclient.AsAPIError(err); ok {
+		text = strings.Replace(text, apiErr.Error(), shortOCIError(apiErr), 1)
+	}
+	return text
 }
 
 // checkLaunchQuota 在创建前检查配额，返回非空字符串表示配额不足。

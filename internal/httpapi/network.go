@@ -196,14 +196,27 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
 
+	enableIPv6 := r.URL.Query().Get("ipv6") == "true"
 	result, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
 		Region:        region,
 		CompartmentID: acc.CompartmentOCID,
-		EnableIPv6:    r.URL.Query().Get("ipv6") == "true",
+		EnableIPv6:    enableIPv6,
 	})
 	if err != nil {
 		writeOCIError(w, err)
 		return
+	}
+	if enableIPv6 {
+		prep, err := netsvc.PrepareIPv6(ctx, client, region, result.SubnetID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "ipv6_unavailable",
+				"子网已就绪，但没能开通 IPv6："+ipv6ErrText(err))
+			return
+		}
+		result.Steps = append(result.Steps, prep.Steps...)
+		for _, warn := range prep.Warnings {
+			result.Steps = append(result.Steps, "⚠ "+warn)
+		}
 	}
 
 	user := userFrom(r.Context())
