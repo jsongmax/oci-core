@@ -34,6 +34,7 @@ type Instance struct {
 	ImageOS        string    `json:"imageOs"`
 	PublicIP       string    `json:"publicIp"`
 	PrivateIP      string    `json:"privateIp"`
+	// IPv6 是主网卡上的全部 IPv6，逗号分隔；未启用时为空串。
 	IPv6           string    `json:"ipv6"`
 	VnicID         string    `json:"vnicId"`
 	SubnetID       string    `json:"subnetId"`
