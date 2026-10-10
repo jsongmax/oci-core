@@ -142,6 +142,8 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	action := "account_update"
 	if req.PrivateKeyPem != nil {
 		action = "account_rotate_key"
+		// 缓存按 updated_at 失效，但它只精确到秒；同一秒内的两次更新会让旧私钥继续生效。
+		s.conns.Invalidate(acc.ID)
 	}
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: action, AccountID: acc.ID,

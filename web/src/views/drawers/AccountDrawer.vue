@@ -19,6 +19,7 @@ import KeyValueList from '@/components/KeyValueList.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
+import CredentialField from '@/components/CredentialField.vue'
 
 const props = defineProps<{ id: string; tab?: string }>()
 const router = useRouter()
@@ -52,6 +53,45 @@ async function recheck() {
   } finally {
     checking.value = false
   }
+}
+
+/* ---------- 密钥轮换 ---------- */
+
+const rotateFingerprint = ref('')
+const rotateKey = ref('')
+const rotating = ref(false)
+const canRotate = computed(() =>
+  rotateFingerprint.value.trim().length > 0 && rotateKey.value.trim().length > 20)
+
+/**
+ * 指纹与私钥一起提交：后端会核对两者是否匹配，不匹配直接拒绝写入，
+ * 错误信息里带着私钥的实际指纹。成功后私钥立刻从内存里清掉，再走一次校验。
+ */
+function rotateKeyNow() {
+  const acc = account.value
+  if (!acc) return
+  ask({
+    level: 2, title: `轮换 ${acc.alias} 的 API 密钥`,
+    body: '旧私钥会被覆盖且无法找回。请确认新公钥已经添加到 Oracle 控制台，否则该账号会立即失效。',
+    okLabel: '轮换密钥',
+    onConfirm: async () => {
+      rotating.value = true
+      try {
+        await accountsApi.update(acc.id, {
+          fingerprint: rotateFingerprint.value.trim(),
+          privateKeyPem: rotateKey.value.trim()
+        })
+        rotateKey.value = ''
+        rotateFingerprint.value = ''
+        toast({ tone: 'success', title: '密钥已轮换', body: '正在重新校验凭据…' })
+        await recheck()
+      } catch (err) {
+        toastError('轮换密钥失败', err)
+      } finally {
+        rotating.value = false
+      }
+    }
+  })
 }
 
 /** 权限自检项：真实校验步骤 + 本工具需要的最小权限集说明。 */
@@ -498,7 +538,20 @@ Allow group OCI Core to read all-resources in tenancy`" />
           ]" />
         </SectionCard>
         <SectionCard title="轮换密钥">
-          <CheckList :items="[{ tone: 'info', text: '粘贴新的 PEM 私钥即可替换。留空则不修改。轮换后会立即重新校验凭据。' }]" />
+          <div class="pad">
+            <CheckList :items="[{ tone: 'info', text: '先在 Oracle 控制台给该用户添加新的 API 密钥，再把新私钥和它的指纹填在这里。轮换后会立即重新校验凭据。' }]" />
+            <div class="field">
+              <label for="rotate-fp">新密钥指纹</label>
+              <input id="rotate-fp" v-model="rotateFingerprint" class="input mono"
+                     placeholder="20:3b:97:13:…" spellcheck="false" autocomplete="off" />
+            </div>
+            <CredentialField v-model="rotateKey" :fingerprint="rotateFingerprint" />
+            <div>
+              <button class="btn btn--sm btn--primary" :disabled="!canRotate || rotating" @click="rotateKeyNow()">
+                {{ rotating ? '轮换中…' : '轮换密钥' }}
+              </button>
+            </div>
+          </div>
         </SectionCard>
         <SectionCard title="危险操作">
           <div class="rule">
