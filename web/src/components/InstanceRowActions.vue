@@ -5,6 +5,7 @@ import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
 import type { Instance } from '@/types'
 import { copy } from '@/lib/format'
+import ActionIcon from '@/components/ActionIcon.vue'
 
 const props = defineProps<{ instance: Instance }>()
 const {
@@ -101,6 +102,13 @@ function forceRestart() {
   })
 }
 
+const hasPublicIp = computed(() => !!props.instance.publicIp && props.instance.publicIp !== '—')
+
+function copySsh() {
+  const cmd = `ssh ${props.instance.sshUser}@${props.instance.publicIp}`
+  copy(cmd).then(() => toast({ tone: 'accent', title: '已复制 SSH 命令', body: cmd }))
+}
+
 function changeIp() {
   const i = props.instance
   ask({
@@ -147,16 +155,23 @@ function askTerminate() {
 
 <template>
   <div class="acts">
+    <!-- 开机与关机共用电源图标，靠颜色和 title / aria-label 区分：
+         颜色不能是唯一的信息载体 -->
     <button v-if="instance.state === 'STOPPED'" class="icon-btn" :disabled="locked"
-            title="开机" style="color: var(--success)" @click="start(instance.id)">
-      <span :class="{ 'is-spinning': busy }">▶</span>
+            title="开机" aria-label="开机" style="color: var(--success)" @click="start(instance.id)">
+      <span :class="{ 'is-spinning': busy }"><ActionIcon name="power" /></span>
     </button>
-    <button v-else class="icon-btn" :disabled="locked" title="关机" @click="stop(instance.id)">
-      <span :class="{ 'is-spinning': busy }">⏸</span>
+    <button v-else class="icon-btn" :disabled="locked" title="关机" aria-label="关机" @click="stop(instance.id)">
+      <span :class="{ 'is-spinning': busy }"><ActionIcon name="power" /></span>
     </button>
-    <button class="icon-btn" :disabled="locked" title="软重启" @click="restart(instance.id)">↻</button>
-    <button class="icon-btn" title="复制 SSH 命令"
-            @click="copy(`ssh ${instance.sshUser}@${instance.publicIp}`).then(() => toast({ tone: 'accent', title: '已复制 SSH 命令', body: `ssh ${instance.sshUser}@${instance.publicIp}` }))">⌘</button>
+    <button class="icon-btn" :disabled="locked" title="软重启" aria-label="软重启" @click="restart(instance.id)">
+      <ActionIcon name="restart" />
+    </button>
+    <button class="icon-btn" :disabled="!hasPublicIp"
+            :title="hasPublicIp ? `复制 SSH 命令（${instance.sshUser}@）` : '没有公网 IP'"
+            aria-label="复制 SSH 命令" @click="copySsh()">
+      <ActionIcon name="terminal" />
+    </button>
 
     <button ref="dotsEl" class="icon-btn" aria-haspopup="menu" aria-label="更多操作"
             :aria-expanded="menuOpen" @click="toggleMenu()">⋯</button>
