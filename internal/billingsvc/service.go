@@ -127,7 +127,13 @@ type Detail struct {
 	Regions   []Bucket   `json:"regions"`
 	// Usage 是同一区间按服务分组的**用量**，与 Services 一一对应但看的是数量。
 	// 免费号唯一有内容的就是这块。
-	Usage     []Bucket  `json:"usage"`
+	Usage []Bucket `json:"usage"`
+	// SKUs 是按计费项分组的用量与金额。按服务分组会把出站流量和网络服务的
+	// 其他计费项混在一起，按计费项才拆得开。
+	SKUs []Bucket `json:"skus"`
+	// Egress 是区间内出站流量的合计，取自名字里带 Outbound Data Transfer 的
+	// 计费项（Oracle 按区域分成好几个 Zone）。没有这类计费项时为 nil。
+	Egress    *Bucket   `json:"egress,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	FetchedAt time.Time `json:"fetchedAt"`
 }
@@ -280,12 +286,12 @@ func (s *Service) DetailFor(ctx context.Context, acc *store.Account, days int, r
 	// 按服务分组的那次一举两得：既能按天求和得到趋势，又能按服务求和得到构成。
 	// 单独再查一次「不分组的每日总额」是多余的一趟。
 	var (
-		costItems, regionItems, usageItems []ociclient.UsageItem
-		costErr, regionErr, usageErr       error
-		wg                                 sync.WaitGroup
+		costItems, regionItems, usageItems, skuItems []ociclient.UsageItem
+		costErr, regionErr, usageErr, skuErr         error
+		wg                                           sync.WaitGroup
 	)
 
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		costItems, costErr = client.SummarizeUsage(ctx, ociclient.UsageQuery{
@@ -316,6 +322,16 @@ func (s *Service) DetailFor(ctx context.Context, acc *store.Account, days int, r
 			Region:      region,
 		})
 	}()
+	go func() {
+		defer wg.Done()
+		skuItems, skuErr = client.SummarizeUsage(ctx, ociclient.UsageQuery{
+			Start: start, End: end,
+			Granularity: ociclient.GranularityTotal,
+			QueryType:   ociclient.QueryTypeUsage,
+			GroupBy:     []string{ociclient.GroupBySKU},
+			Region:      region,
+		})
+	}()
 	wg.Wait()
 
 	// 费用那次是主查询，它失败才算整体失败；另外两次只是补充维度。
@@ -330,6 +346,9 @@ func (s *Service) DetailFor(ctx context.Context, acc *store.Account, days int, r
 	}
 	if usageErr == nil {
 		res.Usage = foldBuckets(usageItems, true)
+	}
+	if skuErr == nil {
+		res.SKUs, res.Egress = foldSKUs(skuItems)
 	}
 
 	res.Status = StatusOK
@@ -420,6 +439,57 @@ func foldBuckets(items []ociclient.UsageItem, byQuantity bool) []Bucket {
 	}
 	sortBuckets(out, byQuantity)
 	return out
+}
+
+// foldSKUs 把按计费项分组的用量折成列表，并合计出站流量。
+//
+// 出站流量按名字认：Oracle 把它按区域分成 Outbound Data Transfer Zone 1/2…
+// 等几个计费项，单位一致（都是流量），可以直接相加。
+func foldSKUs(items []ociclient.UsageItem) ([]Bucket, *Bucket) {
+	type acc struct {
+		amount, quantity float64
+		unit             string
+	}
+	m := make(map[string]*acc)
+	var egress *Bucket
+
+	for _, it := range items {
+		key := strings.TrimSpace(it.SkuName)
+		if key == "" {
+			key = strings.TrimSpace(it.SkuPartNumber)
+		}
+		if key == "" {
+			key = "未分类"
+		}
+		e := m[key]
+		if e == nil {
+			e = &acc{}
+			m[key] = e
+		}
+		e.amount += it.Amount()
+		e.quantity += it.Quantity()
+		if e.unit == "" {
+			e.unit = it.Unit
+		}
+
+		if strings.Contains(strings.ToLower(key), "outbound data transfer") {
+			if egress == nil {
+				egress = &Bucket{Key: "出站流量", Unit: it.Unit}
+			}
+			egress.Amount += it.Amount()
+			egress.Quantity += it.Quantity()
+		}
+	}
+
+	out := make([]Bucket, 0, len(m))
+	for k, v := range m {
+		if v.quantity == 0 && v.amount == 0 {
+			continue
+		}
+		out = append(out, Bucket{Key: k, Amount: v.amount, Quantity: v.quantity, Unit: v.unit})
+	}
+	sortBuckets(out, true)
+	return out, egress
 }
 
 // sortBuckets 按金额（或用量）降序，同值时按名字排，保证顺序稳定。

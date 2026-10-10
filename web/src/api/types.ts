@@ -670,6 +670,10 @@ export interface BillingDetailDTO {
   services: BillingBucketDTO[] | null
   regions: BillingBucketDTO[] | null
   usage: BillingBucketDTO[] | null
+  /** 按计费项分组的用量与金额 */
+  skus: BillingBucketDTO[] | null
+  /** 出站流量合计（Outbound Data Transfer 各 Zone 相加）；没有这类计费项时缺省 */
+  egress?: BillingBucketDTO
   error?: string
   fetchedAt: string
 }

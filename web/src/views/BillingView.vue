@@ -221,6 +221,10 @@ const hasCost = computed(() => (detail.value?.total ?? 0) > 0)
 const usageRows = computed<BillingBucketDTO[]>(() => detail.value?.usage ?? [])
 const serviceRows = computed<BillingBucketDTO[]>(() => detail.value?.services ?? [])
 const regionRows = computed<BillingBucketDTO[]>(() => detail.value?.regions ?? [])
+/** 计费项很多（免费号里也有几十个零碎的），只列前 12 个，其余合并成一行说明。 */
+const SKU_LIMIT = 12
+const skuRows = computed<BillingBucketDTO[]>(() => (detail.value?.skus ?? []).slice(0, SKU_LIMIT))
+const skuRest = computed(() => Math.max(0, (detail.value?.skus?.length ?? 0) - SKU_LIMIT))
 
 /** 构成条的宽度百分比，按该维度里的最大值归一化。 */
 function share(rows: BillingBucketDTO[], v: number): number {
@@ -423,6 +427,17 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             </p>
           </div>
 
+          <!-- 出站流量单独拎出来：它是免费号最容易超的一项，而按服务分组时
+               和网络服务的其他计费项混在一起看不出来 -->
+          <div v-if="detail.egress" class="egress">
+            <span class="t-2xs dim-3">出站流量 · 这 {{ detail.days }} 天</span>
+            <span class="mono egress__v">
+              {{ qty(detail.egress.quantity) }}<span class="brow__unit dim-3">{{ detail.egress.unit }}</span>
+            </span>
+            <span v-if="detail.egress.amount > 0" class="mono t-xs">{{ money(detail.egress.amount, detail.currency) }}</span>
+            <span class="t-2xs dim-3">永久免费额度为每月 10 TB；单位以 Oracle 返回为准</span>
+          </div>
+
           <!-- 有费用时按服务/区域拆金额；没费用时拆用量 -->
           <div class="splits">
             <div v-if="hasCost && serviceRows.length" class="split">
@@ -459,6 +474,22 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                   {{ qty(b.quantity) }}<span class="brow__unit dim-3">{{ b.unit }}</span>
                 </span>
               </div>
+            </div>
+
+            <div v-if="skuRows.length" class="split split--wide">
+              <p class="split__head t-2xs dim-3">用量 · 按计费项</p>
+              <div v-for="b in skuRows" :key="b.key" class="brow">
+                <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
+                <span class="brow__track">
+                  <span class="brow__fill brow__fill--usage"
+                        :style="{ width: shareQty(skuRows, b.quantity) + '%' }" />
+                </span>
+                <span class="mono t-2xs brow__v">
+                  {{ qty(b.quantity) }}<span class="brow__unit dim-3">{{ b.unit }}</span>
+                  <template v-if="b.amount > 0"> · {{ money(b.amount, '') }}</template>
+                </span>
+              </div>
+              <p v-if="skuRest" class="t-2xs dim-3">另有 {{ skuRest }} 个用量更小的计费项未列出</p>
             </div>
 
             <p v-if="!hasCost && !usageRows.length" class="t-xs dim-3 splits__none">
@@ -553,6 +584,12 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
    放到 300px，下面三段的宽度之和才留得出条的位置。 */
 .split { flex: 1 1 300px; min-width: 300px; }
 .split--wide { flex: 1 1 100%; }
+.egress {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px;
+  margin: 0 0 14px; padding: 12px 14px; border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+.egress__v { font-size: 16px; font-weight: 600; }
 .split__head { margin: 0 0 10px; }
 .splits__none { margin: 0; line-height: 1.7; }
 

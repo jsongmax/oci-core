@@ -620,6 +620,8 @@ Allow group <你的组> to read usage-report in tenancy
   "services": [{ "key": "计算", "amount": 6.0973, "quantity": 0, "unit": "" }],
   "regions":  [{ "key": "ap-tokyo-1", "amount": 6.9683, "quantity": 0, "unit": "" }],
   "usage":    [{ "key": "计算", "amount": 0, "quantity": 2880, "unit": "OCPU Hours" }],
+  "skus":     [{ "key": "Outbound Data Transfer Zone 1", "amount": 0, "quantity": 120, "unit": "GB" }],
+  "egress":   { "key": "出站流量", "amount": 0, "quantity": 150, "unit": "GB" },
   "fetchedAt": "…" }
 ```
 
@@ -628,6 +630,10 @@ Allow group <你的组> to read usage-report in tenancy
 
 `usage` 是同一区间的**用量**视角（`queryType=USAGE`），金额恒为零的免费账号
 只有这一块有内容。用量为零的服务已被过滤——免费号的响应里能有几十条零用量记录。
+
+`skus` 是同一区间按计费项（`groupBy=skuName`）分组的用量，按服务分组时混在
+一起的计费项在这里拆得开。`egress` 是名字里带 `Outbound Data Transfer` 的
+各计费项之和（Oracle 按区域分成几个 Zone）；没有这类计费项时字段缺省。
 
 > **数据有延迟。** Oracle 每隔几小时结算一次，最新一天通常不完整。
 > 这个接口给不出"实时消费"，界面上不要那样描述。

@@ -239,3 +239,34 @@ func TestServiceNameFallsBackToRawIdentifier(t *testing.T) {
 		t.Errorf("空服务名应归入未分类，实际 %q", got)
 	}
 }
+
+// 出站流量分散在按区域划分的几个计费项里，必须合计；其他计费项不能混进来。
+func TestFoldSKUsSumsEgressAcrossZones(t *testing.T) {
+	items := []ociclient.UsageItem{
+		{SkuName: "Outbound Data Transfer Zone 1", ComputedQuantity: amount(120), Unit: "GB"},
+		{SkuName: "Outbound Data Transfer Zone 2", ComputedQuantity: amount(30), Unit: "GB"},
+		{SkuName: "Compute - Standard - A1 - OCPU", ComputedQuantity: amount(720), Unit: "OCPU Hours"},
+		{SkuName: "Load Balancer", ComputedQuantity: amount(0)},
+	}
+
+	skus, egress := foldSKUs(items)
+
+	if egress == nil || egress.Quantity != 150 || egress.Unit != "GB" {
+		t.Fatalf("出站流量应合计为 150 GB，实际 %+v", egress)
+	}
+	if len(skus) != 3 {
+		t.Errorf("零用量的计费项应被丢掉，实际 %d 条: %+v", len(skus), skus)
+	}
+	if skus[0].Key != "Compute - Standard - A1 - OCPU" {
+		t.Errorf("应按用量降序，第一条实际是 %q", skus[0].Key)
+	}
+}
+
+func TestFoldSKUsWithoutEgress(t *testing.T) {
+	_, egress := foldSKUs([]ociclient.UsageItem{
+		{SkuName: "Block Volume - Storage", ComputedQuantity: amount(50), Unit: "GB Months"},
+	})
+	if egress != nil {
+		t.Errorf("没有出站计费项时应为 nil，实际 %+v", egress)
+	}
+}
