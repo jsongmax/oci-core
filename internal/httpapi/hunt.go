@@ -350,6 +350,10 @@ func (s *Server) onHuntLaunched(ctx context.Context, task *store.HuntTask,
 		SubnetID:           subnetID,
 		TimeCreated:        inst.TimeCreated,
 	}
+	// 「实例已就绪」的提示里要给出 SSH 命令，用户名取决于镜像系统。
+	if client, _, err := s.conns.ForID(ctx, task.AccountID); err == nil {
+		row.ImageOS = s.instances.ImageOS(ctx, client, region, imageID)
+	}
 	if inst.ShapeConfig != nil {
 		row.Ocpus = float64(inst.ShapeConfig.Ocpus)
 		row.MemoryGB = float64(inst.ShapeConfig.MemoryInGBs)

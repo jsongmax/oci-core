@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,11 @@ type Service struct {
 	// watching 记录正在被轮询的实例，避免对同一台机器重复起协程。
 	watchMu  sync.Mutex
 	watching map[string]struct{}
+
+	// imageOS 缓存 imageId → 操作系统名。镜像创建后不可变，进程内缓存一次即可，
+	// 不必每轮同步都为每台机器多发一次 GetImage。
+	imageMu sync.Mutex
+	imageOS map[string]string
 
 	// notifier 可为 nil：通知是旁路能力，没配也不影响任何主流程。
 	notifier Notifier
@@ -78,6 +84,7 @@ func New(st *store.Store, conns *ociconn.Factory, bus *Bus) *Service {
 		conns:    conns,
 		bus:      bus,
 		watching: make(map[string]struct{}),
+		imageOS:  make(map[string]string),
 	}
 }
 
@@ -286,6 +293,7 @@ func (s *Service) syncAccountRegion(ctx context.Context, acc *store.Account, reg
 	// 网络与存储信息按区域批量取一次，避免每台机器都单独查一遍。
 	netInfo := s.collectNetworkInfo(ctx, client, acc, region, instances)
 	bootInfo := s.collectBootVolumeInfo(ctx, client, acc, region, instances)
+	imageOS := s.collectImageOS(ctx, client, region, instances)
 
 	saved, terminated := 0, 0
 	for _, inst := range instances {
@@ -300,6 +308,7 @@ func (s *Service) syncAccountRegion(ctx context.Context, acc *store.Account, reg
 			Shape:              inst.Shape,
 			LifecycleState:     inst.LifecycleState,
 			ImageID:            inst.ImageID,
+			ImageOS:            imageOS[inst.ImageID],
 			TimeCreated:        inst.TimeCreated,
 		}
 		if inst.ShapeConfig != nil {
@@ -411,6 +420,49 @@ type bootDetail struct {
 	id     string
 	sizeGB int64
 	vpus   int64
+}
+
+// collectImageOS 取回每个镜像的操作系统名，前端靠它推断 SSH 默认用户。
+// 查不到的镜像映射为空串，不影响同步本身。
+func (s *Service) collectImageOS(ctx context.Context, client *ociclient.Client,
+	region string, instances []ociclient.Instance) map[string]string {
+
+	out := make(map[string]string)
+	for _, inst := range instances {
+		if _, done := out[inst.ImageID]; !done && inst.ImageID != "" {
+			out[inst.ImageID] = s.ImageOS(ctx, client, region, inst.ImageID)
+		}
+	}
+	return out
+}
+
+// ImageOS 返回镜像的操作系统名，带进程内缓存。镜像创建后不可变，查一次就够。
+// 查不到时返回空串——它只用来推断 SSH 用户，不值得让调用方处理错误。
+func (s *Service) ImageOS(ctx context.Context, client *ociclient.Client, region, imageID string) string {
+	s.imageMu.Lock()
+	osName, cached := s.imageOS[imageID]
+	s.imageMu.Unlock()
+	if cached {
+		return osName
+	}
+
+	img, err := client.GetImage(ctx, region, imageID)
+	if err != nil {
+		// 自定义镜像删掉后会一直 404，记成空值，免得每轮同步都再撞一次。
+		// 其它错误（限流、网络）不缓存，下一轮再试。
+		if apiErr, ok := ociclient.AsAPIError(err); ok && apiErr.StatusCode == http.StatusNotFound {
+			s.imageMu.Lock()
+			s.imageOS[imageID] = ""
+			s.imageMu.Unlock()
+		} else {
+			slog.Debug("读取镜像失败", "image", imageID, "region", region, "err", err)
+		}
+		return ""
+	}
+	s.imageMu.Lock()
+	s.imageOS[imageID] = img.OperatingSystem
+	s.imageMu.Unlock()
+	return img.OperatingSystem
 }
 
 // collectBootVolumeInfo 取回每台实例的引导卷信息。

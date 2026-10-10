@@ -312,6 +312,45 @@ func TestInstanceErrorSurvivesSync(t *testing.T) {
 	}
 }
 
+// 只有全量同步会查镜像；生命周期轮询写回的行不带 ImageOS，不能把它清空。
+func TestInstanceImageOSSurvivesEmptyUpsert(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	acc, err := st.CreateAccount(ctx, testAccount(t, "东京主号", "TYO", "tokyo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := Instance{
+		ID: "i-1", AccountID: acc.ID, Region: "ap-tokyo-1", DisplayName: "web",
+		LifecycleState: "RUNNING", ImageOS: "Oracle Linux", TimeCreated: time.Now(),
+	}
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+
+	row.ImageOS = ""
+	row.LifecycleState = "STOPPING"
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, "i-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ImageOS != "Oracle Linux" {
+		t.Errorf("空值写入不应覆盖已知的镜像系统，实际 %q", got.ImageOS)
+	}
+
+	row.ImageOS = "Canonical Ubuntu"
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetInstance(ctx, "i-1"); got.ImageOS != "Canonical Ubuntu" {
+		t.Errorf("非空值应正常更新，实际 %q", got.ImageOS)
+	}
+}
+
 func TestInstanceStatsForOverview(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

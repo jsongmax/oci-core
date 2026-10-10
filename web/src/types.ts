@@ -65,6 +65,8 @@ export interface Instance {
   publicIp: string
   privateIp: string
   ipv6?: string
+  /** SSH 默认登录用户，按镜像系统推断 */
+  sshUser: string
   bootGb: number
   bootLimitGb: number
   vpu: number

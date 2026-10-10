@@ -335,6 +335,10 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		SubnetID:           subnetID,
 		TimeCreated:        created.TimeCreated,
 	}
+	// 「实例已就绪」的提示里要给出 SSH 命令，用户名取决于镜像系统。
+	if s.instances != nil {
+		row.ImageOS = s.instances.ImageOS(ctx, client, region, req.ImageID)
+	}
 	if created.ShapeConfig != nil {
 		row.Ocpus = float64(created.ShapeConfig.Ocpus)
 		row.MemoryGB = float64(created.ShapeConfig.MemoryInGBs)

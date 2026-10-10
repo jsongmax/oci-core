@@ -15,27 +15,30 @@ import (
 // 8 个账号 4 个区域就是 32 次往返，让用户每次打开列表都等两秒是不可接受的。
 // 缓存让列表秒开，同步在后台进行。
 type Instance struct {
-	ID                 string    `json:"id"`
-	AccountID          string    `json:"accountId"`
-	Region             string    `json:"region"`
-	CompartmentID      string    `json:"compartmentId"`
-	DisplayName        string    `json:"displayName"`
-	AvailabilityDomain string    `json:"availabilityDomain"`
-	FaultDomain        string    `json:"faultDomain"`
-	Shape              string    `json:"shape"`
-	Ocpus              float64   `json:"ocpus"`
-	MemoryGB           float64   `json:"memoryGb"`
-	LifecycleState     string    `json:"lifecycleState"`
-	ImageID            string    `json:"imageId"`
-	PublicIP           string    `json:"publicIp"`
-	PrivateIP          string    `json:"privateIp"`
-	IPv6               string    `json:"ipv6"`
-	VnicID             string    `json:"vnicId"`
-	SubnetID           string    `json:"subnetId"`
-	BootVolumeID       string    `json:"bootVolumeId"`
-	BootVolumeGB       int64     `json:"bootVolumeGb"`
-	BootVolumeVpus     int64     `json:"bootVolumeVpus"`
-	TimeCreated        time.Time `json:"timeCreated"`
+	ID                 string  `json:"id"`
+	AccountID          string  `json:"accountId"`
+	Region             string  `json:"region"`
+	CompartmentID      string  `json:"compartmentId"`
+	DisplayName        string  `json:"displayName"`
+	AvailabilityDomain string  `json:"availabilityDomain"`
+	FaultDomain        string  `json:"faultDomain"`
+	Shape              string  `json:"shape"`
+	Ocpus              float64 `json:"ocpus"`
+	MemoryGB           float64 `json:"memoryGb"`
+	LifecycleState     string  `json:"lifecycleState"`
+	ImageID            string  `json:"imageId"`
+	// ImageOS 是镜像的操作系统名（如 "Canonical Ubuntu"、"Oracle Linux"），
+	// 前端据此推断 SSH 默认用户。取不到时为空。
+	ImageOS        string    `json:"imageOs"`
+	PublicIP       string    `json:"publicIp"`
+	PrivateIP      string    `json:"privateIp"`
+	IPv6           string    `json:"ipv6"`
+	VnicID         string    `json:"vnicId"`
+	SubnetID       string    `json:"subnetId"`
+	BootVolumeID   string    `json:"bootVolumeId"`
+	BootVolumeGB   int64     `json:"bootVolumeGb"`
+	BootVolumeVpus int64     `json:"bootVolumeVpus"`
+	TimeCreated    time.Time `json:"timeCreated"`
 	// RunningSince 是面板观测到该实例进入 RUNNING 的时刻。
 	//
 	// 为 nil 表示不知道——首次同步时它就已经在跑了。OCI 不返回上次开机
@@ -61,7 +64,7 @@ type Instance struct {
 
 const instanceColumns = `i.id, i.account_id, i.region, i.compartment_id, i.display_name,
 	i.availability_domain, i.fault_domain, i.shape, i.ocpus, i.memory_gb, i.lifecycle_state,
-	i.image_id, i.public_ip, i.private_ip, i.ipv6, i.vnic_id, i.subnet_id,
+	i.image_id, i.image_os, i.public_ip, i.private_ip, i.ipv6, i.vnic_id, i.subnet_id,
 	i.boot_volume_id, i.boot_volume_gb, i.boot_volume_vpus,
 	i.time_created, i.running_since, i.synced_at, i.last_error, i.note,
 	a.alias, a.code, a.color_index`
@@ -74,15 +77,17 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO instances (id, account_id, region, compartment_id, display_name,
 			availability_domain, fault_domain, shape, ocpus, memory_gb, lifecycle_state,
-			image_id, public_ip, private_ip, ipv6, vnic_id, subnet_id,
+			image_id, image_os, public_ip, private_ip, ipv6, vnic_id, subnet_id,
 			boot_volume_id, boot_volume_gb, boot_volume_vpus, time_created, synced_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			account_id=excluded.account_id, region=excluded.region,
 			compartment_id=excluded.compartment_id, display_name=excluded.display_name,
 			availability_domain=excluded.availability_domain, fault_domain=excluded.fault_domain,
 			shape=excluded.shape, ocpus=excluded.ocpus, memory_gb=excluded.memory_gb,
 			lifecycle_state=excluded.lifecycle_state, image_id=excluded.image_id,
+			-- 只有同步流程会查镜像；生命周期轮询等其它写入不带它，不能拿空值盖掉。
+			image_os = CASE WHEN excluded.image_os <> '' THEN excluded.image_os ELSE instances.image_os END,
 			public_ip=excluded.public_ip, private_ip=excluded.private_ip, ipv6=excluded.ipv6,
 			vnic_id=excluded.vnic_id, subnet_id=excluded.subnet_id,
 			boot_volume_id=excluded.boot_volume_id, boot_volume_gb=excluded.boot_volume_gb,
@@ -99,7 +104,7 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 			END`,
 		in.ID, in.AccountID, in.Region, in.CompartmentID, in.DisplayName,
 		in.AvailabilityDomain, in.FaultDomain, in.Shape, in.Ocpus, in.MemoryGB, in.LifecycleState,
-		in.ImageID, in.PublicIP, in.PrivateIP, in.IPv6, in.VnicID, in.SubnetID,
+		in.ImageID, in.ImageOS, in.PublicIP, in.PrivateIP, in.IPv6, in.VnicID, in.SubnetID,
 		in.BootVolumeID, in.BootVolumeGB, in.BootVolumeVpus,
 		in.TimeCreated.Unix(), nowUnix())
 	if err != nil {
@@ -323,7 +328,7 @@ func scanInstance(sc rowScanner) (*Instance, error) {
 	err := sc.Scan(
 		&inst.ID, &inst.AccountID, &inst.Region, &inst.CompartmentID, &inst.DisplayName,
 		&inst.AvailabilityDomain, &inst.FaultDomain, &inst.Shape, &inst.Ocpus, &inst.MemoryGB,
-		&inst.LifecycleState, &inst.ImageID, &inst.PublicIP, &inst.PrivateIP, &inst.IPv6,
+		&inst.LifecycleState, &inst.ImageID, &inst.ImageOS, &inst.PublicIP, &inst.PrivateIP, &inst.IPv6,
 		&inst.VnicID, &inst.SubnetID, &inst.BootVolumeID, &inst.BootVolumeGB, &inst.BootVolumeVpus,
 		&created, &running, &synced, &inst.LastError, &inst.Note,
 		&inst.AccountAlias, &inst.AccountCode, &inst.AccountColorIndex,

@@ -212,6 +212,21 @@ func (c *Client) GetInstance(ctx context.Context, region, instanceID string) (*I
 	return &out, nil
 }
 
+// GetImage 取回单个镜像。实例列表只带 imageId，要知道操作系统得再查一次。
+func (c *Client) GetImage(ctx context.Context, region, imageID string) (*Image, error) {
+	var out Image
+	_, err := c.Do(ctx, Request{
+		Method:  http.MethodGet,
+		Service: ServiceCore,
+		Path:    "/images/" + url.PathEscape(imageID),
+		Region:  region,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // InstanceAction 对实例执行开关机等操作，返回操作受理后的实例状态。
 //
 // 注意返回的一定是过渡态（STARTING / STOPPING），不是终态——

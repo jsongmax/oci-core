@@ -79,6 +79,8 @@ export interface InstanceDTO {
   memoryGb: number
   lifecycleState: LifecycleState
   imageId: string
+  /** 镜像的操作系统名，如 "Canonical Ubuntu"；取不到为空串 */
+  imageOs: string
   publicIp: string
   privateIp: string
   ipv6: string

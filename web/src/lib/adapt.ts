@@ -221,6 +221,19 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
   }
 }
 
+/**
+ * 按镜像系统推断 SSH 默认用户。
+ *
+ * Oracle 的平台镜像里只有 Ubuntu 用 ubuntu，Oracle Linux、CentOS 等都是 opc。
+ * 系统未知（自定义镜像、镜像已删、还没同步到）时也退回 opc——那是 OCI 的默认。
+ */
+export function sshUserFor(imageOs: string | undefined): string {
+  const os = (imageOs ?? '').toLowerCase()
+  if (os.includes('ubuntu')) return 'ubuntu'
+  if (os.includes('debian')) return 'debian'
+  return 'opc'
+}
+
 export function toInstance(dto: InstanceDTO): Instance {
   return {
     id: dto.id,
@@ -238,6 +251,7 @@ export function toInstance(dto: InstanceDTO): Instance {
     publicIp: dto.publicIp || '—',
     privateIp: dto.privateIp || '—',
     ipv6: dto.ipv6 || undefined,
+    sshUser: sshUserFor(dto.imageOs),
     bootGb: dto.bootVolumeGb,
     // 免费额度的块存储总量是 200 GB，用作进度条的分母。
     bootLimitGb: 200,

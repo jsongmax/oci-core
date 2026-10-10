@@ -115,7 +115,7 @@ function changeIp() {
         toast({
           tone: 'success', title: `${i.name} 已更换公网 IP`,
           body: `${result.oldIp} → ${result.newIp}`,
-          command: `ssh ubuntu@${result.newIp}`
+          command: `ssh ${i.sshUser}@${result.newIp}`
         })
       } catch (err) {
         toastError('更换 IP 失败', err)
@@ -161,7 +161,7 @@ function askTerminate() {
     </button>
     <button class="icon-btn" :disabled="locked" title="软重启" @click="restart(instance.id)">↻</button>
     <button class="icon-btn" title="复制 SSH 命令"
-            @click="copy(`ssh ubuntu@${instance.publicIp}`).then(() => toast({ tone: 'accent', title: '已复制 SSH 命令', body: `ssh ubuntu@${instance.publicIp}` }))">⌘</button>
+            @click="copy(`ssh ${instance.sshUser}@${instance.publicIp}`).then(() => toast({ tone: 'accent', title: '已复制 SSH 命令', body: `ssh ${instance.sshUser}@${instance.publicIp}` }))">⌘</button>
 
     <button ref="dotsEl" class="icon-btn" aria-haspopup="menu" aria-label="更多操作"
             :aria-expanded="menuOpen" @click="toggleMenu()">⋯</button>

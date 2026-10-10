@@ -451,7 +451,7 @@ function announceSettled(inst: Instance, from: LifecycleState, to: LifecycleStat
       tone: 'success',
       title: `${inst.name} 已就绪`,
       body: inst.publicIp !== '—' ? `公网 IP ${inst.publicIp}` : undefined,
-      command: inst.publicIp !== '—' ? `ssh ubuntu@${inst.publicIp}` : undefined
+      command: inst.publicIp !== '—' ? `ssh ${inst.sshUser}@${inst.publicIp}` : undefined
     })
     return
   }

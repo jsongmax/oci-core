@@ -106,6 +106,7 @@ var migrations = []string{
 	// 迁移进 proxies 表并回填 proxy_id（见 migrateLegacyProxies）。
 	// 直接删列会让回滚到旧版本的人丢配置。
 	`ALTER TABLE accounts ADD COLUMN proxy_id TEXT`,
+	`ALTER TABLE instances ADD COLUMN image_os TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {

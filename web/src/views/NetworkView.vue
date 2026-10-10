@@ -529,7 +529,7 @@ function changeIp(id: string) {
           tone: 'success',
           title: `${inst.name} 已更换 IP`,
           body: `${result.oldIp} → ${result.newIp}`,
-          command: `ssh ubuntu@${result.newIp}`
+          command: `ssh ${inst.sshUser}@${result.newIp}`
         })
       } catch (err) {
         toastError('更换 IP 失败', err)
