@@ -106,6 +106,8 @@ type Spec struct {
 	MemoryInGBs  float32 `json:"memoryInGbs"`
 	ImageID      string  `json:"imageId"`
 	BootVolumeGB int64   `json:"bootVolumeGb"`
+	// BaselineOcpu 是突发基线，为空表示不突发。老任务里没有这个字段，解出来就是空。
+	BaselineOcpu string `json:"baselineOcpuUtilization,omitempty"`
 
 	SubnetID          string `json:"subnetId"`
 	AutoCreateNetwork bool   `json:"autoCreateNetwork"`
@@ -410,6 +412,7 @@ func buildLaunchRequest(compartmentID, ad, subnetID, taskID string, spec Spec) o
 	if spec.Ocpus > 0 || spec.MemoryInGBs > 0 {
 		req.ShapeConfig = &ociclient.ShapeConfig{
 			Ocpus: spec.Ocpus, MemoryInGBs: spec.MemoryInGBs,
+			BaselineOcpuUtilization: spec.BaselineOcpu,
 		}
 	}
 	if spec.BootVolumeGB > 0 {

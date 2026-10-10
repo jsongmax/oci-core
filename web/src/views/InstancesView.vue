@@ -3,7 +3,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { useStore, type StateFilter } from '@/store'
 import { acctColor, copy } from '@/lib/format'
-import { instanceUptime } from '@/lib/adapt'
+import { baselineText, instanceUptime } from '@/lib/adapt'
 import { MAX_CONCURRENT_PULSES, isTransitional } from '@/lib/lifecycle'
 import type { Instance } from '@/types'
 import MaskedText from '@/components/MaskedText.vue'
@@ -299,7 +299,7 @@ const bootTone = (i: Instance) =>
 
             <span v-if="cols.has('shape')" class="cell cell--shape" :style="{ order: cols.pos('shape') }">
               <span class="mono t-xs">{{ i.shape }}</span>
-              <span class="mono t-2xs dim-3">{{ i.ocpu }} OCPU · {{ i.memGb }} GB</span>
+              <span class="mono t-2xs dim-3">{{ i.ocpu }} OCPU · {{ i.memGb }} GB<template v-if="baselineText(i.baseline)"> · <span class="burst-tag">{{ baselineText(i.baseline) }}</span></template></span>
             </span>
 
             <span v-if="cols.has('ip')" class="cell mono t-xs ip" :style="{ order: cols.pos('ip') }"
@@ -389,6 +389,7 @@ const bootTone = (i: Instance) =>
   font-size: 11px; font-family: inherit; outline: none;
 }
 
+.burst-tag { color: var(--info); }
 .ip { display: flex; align-items: center; gap: 6px; }
 
 .th-sort {

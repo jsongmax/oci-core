@@ -315,6 +315,7 @@ func (s *Service) syncAccountRegion(ctx context.Context, acc *store.Account, reg
 		if inst.ShapeConfig != nil {
 			row.Ocpus = float64(inst.ShapeConfig.Ocpus)
 			row.MemoryGB = float64(inst.ShapeConfig.MemoryInGBs)
+			row.BaselineOcpu = inst.ShapeConfig.BaselineOcpuUtilization
 		}
 		if n, ok := netInfo[inst.ID]; ok {
 			row.PublicIP = n.publicIP

@@ -234,6 +234,24 @@ export function sshUserFor(imageOs: string | undefined): string {
   return 'opc'
 }
 
+/** 突发基线的显示文字。不突发返回空串。 */
+export function baselineText(b: string): string {
+  if (b === 'BASELINE_1_8') return '突发 1/8'
+  if (b === 'BASELINE_1_2') return '突发 1/2'
+  return ''
+}
+
+/**
+ * 某规格可选的突发档位，供下拉用。第一项永远是「不突发」。
+ * 规格不支持突发时只有这一项，调用方据此决定显不显示这个选项。
+ */
+export function baselineOptions(supported: string[] | null | undefined) {
+  const opts = [{ value: '', label: '不突发（独占整颗 OCPU）' }]
+  if (supported?.includes('BASELINE_1_2')) opts.push({ value: 'BASELINE_1_2', label: '突发 · 基线 1/2 OCPU' })
+  if (supported?.includes('BASELINE_1_8')) opts.push({ value: 'BASELINE_1_8', label: '突发 · 基线 1/8 OCPU' })
+  return opts
+}
+
 export function toInstance(dto: InstanceDTO): Instance {
   return {
     id: dto.id,
@@ -248,6 +266,7 @@ export function toInstance(dto: InstanceDTO): Instance {
     shape: dto.shape,
     ocpu: dto.ocpus,
     memGb: dto.memoryGb,
+    baseline: dto.baselineOcpuUtilization === 'BASELINE_1_1' ? '' : (dto.baselineOcpuUtilization ?? ''),
     publicIp: dto.publicIp || '—',
     privateIp: dto.privateIp || '—',
     ipv6: dto.ipv6 ? dto.ipv6.split(',') : [],

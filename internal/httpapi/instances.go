@@ -157,8 +157,9 @@ func (s *Server) handleSetInstanceNote(w http.ResponseWriter, r *http.Request) {
 }
 
 type reshapeRequest struct {
-	Ocpus       float32 `json:"ocpus"`
-	MemoryInGBs float32 `json:"memoryInGbs"`
+	Ocpus                   float32 `json:"ocpus"`
+	MemoryInGBs             float32 `json:"memoryInGbs"`
+	BaselineOcpuUtilization string  `json:"baselineOcpuUtilization"`
 }
 
 func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
@@ -167,8 +168,9 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst, err := s.instances.Reshape(r.Context(), r.PathValue("id"), instancesvc.ReshapeRequest{
-		Ocpus:       req.Ocpus,
-		MemoryInGBs: req.MemoryInGBs,
+		Ocpus:        req.Ocpus,
+		MemoryInGBs:  req.MemoryInGBs,
+		BaselineOcpu: req.BaselineOcpuUtilization,
 	})
 	if err != nil {
 		writeInstanceError(w, err)

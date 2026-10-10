@@ -77,6 +77,8 @@ export interface InstanceDTO {
   shape: string
   ocpus: number
   memoryGb: number
+  /** 突发基线；空串或 BASELINE_1_1 表示不突发 */
+  baselineOcpuUtilization: string
   lifecycleState: LifecycleState
   imageId: string
   /** 镜像的操作系统名，如 "Canonical Ubuntu"；取不到为空串 */
@@ -336,6 +338,8 @@ export interface ShapeDTO {
   ocpus: number
   memoryInGBs: number
   isFlexible: boolean
+  /** 支持的突发基线（BASELINE_1_8 等），为空表示不支持突发 */
+  baselineOcpuUtilizations: string[] | null
   ocpuOptions: { min: number; max: number } | null
   memoryOptions: {
     minInGBs: number
@@ -540,6 +544,7 @@ export interface CreateHuntInput {
   shape: string
   ocpus?: number
   memoryInGbs?: number
+  baselineOcpuUtilization?: string
   imageId: string
   bootVolumeGb?: number
   subnetId?: string

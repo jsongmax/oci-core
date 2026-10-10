@@ -4,7 +4,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
-import { shortAd } from '@/lib/adapt'
+import { baselineOptions, baselineText, shortAd } from '@/lib/adapt'
 import { ALWAYS_FREE } from '@/lib/freetier'
 import {
   launch as launchApi, hunt as huntApi, insights, network, errorText,
@@ -115,6 +115,8 @@ const form = reactive({
   // 默认给 4/24 等于把用户新建的机器直接送进 Oracle 的回收队列。
   ocpu: ALWAYS_FREE.armOcpus as number,
   memGb: ALWAYS_FREE.armMemoryGB as number,
+  /** 突发基线，空串表示不突发 */
+  baseline: '',
   imageId: '',
   bootGb: 50,
   autoVcn: true,
@@ -210,11 +212,16 @@ const shapeGroups = computed(() => {
   return [...groups].map(([label, options]) => ({ label, options }))
 })
 
+/** 当前规格可选的突发档位；只有「不突发」一项时说明该规格不支持突发。 */
+const burstOptions = computed(() => [{ label: '', options: baselineOptions(selectedShape.value?.baselineOcpuUtilizations) }])
+const canBurst = computed(() => burstOptions.value[0].options.length > 1)
+
 /** 选中一个规格：弹性规格从 1 OCPU 起步，固定规格直接取它的配置。 */
 function pickShape(name: string) {
   const sh = shapes.value.find(x => x.shape === name)
   if (!sh) return
   form.shape = sh.shape
+  form.baseline = ''
   if (sh.isFlexible) {
     const minOcpu = Math.max(1, Math.ceil(sh.ocpuOptions?.min ?? 1))
     form.ocpu = minOcpu
@@ -486,6 +493,7 @@ function onOcpu(v: number) {
 
 function pickPreset(p: LaunchPresetDTO) {
   form.shape = p.shape
+  form.baseline = ''
   form.ocpu = p.ocpus
   form.memGb = p.memoryInGbs
   form.bootGb = p.bootGb
@@ -573,6 +581,7 @@ async function next() {
       shape: form.shape,
       ocpus: form.ocpu,
       memoryInGbs: form.memGb,
+      baselineOcpuUtilization: canBurst.value && form.baseline ? form.baseline : undefined,
       imageId: form.imageId,
       bootVolumeGb: form.bootGb,
       subnetId: form.subnetId || undefined,
@@ -623,6 +632,7 @@ async function submitHunt() {
           shape: form.shape,
           ocpus: form.ocpu,
           memoryInGbs: form.memGb,
+          baselineOcpuUtilization: canBurst.value && form.baseline ? form.baseline : undefined,
           imageId: form.imageId,
           bootVolumeGb: form.bootGb,
           subnetId: form.subnetId || undefined,
@@ -797,6 +807,16 @@ watch(() => form.shape, () => {
                   : '未读到块存储配额，提交时后端会再校验一次' }}
               </span>
             </label>
+
+            <div v-if="canBurst" class="burst">
+              <span class="burst__label">CPU 基线</span>
+              <SelectMenu v-model="form.baseline" :groups="burstOptions" :min-width="240"
+                          aria-label="CPU 基线" />
+              <span class="slider__hint">
+                突发实例平时只保证基线那部分算力，空闲时攒下的额度可以短时跑满；
+                按基线计费，适合负载不高的小服务。
+              </span>
+            </div>
 
             <div v-if="isArm && quota.ocpuLimit" class="quota-box">
               <QuotaMeter label="ARM OCPU" :used="quota.ocpuUsed + form.ocpu" :limit="quota.ocpuLimit" />
@@ -996,7 +1016,8 @@ watch(() => form.shape, () => {
             { k: '账号', v: `${account.alias} · ${account.code}`, tone: acctColor(account.colorIndex) },
             { k: '区域 · AD', v: `${region} · ${shortAd(form.ad)}`, mono: true },
             { k: '规格', v: form.shape, mono: true },
-            { k: '算力', v: `${form.ocpu} OCPU · ${form.memGb} GB`, mono: true },
+            { k: '算力', v: `${form.ocpu} OCPU · ${form.memGb} GB`
+              + (canBurst && form.baseline ? ` · ${baselineText(form.baseline)}` : ''), mono: true },
             { k: '镜像', v: selectedImage ? imageLabel(selectedImage) : '—' },
             { k: '引导卷', v: `${form.bootGb} GB`, mono: true },
             { k: '网络', v: `${form.autoVcn ? '自动创建/复用 VCN' : '使用现有 VCN'}${form.publicIp ? ' · 公网 IPv4' : ''}${form.ipv6 ? ' · IPv6' : ''}` },
@@ -1098,6 +1119,8 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .quota-box { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius-md); background: var(--bg-inset); }
 .over { margin: 0; font-size: 12px; color: var(--danger); }
 .free { margin: 14px 16px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--success-soft); color: var(--success); font-size: 13px; font-weight: 600; }
+.burst { display: flex; flex-direction: column; gap: 6px; }
+.burst__label { font-size: 12px; color: var(--text-secondary); }
 .free.is-paid { background: var(--warning-soft); color: var(--warning); }
 .foot {
   flex: 0 0 auto; padding: 14px 20px; border-top: 1px solid var(--border-subtle);

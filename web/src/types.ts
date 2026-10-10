@@ -62,6 +62,8 @@ export interface Instance {
   shape: string
   ocpu: number
   memGb: number
+  /** 突发基线 BASELINE_1_8 / BASELINE_1_2；不突发时为空串 */
+  baseline: string
   publicIp: string
   privateIp: string
   /** 主网卡上的全部 IPv6，未启用时为空数组 */

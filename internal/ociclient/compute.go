@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -95,7 +96,17 @@ type Shape struct {
 	OcpuOptions               *MinMax  `json:"ocpuOptions"`
 	MemoryOptions             *MemOpts `json:"memoryOptions"`
 	BillingType               string   `json:"billingType"`
+	// BaselineOcpuUtilizations 是该规格支持的突发基线（BASELINE_1_8 等）。
+	// 为空表示不支持突发。
+	BaselineOcpuUtilizations []string `json:"baselineOcpuUtilizations"`
 }
+
+// 突发实例的 CPU 基线。BASELINE_1_1 就是不突发、独占整颗 OCPU。
+const (
+	Baseline1_8 = "BASELINE_1_8"
+	Baseline1_2 = "BASELINE_1_2"
+	Baseline1_1 = "BASELINE_1_1"
+)
 
 // MinMax 是弹性规格的 OCPU 取值范围。
 type MinMax struct {
@@ -604,6 +615,10 @@ func ValidateShapeConfig(shape *Shape, cfg ShapeConfig) error {
 	}
 	if cfg.Ocpus <= 0 {
 		return fmt.Errorf("弹性规格必须指定 OCPU 数量")
+	}
+	// BASELINE_1_1 等于不突发，任何弹性规格都接受；改配置时要靠它把突发实例改回独占。
+	if b := cfg.BaselineOcpuUtilization; b != "" && b != Baseline1_1 && !slices.Contains(shape.BaselineOcpuUtilizations, b) {
+		return fmt.Errorf("规格 %s 不支持突发基线 %s", shape.Shape, b)
 	}
 	if shape.OcpuOptions != nil {
 		if cfg.Ocpus < shape.OcpuOptions.Min || cfg.Ocpus > shape.OcpuOptions.Max {

@@ -137,8 +137,10 @@ type launchRequest struct {
 	Shape              string  `json:"shape"`
 	Ocpus              float32 `json:"ocpus"`
 	MemoryInGBs        float32 `json:"memoryInGbs"`
-	ImageID            string  `json:"imageId"`
-	BootVolumeGB       int64   `json:"bootVolumeGb"`
+	// BaselineOcpuUtilization 为空表示不突发。
+	BaselineOcpuUtilization string `json:"baselineOcpuUtilization"`
+	ImageID                 string `json:"imageId"`
+	BootVolumeGB            int64  `json:"bootVolumeGb"`
 
 	SubnetID          string `json:"subnetId"`
 	AutoCreateNetwork bool   `json:"autoCreateNetwork"`
@@ -230,7 +232,8 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 
 	var shapeConfig *ociclient.ShapeConfig
 	if target.IsFlexible {
-		cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs}
+		cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs,
+			BaselineOcpuUtilization: req.BaselineOcpuUtilization}
 		if err := ociclient.ValidateShapeConfig(target, cfg); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_shape_config", err.Error())
 			return
@@ -342,6 +345,7 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	if created.ShapeConfig != nil {
 		row.Ocpus = float64(created.ShapeConfig.Ocpus)
 		row.MemoryGB = float64(created.ShapeConfig.MemoryInGBs)
+		row.BaselineOcpu = created.ShapeConfig.BaselineOcpuUtilization
 	}
 	if err := s.st.UpsertInstance(ctx, row); err != nil {
 		writeStoreError(w, err)

@@ -79,6 +79,8 @@ type createHuntRequest struct {
 	MemoryInGBs  float32 `json:"memoryInGbs"`
 	ImageID      string  `json:"imageId"`
 	BootVolumeGB int64   `json:"bootVolumeGb"`
+	// BaselineOcpuUtilization 为空表示不突发。
+	BaselineOcpuUtilization string `json:"baselineOcpuUtilization"`
 
 	SubnetID          string `json:"subnetId"`
 	AutoCreateNetwork bool   `json:"autoCreateNetwork"`
@@ -176,7 +178,8 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if target.IsFlexible {
-		cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs}
+		cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs,
+			BaselineOcpuUtilization: req.BaselineOcpuUtilization}
 		if err := ociclient.ValidateShapeConfig(target, cfg); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_shape_config", err.Error())
 			return
@@ -193,6 +196,7 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 		Shape:             req.Shape,
 		Ocpus:             req.Ocpus,
 		MemoryInGBs:       req.MemoryInGBs,
+		BaselineOcpu:      req.BaselineOcpuUtilization,
 		ImageID:           req.ImageID,
 		BootVolumeGB:      req.BootVolumeGB,
 		SubnetID:          req.SubnetID,
@@ -357,6 +361,7 @@ func (s *Server) onHuntLaunched(ctx context.Context, task *store.HuntTask,
 	if inst.ShapeConfig != nil {
 		row.Ocpus = float64(inst.ShapeConfig.Ocpus)
 		row.MemoryGB = float64(inst.ShapeConfig.MemoryInGBs)
+		row.BaselineOcpu = inst.ShapeConfig.BaselineOcpuUtilization
 	}
 	if err := s.st.UpsertInstance(ctx, row); err != nil {
 		slog.Warn("守候：写入实例缓存失败", "instance", inst.ID, "err", err)

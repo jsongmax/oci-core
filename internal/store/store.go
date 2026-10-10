@@ -107,6 +107,7 @@ var migrations = []string{
 	// 直接删列会让回滚到旧版本的人丢配置。
 	`ALTER TABLE accounts ADD COLUMN proxy_id TEXT`,
 	`ALTER TABLE instances ADD COLUMN image_os TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE instances ADD COLUMN baseline_ocpu TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {

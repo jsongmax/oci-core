@@ -181,3 +181,23 @@ func TestResolutionForScalesWithSpan(t *testing.T) {
 		}
 	}
 }
+
+// 突发基线只能用规格声明支持的那几档；BASELINE_1_1 等于不突发，总是放行——
+// 改配置时要靠它把突发实例改回独占。
+func TestValidateShapeConfigBaseline(t *testing.T) {
+	e4 := a1Flex()
+	e4.Shape = "VM.Standard.E4.Flex"
+	e4.BaselineOcpuUtilizations = []string{Baseline1_8, Baseline1_2, Baseline1_1}
+
+	for _, b := range []string{"", Baseline1_8, Baseline1_2, Baseline1_1} {
+		if err := ValidateShapeConfig(e4, ShapeConfig{Ocpus: 1, MemoryInGBs: 4, BaselineOcpuUtilization: b}); err != nil {
+			t.Errorf("E4 应支持基线 %q: %v", b, err)
+		}
+	}
+	if err := ValidateShapeConfig(a1Flex(), ShapeConfig{Ocpus: 1, MemoryInGBs: 4, BaselineOcpuUtilization: Baseline1_8}); err == nil {
+		t.Error("A1 不支持突发，BASELINE_1_8 应被拒绝")
+	}
+	if err := ValidateShapeConfig(a1Flex(), ShapeConfig{Ocpus: 1, MemoryInGBs: 4, BaselineOcpuUtilization: Baseline1_1}); err != nil {
+		t.Errorf("BASELINE_1_1 等于不突发，任何弹性规格都应接受: %v", err)
+	}
+}

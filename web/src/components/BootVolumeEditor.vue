@@ -8,6 +8,8 @@ import SectionCard from '@/components/SectionCard.vue'
 import CheckList from '@/components/CheckList.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import { ALWAYS_FREE } from '@/lib/freetier'
+import { baselineOptions } from '@/lib/adapt'
+import SelectMenu from '@/components/SelectMenu.vue'
 
 const props = defineProps<{
   instance: Instance
@@ -65,10 +67,21 @@ const isFlexible = computed(() =>
 /** 每 OCPU 的内存上限。A1.Flex 是 6，E 系列要大得多，不能写死。 */
 const maxPerOcpu = computed(() => shapeMeta.value?.memoryOptions?.maxPerOcpuInGBs ?? 6)
 
+/**
+ * 账号配额只读了 ARM（A1）那一项。别的规格拿它去夹滑块、拦提交都不对，
+ * 交给 Oracle 在提交时判断。
+ */
+const isArm = computed(() => props.instance.shape.includes('A1.Flex'))
+
+/** 突发档位。规格不支持时只有「不突发」一项，界面不显示这个选项。 */
+const baseline = ref(props.instance.baseline)
+const burstOptions = computed(() => [{ label: '', options: baselineOptions(shapeMeta.value?.baselineOcpuUtilizations) }])
+const canBurst = computed(() => burstOptions.value[0].options.length > 1)
+
 const maxOcpu = computed(() => {
   const shapeMax = shapeMeta.value?.ocpuOptions?.max ?? 4
   const q = props.account.quota
-  if (q.unlimited.ocpu || !q.ocpuLimit) return shapeMax
+  if (!isArm.value || q.unlimited.ocpu || !q.ocpuLimit) return shapeMax
   // 配额只剩这么多，滑块就不该拖得更高——拖上去也是提交时被拒。
   return Math.max(props.instance.ocpu, Math.min(shapeMax, q.ocpuLimit - q.ocpuUsed + props.instance.ocpu))
 })
@@ -78,7 +91,7 @@ const maxMem = computed(() => {
   const byRatio = ocpu.value * maxPerOcpu.value
   const shapeCap = shapeMeta.value?.memoryOptions?.maxInGBs ?? byRatio
   const q = props.account.quota
-  const byQuota = (q.unlimited.mem || !q.memLimit)
+  const byQuota = (!isArm.value || q.unlimited.mem || !q.memLimit)
     ? Number.POSITIVE_INFINITY
     : q.memLimit - q.memUsed + props.instance.memGb
   return Math.max(props.instance.memGb, Math.min(byRatio, shapeCap, byQuota))
@@ -96,6 +109,7 @@ const transitional = computed(() => !running.value && !stopped.value)
  */
 const quotaText = computed(() => {
   const q = props.account.quota
+  if (!isArm.value) return '该规格的配额这里不做预检，超出时 Oracle 会在提交时拒绝'
   if (overQuota.value) return '超出该账号剩余配额，无法提交'
   if (q.unlimited.ocpu) return `该账号 ARM 配额不限，当前已用 ${q.ocpuUsed} OCPU / ${q.memUsed} GB`
   if (!q.ocpuLimit) return '未能读取该账号的配额，提交时后端会再校验一次'
@@ -137,6 +151,7 @@ const throughput = computed(() => `${Math.round(perf.value.mbps)} MB/s`)
 /** 配额上限为 0 表示读不到，此时不拦——总比因为读不到就完全用不了强。 */
 const overQuota = computed(() => {
   const q = props.account.quota
+  if (!isArm.value) return false
   // 升级号的上限是 Oracle 的哨兵值（一亿），谈不上"超额"。
   if (q.unlimited.ocpu) return false
   if (!q.ocpuLimit) return false
@@ -148,8 +163,9 @@ const overQuota = computed(() => {
 const volumeChanged = computed(() =>
   size.value !== props.instance.bootGb || vpu.value !== props.instance.vpu
 )
+const baselineChanged = computed(() => canBurst.value && baseline.value !== props.instance.baseline)
 const shapeChanged = computed(() =>
-  ocpu.value !== props.instance.ocpu || mem.value !== props.instance.memGb
+  ocpu.value !== props.instance.ocpu || mem.value !== props.instance.memGb || baselineChanged.value
 )
 
 // 实例被外部刷新（同步或 SSE 落定）后，滑块要跟着回到新值。
@@ -158,6 +174,7 @@ watch(() => [props.instance.bootGb, props.instance.vpu, props.instance.ocpu, pro
   vpu.value = props.instance.vpu
   ocpu.value = props.instance.ocpu
   mem.value = props.instance.memGb
+  baseline.value = props.instance.baseline
 })
 
 function onOcpu(v: number) {
@@ -254,13 +271,17 @@ function applyShape() {
       applyingShape.value = true
       try {
         const { instances } = await import('@/api')
-        await instances.reshape(props.instance.id, ocpu.value, mem.value)
+        // 只在改了突发设置时才带上基线；改回不突发要显式传 BASELINE_1_1，
+        // 留空 Oracle 会保持原样。
+        await instances.reshape(props.instance.id, ocpu.value, mem.value,
+          baselineChanged.value ? (baseline.value || 'BASELINE_1_1') : undefined)
         await refreshInstances()
         toast({ tone: 'success', title: `${props.instance.name} 配置已更新` })
       } catch (err) {
         toastError('修改配置失败', err)
         ocpu.value = props.instance.ocpu
         mem.value = props.instance.memGb
+        baseline.value = props.instance.baseline
       } finally {
         applyingShape.value = false
       }
@@ -312,6 +333,10 @@ function applyShape() {
           ? `${instance.shape} 约束：每 OCPU 最多 ${maxPerOcpu} GB`
           : '该规格为固定配置，无法调整' }}</span>
       </label>
+      <div v-if="canBurst" class="burst">
+        <span class="burst__label">CPU 基线</span>
+        <SelectMenu v-model="baseline" :groups="burstOptions" :min-width="240" aria-label="CPU 基线" />
+      </div>
       <CheckList :items="[
         running
           ? { tone: 'warn', text: '实例正在运行，Oracle 会在应用变更时重启它一次。' }
@@ -337,5 +362,7 @@ function applyShape() {
 .slider__hint { font-size: 11px; color: var(--text-tertiary); }
 input[type='range'] { width: 100%; accent-color: var(--accent); }
 input[type='range']:disabled { opacity: 0.4; }
+.burst { display: flex; flex-direction: column; gap: 6px; }
+.burst__label { font-size: 12px; color: var(--text-secondary); }
 .quota-note { margin: -4px 0 0; line-height: 1.6; }
 </style>

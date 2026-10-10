@@ -127,8 +127,10 @@ export const instances = {
   setNote: (id: string, note: string) =>
     http.patch<D.InstanceDTO>(`/api/instances/${encodeURIComponent(id)}/note`, { note }),
 
-  reshape: (id: string, ocpus: number, memoryInGbs: number) =>
-    http.post<D.InstanceDTO>(`/api/instances/${encodeURIComponent(id)}/reshape`, { ocpus, memoryInGbs }),
+  /** baseline 留空表示不改突发设置；改回独占传 BASELINE_1_1。 */
+  reshape: (id: string, ocpus: number, memoryInGbs: number, baselineOcpuUtilization?: string) =>
+    http.post<D.InstanceDTO>(`/api/instances/${encodeURIComponent(id)}/reshape`,
+      { ocpus, memoryInGbs, baselineOcpuUtilization }),
 
   /** 终止需回传实例名。preserveBootVolume 决定引导卷是否保留。 */
   terminate: (id: string, confirmName: string, preserveBootVolume = false) =>
@@ -180,6 +182,7 @@ export interface LaunchInput {
   shape: string
   ocpus: number
   memoryInGbs: number
+  baselineOcpuUtilization?: string
   imageId: string
   bootVolumeGb?: number
   subnetId?: string

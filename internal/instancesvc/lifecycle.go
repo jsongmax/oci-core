@@ -133,6 +133,8 @@ func (s *Service) Rename(ctx context.Context, instanceID, displayName string) (*
 type ReshapeRequest struct {
 	Ocpus       float32
 	MemoryInGBs float32
+	// BaselineOcpu 为空表示不改突发设置；要改回独占传 BASELINE_1_1。
+	BaselineOcpu string
 }
 
 // Reshape 修改实例的 OCPU 与内存。
@@ -169,7 +171,8 @@ func (s *Service) Reshape(ctx context.Context, instanceID string, req ReshapeReq
 	if shapes, err := client.ListShapes(ctx, cached.Region, acc.CompartmentOCID, cached.AvailabilityDomain); err == nil {
 		for i := range shapes {
 			if shapes[i].Shape == cached.Shape {
-				cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs}
+				cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs,
+					BaselineOcpuUtilization: req.BaselineOcpu}
 				if err := ociclient.ValidateShapeConfig(&shapes[i], cfg); err != nil {
 					return nil, err
 				}
@@ -179,7 +182,8 @@ func (s *Service) Reshape(ctx context.Context, instanceID string, req ReshapeReq
 	}
 
 	updated, err := client.UpdateInstance(ctx, cached.Region, instanceID, ociclient.UpdateInstanceRequest{
-		ShapeConfig: &ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs},
+		ShapeConfig: &ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs,
+			BaselineOcpuUtilization: req.BaselineOcpu},
 	})
 	if err != nil {
 		s.recordFailure(ctx, instanceID, err)
@@ -190,6 +194,7 @@ func (s *Service) Reshape(ctx context.Context, instanceID string, req ReshapeReq
 	if updated.ShapeConfig != nil {
 		cached.Ocpus = float64(updated.ShapeConfig.Ocpus)
 		cached.MemoryGB = float64(updated.ShapeConfig.MemoryInGBs)
+		cached.BaselineOcpu = updated.ShapeConfig.BaselineOcpuUtilization
 	}
 	cached.LifecycleState = updated.LifecycleState
 	if err := s.st.UpsertInstance(ctx, *cached); err != nil {
