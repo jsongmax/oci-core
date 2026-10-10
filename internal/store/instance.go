@@ -31,9 +31,9 @@ type Instance struct {
 	ImageID        string `json:"imageId"`
 	// ImageOS 是镜像的操作系统名（如 "Canonical Ubuntu"、"Oracle Linux"），
 	// 前端据此推断 SSH 默认用户。取不到时为空。
-	ImageOS        string    `json:"imageOs"`
-	PublicIP       string    `json:"publicIp"`
-	PrivateIP      string    `json:"privateIp"`
+	ImageOS   string `json:"imageOs"`
+	PublicIP  string `json:"publicIp"`
+	PrivateIP string `json:"privateIp"`
 	// IPv6 是主网卡上的全部 IPv6，逗号分隔；未启用时为空串。
 	IPv6           string    `json:"ipv6"`
 	VnicID         string    `json:"vnicId"`
