@@ -513,7 +513,7 @@ watch(metricHours, () => void loadMetrics())
           <SectionCard title="公网 IP 操作">
             <CheckList :items="[
               { tone: 'warn', text: '更换公网 IP 会中断当前 SSH 连接，原 IP 不可找回。入口在行内 ⋯ 菜单与网络页，需二次确认。' },
-              { tone: 'info', text: '保留 IP 不支持这种「删了重建」的更换方式，删除即永久释放。' }
+              { tone: 'info', text: '更换的做法是释放当前的临时 IP、再申请一个新的。保留 IP 不能这样换：一旦释放就永久失去这个地址，所以对保留 IP 不提供更换。' }
             ]" />
           </SectionCard>
         </template>

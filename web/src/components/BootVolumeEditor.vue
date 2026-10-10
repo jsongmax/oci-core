@@ -7,6 +7,7 @@ import { storage, launch as launchApi, type ShapeDTO } from '@/api'
 import SectionCard from '@/components/SectionCard.vue'
 import CheckList from '@/components/CheckList.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
+import { ALWAYS_FREE } from '@/lib/freetier'
 
 const props = defineProps<{
   instance: Instance
@@ -185,6 +186,22 @@ const maxBootGb = computed(() => {
     Math.min(SLIDER_MAX_BOOT_GB, props.instance.bootGb + remaining))
 })
 
+/** 按当前滑块位置算出的扩容后块存储总用量（GB）。 */
+const projectedBlockGb = computed(() =>
+  props.account.quota.blockUsed + (size.value - props.instance.bootGb))
+
+/**
+ * 配额条的分母是 Oracle 返回的服务上限，不是免费额度——升级号的上限
+ * 往往远高于 200 GB，条子还很空，钱已经开始算了。超出免费额度时单独说一句。
+ */
+const overFreeBlockNote = computed(() => {
+  const over = projectedBlockGb.value - ALWAYS_FREE.blockGB
+  if (over <= 0) return ''
+  return props.account.tier === 'trial'
+    ? `扩容后共 ${projectedBlockGb.value} GB，超出永久免费额度 ${ALWAYS_FREE.blockGB} GB 共 ${over} GB，试用期结束后超出部分不再免费。`
+    : `扩容后共 ${projectedBlockGb.value} GB，超出永久免费额度 ${ALWAYS_FREE.blockGB} GB 共 ${over} GB，超出部分按量计费。`
+})
+
 function applyVolume() {
   if (!props.bootVolumeId) return
 
@@ -264,9 +281,13 @@ function applyShape() {
         <input type="range" min="0" max="120" step="10" v-model.number="vpu" />
         <span class="slider__hint mono">预估 {{ iops }} IOPS · {{ throughput }}</span>
       </label>
-      <QuotaMeter v-if="account.quota.blockLimit" label="块存储配额"
-                  :used="account.quota.blockUsed + (size - instance.bootGb)"
+      <QuotaMeter v-if="account.quota.blockLimit" label="扩容后用量"
+                  :used="projectedBlockGb"
                   :limit="account.quota.blockLimit" unit=" GB" />
+      <p v-if="account.quota.blockLimit" class="t-2xs dim-3 quota-note">
+        分母是该租户块存储的服务上限（含引导卷与块存储卷），不是免费额度。
+      </p>
+      <CheckList v-if="overFreeBlockNote" :items="[{ tone: 'warn', text: overFreeBlockNote }]" />
       <CheckList v-if="!bootVolumeId"
                  :items="[{ tone: 'info', text: '尚未同步到该实例的引导卷信息，先执行一次同步再来。' }]" />
       <button class="btn btn--sm" :disabled="!volumeChanged || applyingVolume || !bootVolumeId"
@@ -316,4 +337,5 @@ function applyShape() {
 .slider__hint { font-size: 11px; color: var(--text-tertiary); }
 input[type='range'] { width: 100%; accent-color: var(--accent); }
 input[type='range']:disabled { opacity: 0.4; }
+.quota-note { margin: -4px 0 0; line-height: 1.6; }
 </style>
