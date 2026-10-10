@@ -310,7 +310,8 @@ const bootTone = (i: Instance) =>
                 <!-- IPv6 动辄 39 个字符，列宽放不下全部：显示第一个，其余数量标在后面，
                      悬停看全部 -->
                 <span v-if="i.ipv6.length" class="ip__v6 t-2xs" :title="i.ipv6.join('\n')">
-                  <MaskedText :value="i.ipv6[0]" kind="ip" /><template v-if="i.ipv6.length > 1"> +{{ i.ipv6.length - 1 }}</template>
+                  <span class="ip__v6-addr"><MaskedText :value="i.ipv6[0]" kind="ip" /></span>
+                  <span v-if="i.ipv6.length > 1" class="ip__v6-more">+{{ i.ipv6.length - 1 }}</span>
                 </span>
               </span>
               <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"
@@ -404,7 +405,10 @@ const bootTone = (i: Instance) =>
 .ip__v { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; overflow: hidden; }
 .ip__v > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ip__old { color: var(--text-tertiary); text-decoration: line-through; }
-.ip__v6 { color: var(--text-tertiary); }
+/* 地址可以被截断，但"+N"不能——它是唯一提示还有别的地址的地方 */
+.ip__v6 { display: flex; gap: 4px; color: var(--text-tertiary); }
+.ip__v6-addr { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ip__v6-more { flex: none; }
 .ip__copy {
   flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
   border: 0; border-radius: var(--radius-sm); background: transparent;
