@@ -20,6 +20,7 @@ import KeyValueList from '@/components/KeyValueList.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import CheckList from '@/components/CheckList.vue'
+import SelectMenu from '@/components/SelectMenu.vue'
 
 const { state, accountById, closeDrawer, launchInstance, ask, toast, toastError } = useStore()
 const router = useRouter()
@@ -179,12 +180,65 @@ const shapeUnavailable = computed(() =>
   !!form.shape && availableShapes.value.size > 0 && !availableShapes.value.has(form.shape))
 const isFlexible = computed(() => selectedShape.value?.isFlexible ?? form.shape.includes('.Flex'))
 
+/**
+ * 账号配额只读了 ARM（A1）那一项，其余规格的配额这里不知道。
+ * 配额条与超额拦截只对 A1 生效；别的规格交给 Oracle 在创建时判断。
+ */
+const isArm = computed(() => form.shape.includes('A1.Flex'))
+
+/** 永久免费额度只覆盖这两种规格；选了别的就要说清会产生费用。 */
+const FREE_SHAPES = new Set(['VM.Standard.A1.Flex', 'VM.Standard.E2.1.Micro'])
+const isFreeShape = computed(() => FREE_SHAPES.has(form.shape))
+
+/**
+ * 「全部规格」下拉：当前可用域实际提供的规格，按系列分组。
+ * 系列取规格名去掉末段（VM.Standard.E4.Flex → VM.Standard），裸金属与 GPU 自然分开。
+ */
+const shapeGroups = computed(() => {
+  const groups = new Map<string, { value: string; label: string }[]>()
+  for (const sh of [...shapes.value].sort((a, b) => a.shape.localeCompare(b.shape))) {
+    const family = sh.shape.split('.').slice(0, 2).join('.')
+    const spec = sh.isFlexible
+      ? `弹性 ${sh.ocpuOptions?.min ?? 1}–${sh.ocpuOptions?.max ?? '?'} OCPU`
+      : `${sh.ocpus} OCPU · ${sh.memoryInGBs} GB`
+    const free = FREE_SHAPES.has(sh.shape) ? ' · 免费额度' : ''
+    const label = `${sh.shape} · ${spec}${sh.processorDescription ? ` · ${sh.processorDescription}` : ''}${free}`
+    const list = groups.get(family) ?? []
+    list.push({ value: sh.shape, label })
+    groups.set(family, list)
+  }
+  return [...groups].map(([label, options]) => ({ label, options }))
+})
+
+/** 选中一个规格：弹性规格从 1 OCPU 起步，固定规格直接取它的配置。 */
+function pickShape(name: string) {
+  const sh = shapes.value.find(x => x.shape === name)
+  if (!sh) return
+  form.shape = sh.shape
+  if (sh.isFlexible) {
+    const minOcpu = Math.max(1, Math.ceil(sh.ocpuOptions?.min ?? 1))
+    form.ocpu = minOcpu
+    const perOcpu = Math.min(sh.memoryOptions?.maxPerOcpuInGBs ?? 6, 6)
+    form.memGb = Math.max(sh.memoryOptions?.minInGBs ?? 1, minOcpu * perOcpu)
+  } else {
+    form.ocpu = sh.ocpus
+    form.memGb = sh.memoryInGBs
+  }
+  void loadImages()
+}
+
 /** 每 OCPU 的内存上限。取不到规格元数据时退回 A1.Flex 的 6 GB。 */
 const maxPerOcpu = computed(() => selectedShape.value?.memoryOptions?.maxPerOcpuInGBs ?? 6)
 const maxOcpu = computed(() => selectedShape.value?.ocpuOptions?.max ?? (isFlexible.value ? 4 : 1))
 const maxMem = computed(() =>
   Math.min(form.ocpu * maxPerOcpu.value, selectedShape.value?.memoryOptions?.maxInGBs ?? 24)
 )
+const minOcpu = computed(() => Math.max(1, Math.ceil(selectedShape.value?.ocpuOptions?.min ?? 1)))
+/** 内存下限：规格的总下限与「每 OCPU 下限 × OCPU」取大。 */
+const minMem = computed(() => {
+  const m = selectedShape.value?.memoryOptions
+  return Math.max(1, m?.minInGBs ?? 1, Math.ceil((m?.minPerOcpuInGBs ?? 0) * form.ocpu))
+})
 
 const remainingOcpu = computed(() => Math.max(0, quota.ocpuLimit - quota.ocpuUsed))
 const remainingMem = computed(() => Math.max(0, quota.memLimit - quota.memUsed))
@@ -210,7 +264,7 @@ const maxBootGb = computed(() => {
 
 /** 配额未知（limit 为 0）时不拦——总比因为读不到配额就完全用不了强。 */
 const overQuota = computed(() => {
-  if (!isFlexible.value || quota.ocpuLimit === 0) return false
+  if (!isArm.value || quota.ocpuLimit === 0) return false
   return form.ocpu > remainingOcpu.value || form.memGb > remainingMem.value
 })
 
@@ -427,6 +481,7 @@ const subnetConflict = computed(() => {
 function onOcpu(v: number) {
   form.ocpu = v
   if (form.memGb > v * maxPerOcpu.value) form.memGb = v * maxPerOcpu.value
+  if (form.memGb < minMem.value) form.memGb = minMem.value
 }
 
 function pickPreset(p: LaunchPresetDTO) {
@@ -710,17 +765,28 @@ watch(() => form.shape, () => {
           </p>
         </SectionCard>
 
+        <SectionCard title="全部规格" note="该可用域实际提供的规格，含付费规格">
+          <div class="pad">
+            <SelectMenu :model-value="form.shape" :groups="shapeGroups"
+                        :placeholder="shapes.length ? '选择规格' : '读取规格中…'"
+                        :disabled="!shapes.length" :min-width="320" aria-label="选择规格"
+                        @update:model-value="pickShape($event)" />
+            <CheckList v-if="!isFreeShape" :items="[{ tone: 'warn',
+              text: `${form.shape} 不在永久免费额度内，创建后按量计费（试用号先扣试用金）。` }]" />
+          </div>
+        </SectionCard>
+
         <SectionCard v-if="isFlexible" title="算力"
                      :note="`OCPU 与内存联动：每 OCPU 最多 ${maxPerOcpu} GB`">
           <div class="pad">
             <label class="slider">
               <span class="slider__head"><span>OCPU</span><span class="mono">{{ form.ocpu }}</span></span>
-              <input type="range" min="1" :max="maxOcpu" step="1" :value="form.ocpu"
+              <input type="range" :min="minOcpu" :max="maxOcpu" step="1" :value="form.ocpu"
                      @input="onOcpu(Number(($event.target as HTMLInputElement).value))" />
             </label>
             <label class="slider">
               <span class="slider__head"><span>内存</span><span class="mono">{{ form.memGb }} GB</span></span>
-              <input type="range" min="1" :max="maxMem" step="1" v-model.number="form.memGb" />
+              <input type="range" :min="minMem" :max="maxMem" step="1" v-model.number="form.memGb" />
             </label>
             <label class="slider">
               <span class="slider__head"><span>引导卷</span><span class="mono">{{ form.bootGb }} GB</span></span>
@@ -732,11 +798,12 @@ watch(() => form.shape, () => {
               </span>
             </label>
 
-            <div v-if="quota.ocpuLimit" class="quota-box">
+            <div v-if="isArm && quota.ocpuLimit" class="quota-box">
               <QuotaMeter label="ARM OCPU" :used="quota.ocpuUsed + form.ocpu" :limit="quota.ocpuLimit" />
               <QuotaMeter label="内存" :used="quota.memUsed + form.memGb" :limit="quota.memLimit" unit=" GB" />
             </div>
-            <p v-else class="hint">未能读取该账号的配额，创建时后端会再校验一次。</p>
+            <p v-else-if="isArm" class="hint">未能读取该账号的配额，创建时后端会再校验一次。</p>
+            <p v-else class="hint">该规格的配额这里不做预检，超出时 Oracle 会在创建时拒绝。</p>
 
             <p v-if="overQuota" class="over">
               超出该账号剩余配额（{{ remainingOcpu }} OCPU / {{ remainingMem }} GB），无法进入下一步
@@ -939,7 +1006,8 @@ watch(() => form.shape, () => {
                 + (huntForm.precheckCapacity ? ' · 先查容量' : ' · 不查容量直接尝试')
               : '立即创建' }
           ]" />
-          <p class="free">免费额度内预估费用 $0.00 · 超出部分按 Oracle 定价计费</p>
+          <p v-if="isFreeShape" class="free">免费额度内预估费用 $0.00 · 超出部分按 Oracle 定价计费</p>
+          <p v-else class="free is-paid">{{ form.shape }} 按量计费，费用以 Oracle 账单为准</p>
         </SectionCard>
       </template>
     </DrawerBody>
@@ -1030,6 +1098,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .quota-box { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius-md); background: var(--bg-inset); }
 .over { margin: 0; font-size: 12px; color: var(--danger); }
 .free { margin: 14px 16px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--success-soft); color: var(--success); font-size: 13px; font-weight: 600; }
+.free.is-paid { background: var(--warning-soft); color: var(--warning); }
 .foot {
   flex: 0 0 auto; padding: 14px 20px; border-top: 1px solid var(--border-subtle);
   background: var(--bg-surface); display: flex; align-items: center; gap: 10px;
