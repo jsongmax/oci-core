@@ -22,10 +22,10 @@ import (
 
 // 事件类型。与设计规格里的"事件订阅矩阵"一一对应。
 const (
-	EventInstanceAnomaly = "instance.anomaly" // 实例状态异常变化
+	EventInstanceAnomaly = "instance.anomaly" // 实例状态异常变化（尚未推送，见 EventDefs）
 	EventAccountAuthFail = "account.auth"     // 账号认证失败
-	EventQuotaNearLimit  = "quota.limit"      // 配额接近上限
-	EventDiskNearFull    = "disk.full"        // 引导卷空间告警
+	EventQuotaNearLimit  = "quota.limit"      // 配额接近上限（尚未推送，见 EventDefs）
+	EventDiskNearFull    = "disk.full"        // 引导卷空间告警（尚未推送，见 EventDefs）
 	EventInstanceCreated = "instance.created" // 实例创建完成
 	EventDangerOperation = "danger.operation" // 危险操作已执行
 	EventHuntSucceeded   = "hunt.succeeded"   // 守候任务抢到了实例
@@ -41,12 +41,14 @@ type EventDef struct {
 }
 
 // EventDefs 返回全部可订阅事件，供前端渲染订阅矩阵。
+//
+// 只列真正有地方推送的事件。EventInstanceAnomaly、EventQuotaNearLimit、
+// EventDiskNearFull 还没有任何触发点，列出来用户能订阅却永远收不到，
+// 所以先不放进清单；实现推送后再加回来。已存进渠道的这几项订阅保持不动，
+// 加回来之后自动生效。
 func EventDefs() []EventDef {
 	return []EventDef{
-		{EventInstanceAnomaly, "实例状态异常变化", "实例被非预期地停止或进入故障状态"},
 		{EventAccountAuthFail, "账号认证失败", "API 密钥失效或权限不足"},
-		{EventQuotaNearLimit, "配额接近上限", "某项配额使用率超过 90%"},
-		{EventDiskNearFull, "引导卷空间告警", "引导卷剩余空间不足"},
 		{EventInstanceCreated, "实例创建完成", "新实例已就绪并分配到公网 IP"},
 		{EventDangerOperation, "危险操作已执行", "终止实例、删除账号、更换 IP 等操作"},
 		{EventHuntSucceeded, "守候任务抢到实例", "容量守候任务成功创建出实例"},

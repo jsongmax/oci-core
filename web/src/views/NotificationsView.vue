@@ -13,6 +13,7 @@ import {
   type ChannelDTO, type ChannelKindDTO, type NotifyEventDTO
 } from '@/api'
 import SectionCard from '@/components/SectionCard.vue'
+import CheckList from '@/components/CheckList.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 
@@ -197,7 +198,7 @@ onMounted(load)
     <SectionCard title="渠道" note="机密字段在服务端打码，不会回传完整值">
       <SkeletonRows v-if="loading" :rows="3" />
       <EmptyState v-else-if="channels.length === 0" title="还没有配置任何通知渠道"
-                  body="配置后，实例就绪、账号凭据失效、危险操作等事件会推送到这里。" />
+                  body="配置后，下方列出的事件会推送到这里。" />
       <div v-else class="cards">
         <article v-for="ch in channels" :key="ch.id" class="chcard" :class="{ 'is-on': ch.enabled }">
           <header class="chcard__head">
@@ -270,6 +271,13 @@ onMounted(load)
           </button>
         </div>
       </div>
+    </SectionCard>
+
+    <!-- 还没有启用的渠道时订阅矩阵没有列，整块不显示；但用户正是在这时候
+         决定要不要配渠道，得先让他知道能收到什么。 -->
+    <SectionCard v-if="!loading && enabledChannels.length === 0 && events.length > 0"
+                 title="可推送的事件" note="添加并启用渠道后，可按渠道逐项订阅" class="mt">
+      <CheckList :items="events.map(e => ({ tone: 'info', text: `${e.label} —— ${e.description}` }))" />
     </SectionCard>
 
     <SectionCard v-if="enabledChannels.length > 0" title="事件订阅" note="行为事件，列为渠道" class="mt">
