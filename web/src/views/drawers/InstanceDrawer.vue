@@ -69,6 +69,41 @@ const primaryVnic = computed(() =>
   detail.value?.vnics?.find(v => v.isPrimary) ?? detail.value?.vnics?.[0]
 )
 
+/* ---------- IPv6 ---------- */
+
+const enablingIpv6 = ref(false)
+
+/**
+ * 为已有实例开启 IPv6。子网和 VCN 没开通时后端会一并开通，
+ * 并照 IPv4 的配置补 ::/0 路由与出站规则——和创建实例时勾选 IPv6 走同一套逻辑。
+ */
+function enableIpv6() {
+  const i = inst.value
+  if (!i) return
+  ask({
+    level: 2, title: `为 ${i.name} 开启 IPv6`,
+    body: '子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭；会照 IPv4 的配置补上 ::/0 路由和出站规则。' +
+      '入站规则不会自动添加，想用 IPv6 登录需要到网络页自己加。',
+    okLabel: '开启 IPv6',
+    onConfirm: async () => {
+      enablingIpv6.value = true
+      try {
+        const result = await instancesApi.enableIpv6(i.id)
+        i.ipv6 = result.address
+        toast({
+          tone: 'success', title: `${i.name} 已分配 IPv6`,
+          body: [result.address, ...(result.steps ?? [])].join('\n')
+        }, 0)
+        await loadDetail()
+      } catch (err) {
+        toastError('开启 IPv6 失败', err)
+      } finally {
+        enablingIpv6.value = false
+      }
+    }
+  })
+}
+
 const cloudInit = computed(() => {
   const raw = detail.value?.metadata?.user_data
   if (!raw) return ''
@@ -499,6 +534,17 @@ watch(metricHours, () => void loadMetrics())
               { k: 'VCN', v: primaryVnic?.vcnName || '—', mono: true },
               { k: '子网', v: primaryVnic?.subnetName || '—', mono: true },
               { k: 'MAC', v: primaryVnic?.macAddress || '—', mono: true }
+            ]" />
+          </SectionCard>
+
+          <SectionCard v-if="primaryVnic && !primaryVnic.ipv6?.length" title="IPv6">
+            <template #action>
+              <button class="btn btn--sm" :disabled="enablingIpv6 || locked" @click="enableIpv6()">
+                {{ enablingIpv6 ? '开启中…' : '开启 IPv6' }}
+              </button>
+            </template>
+            <CheckList :items="[
+              { tone: 'info', text: '为主网卡分配一个 IPv6 地址。子网或 VCN 尚未开通时会一并开通，VCN 开通后无法关闭。' }
             ]" />
           </SectionCard>
 

@@ -221,8 +221,7 @@ function markIpChanged(inst: Instance, oldIp: string, newIp: string): void {
   inst.publicIp = newIp
   toast({
     tone: 'success', title: `${inst.name} 已更换公网 IP`,
-    body: `${oldIp} → ${newIp}
-新旧 IP 已记入「设置 → 审计日志」。`,
+    body: `${oldIp} → ${newIp}\n新旧 IP 已记入「设置 → 审计日志」。`,
     command: `ssh ${inst.sshUser}@${newIp}`
   }, 0)
 }
