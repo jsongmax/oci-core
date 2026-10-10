@@ -20,6 +20,9 @@ export interface Quota {
 
 export type AccountTier = 'trial' | 'paid' | 'unknown'
 
+/** 镜像系统归成几类：SSH 用户和扩容后的命令都按它分。 */
+export type OsFamily = 'oracle' | 'ubuntu' | 'debian' | 'windows' | 'unknown'
+
 export interface Account {
   /** 后端主键，16 位十六进制。前端只当作不透明标识使用 */
   id: string
@@ -70,6 +73,8 @@ export interface Instance {
   ipv6: string[]
   /** SSH 默认登录用户，按镜像系统推断 */
   sshUser: string
+  /** 镜像系统的归类，决定扩容后给哪套命令 */
+  osFamily: OsFamily
   /** 本次页面会话里更换公网 IP 前的地址，列表据此标出新旧对照 */
   previousIp?: string
   bootGb: number

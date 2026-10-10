@@ -6,7 +6,7 @@
  * 而不是让后端返回预格式化的字符串。
  */
 import type { AccountDTO, AccountQuotaDTO, InstanceDTO } from '@/api/types'
-import type { Account, AccountColorIndex, AccountStatus, AccountTier, Instance, Quota } from '@/types'
+import type { Account, AccountColorIndex, AccountStatus, AccountTier, Instance, OsFamily, Quota } from '@/types'
 import { now } from '@/lib/clock'
 
 /** 相对时间：3 分钟前 / 2 小时前 / 5 天前。 */
@@ -221,6 +221,16 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
   }
 }
 
+export function osFamilyOf(imageOs: string | undefined): OsFamily {
+  const os = (imageOs ?? '').toLowerCase()
+  if (os.includes('ubuntu')) return 'ubuntu'
+  if (os.includes('debian')) return 'debian'
+  if (os.includes('windows')) return 'windows'
+  // Oracle Linux 与 Oracle Autonomous Linux 都自带 OCI Utilities（oci-growfs）。
+  if (os.includes('oracle')) return 'oracle'
+  return 'unknown'
+}
+
 /**
  * 按镜像系统推断 SSH 默认用户。
  *
@@ -228,10 +238,52 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
  * 系统未知（自定义镜像、镜像已删、还没同步到）时也退回 opc——那是 OCI 的默认。
  */
 export function sshUserFor(imageOs: string | undefined): string {
-  const os = (imageOs ?? '').toLowerCase()
-  if (os.includes('ubuntu')) return 'ubuntu'
-  if (os.includes('debian')) return 'debian'
+  const family = osFamilyOf(imageOs)
+  if (family === 'ubuntu' || family === 'debian') return family
   return 'opc'
+}
+
+/*
+ * 引导卷在线扩容后，系统里要先重扫磁盘、再扩分区和文件系统。
+ *
+ * 重扫命令照搬 Oracle 文档「Rescanning the Disk」，只是把 <device_name> 换成
+ * 自动找出的根分区所在磁盘：lsblk -s 沿着依赖往上找，TYPE 为 disk 的那一层
+ * 就是它，LVM（Oracle Linux 的根在 ocivolume-root 上）也能找对。
+ * 扩分区：Oracle Linux 用文档里的 oci-growfs，它自己处理 LVM；Ubuntu/Debian
+ * 镜像没有 oci-growfs，用 growpart + resize2fs（这两个镜像的根是 ext4 直接分区）。
+ *
+ * 用普通字符串而不是模板字符串：里面的 $DISK 是给 shell 的，不能让 JS 插值。
+ */
+const RESCAN =
+  'DISK=$(lsblk -nrso NAME,TYPE "$(findmnt -no SOURCE /)" | awk \'$2=="disk"{print $1}\')' +
+  ' && sudo dd iflag=direct if=/dev/$DISK of=/dev/null count=1' +
+  ' && echo 1 | sudo tee /sys/class/block/$DISK/device/rescan'
+
+const GROW_ORACLE = ' && sudo /usr/libexec/oci-growfs -y'
+const GROW_EXT4 =
+  ' && ROOT=$(findmnt -no SOURCE /)' +
+  ' && sudo growpart /dev/$DISK "${ROOT##*[!0-9]}" && sudo resize2fs "$ROOT"'
+
+/**
+ * 引导卷扩容后在实例里要跑的命令与说明。Windows 没有命令，只给说明。
+ * 系统未知时按 OCI 平台镜像最常见的 oci-growfs 给，并在说明里交代替代做法。
+ */
+export function growfsHint(family: OsFamily): { command?: string; note: string } {
+  switch (family) {
+    case 'oracle':
+      return { command: RESCAN + GROW_ORACLE, note: '在实例里执行下面的命令：重扫磁盘后用 oci-growfs 扩展根分区。' }
+    case 'ubuntu':
+    case 'debian':
+      return { command: RESCAN + GROW_EXT4, note: '在实例里执行下面的命令：重扫磁盘后用 growpart 与 resize2fs 扩展根分区。' }
+    case 'windows':
+      return { note: '在实例的「磁盘管理」里对系统分区选「扩展卷」，或用 diskpart 的 extend 命令。' }
+    default:
+      return {
+        command: RESCAN + GROW_ORACLE,
+        note: '未识别出系统，下面按 Oracle Linux 给出命令。系统里没有 oci-growfs 时，' +
+          '改用 growpart 扩分区，再按文件系统用 resize2fs（ext4）或 xfs_growfs（XFS）。'
+      }
+  }
 }
 
 /** 突发基线的显示文字。不突发返回空串。 */
@@ -271,6 +323,7 @@ export function toInstance(dto: InstanceDTO): Instance {
     privateIp: dto.privateIp || '—',
     ipv6: dto.ipv6 ? dto.ipv6.split(',') : [],
     sshUser: sshUserFor(dto.imageOs),
+    osFamily: osFamilyOf(dto.imageOs),
     bootGb: dto.bootVolumeGb,
     // 免费额度的块存储总量是 200 GB，用作进度条的分母。
     bootLimitGb: 200,

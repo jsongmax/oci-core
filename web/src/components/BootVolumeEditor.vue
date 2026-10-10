@@ -8,7 +8,7 @@ import SectionCard from '@/components/SectionCard.vue'
 import CheckList from '@/components/CheckList.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import { ALWAYS_FREE } from '@/lib/freetier'
-import { baselineOptions } from '@/lib/adapt'
+import { baselineOptions, growfsHint } from '@/lib/adapt'
 import SelectMenu from '@/components/SelectMenu.vue'
 
 const props = defineProps<{
@@ -241,12 +241,14 @@ function applyVolume() {
           }
         )
         await refreshInstances()
+        // 扩容了就一直留着：命令要复制到实例里去跑，10 秒根本来不及。
+        const hint = grew ? growfsHint(props.instance.osFamily) : null
         toast({
           tone: 'success',
           title: `${props.instance.name} 的引导卷已更新`,
-          body: notice || undefined,
-          command: grew ? 'sudo /usr/libexec/oci-growfs -y' : undefined
-        }, 10000)
+          body: [notice, hint?.note].filter(Boolean).join('\n') || undefined,
+          command: hint?.command
+        }, grew ? 0 : 10000)
       } catch (err) {
         toastError('修改引导卷失败', err)
         size.value = props.instance.bootGb
