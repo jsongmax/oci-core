@@ -582,7 +582,7 @@ func (s *Service) noCapacity(ctx context.Context, client *ociclient.Client,
 		}
 	}
 
-	report, err := client.CreateCapacityReport(ctx, t.Region, acc.CompartmentOCID, ad,
+	report, err := client.CreateCapacityReport(ctx, t.Region, ad,
 		[]ociclient.CapacityShapeRequest{req})
 	if err != nil {
 		// 放行。容量报告只是优化，不该成为新的故障点。

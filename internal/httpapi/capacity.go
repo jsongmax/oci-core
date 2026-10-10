@@ -164,12 +164,12 @@ func (s *Server) handleProbeCapacity(w http.ResponseWriter, r *http.Request) {
 	results := make([]adResult, 0, len(ads))
 	for _, ad := range ads {
 		row := adResult{AvailabilityDomain: ad, Short: shortADName(ad)}
-		report, err := s.capacity.Probe(r.Context(), client, acc.CompartmentOCID,
+		report, err := s.capacity.Probe(r.Context(), client,
 			region, ad, req.Shape, req.Ocpus, req.MemoryGB)
 		if err != nil {
 			// 单个 AD 失败不该让整次查询失败：其余 AD 的结果仍然有用，
 			// 而且失败原因（比如权限）也需要原样让人看到。
-			row.Error = capacityErrText(err)
+			row.Error = ociclient.CapacityErrorText(err)
 			row.StatusText = "查询失败"
 		} else {
 			row.Status = report.StatusOf(req.Shape)
@@ -258,18 +258,4 @@ func (s *Server) onCapacityChange(ctx context.Context, w *store.CapacityWatch, p
 			"此前":  ociclient.CapacityStatusText(prev),
 		},
 	})
-}
-
-// capacityErrText 把 OCI 错误压成一行，附上处理建议。
-//
-// 逐 AD 查询时单个失败不中断整次请求，所以错误得跟着那一行走，
-// 不能像 writeOCIError 那样直接写进响应。
-func capacityErrText(err error) string {
-	if apiErr, ok := ociclient.AsAPIError(err); ok {
-		if advice := apiErr.Advice(); advice != "" {
-			return apiErr.Message + "（" + advice + "）"
-		}
-		return apiErr.Message
-	}
-	return err.Error()
 }

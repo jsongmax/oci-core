@@ -450,6 +450,7 @@ function askDelete() {
             { tone: 'info', text: 'manage instance-family —— 创建与终止实例' },
             { tone: 'info', text: 'manage virtual-network-family —— VCN、子网、安全规则、公网 IP' },
             { tone: 'info', text: 'manage volume-family —— 引导卷扩容与 VPU 调整' },
+            { tone: 'info', text: 'manage compute-capacity-reports —— 容量查询、容量监控与守候预检（不含在 instance-family 里）' },
             { tone: 'info', text: 'read all-resources —— 配额与用量（已覆盖账单所需的 usage-report）' }
           ]" />
         </SectionCard>
@@ -458,6 +459,7 @@ function askDelete() {
           <CodeBlock copyable :code="`Allow group 'OCI Core' to manage instance-family in tenancy
 Allow group 'OCI Core' to manage virtual-network-family in tenancy
 Allow group 'OCI Core' to manage volume-family in tenancy
+Allow group 'OCI Core' to manage compute-capacity-reports in tenancy
 Allow group 'OCI Core' to read all-resources in tenancy`" />
         </SectionCard>
       </template>

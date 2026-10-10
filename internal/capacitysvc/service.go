@@ -95,14 +95,14 @@ func (s *Service) probeOne(ctx context.Context, w *store.CapacityWatch) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 	defer cancel()
 
-	client, acc, err := s.conns.ForID(ctx, w.AccountID)
+	client, _, err := s.conns.ForID(ctx, w.AccountID)
 	if err != nil {
 		// 拿不到凭据就把它排到队尾，不要每轮都优先重试同一个坏项。
 		_ = s.st.TouchCapacityWatch(ctx, w.ID, "读取账号凭据失败："+err.Error())
 		return err
 	}
 
-	report, err := s.Probe(ctx, client, acc.CompartmentOCID, w.Region,
+	report, err := s.Probe(ctx, client, w.Region,
 		w.AvailabilityDomain, w.Shape, w.Ocpus, w.MemoryGB)
 	if err != nil {
 		_ = s.st.TouchCapacityWatch(ctx, w.ID, shortErr(err))
@@ -137,7 +137,7 @@ func (s *Service) probeOne(ctx context.Context, w *store.CapacityWatch) error {
 // 弹性规格才带 ShapeConfig：E2.1.Micro 这类固定规格带上会被 OCI 拒掉，
 // 而返回的错误指向参数格式，很难联想到是这里多塞了一个字段。
 func (s *Service) Probe(ctx context.Context, client *ociclient.Client,
-	compartmentID, region, ad, shape string, ocpus, memoryGB float64) (*ociclient.CapacityReport, error) {
+	region, ad, shape string, ocpus, memoryGB float64) (*ociclient.CapacityReport, error) {
 
 	req := ociclient.CapacityShapeRequest{InstanceShape: shape}
 	if ocpus > 0 || memoryGB > 0 {
@@ -146,20 +146,22 @@ func (s *Service) Probe(ctx context.Context, client *ociclient.Client,
 			MemoryInGBs: float32(memoryGB),
 		}
 	}
-	return client.CreateCapacityReport(ctx, region, compartmentID, ad,
+	return client.CreateCapacityReport(ctx, region, ad,
 		[]ociclient.CapacityShapeRequest{req})
 }
 
+// shortErr 把容量查询的错误压成一行存进监控项，无权限时附上需要补的策略。
+// 按字符截断：提示是中文，按字节切会切出半个字。
 func shortErr(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
+	msg := []rune(ociclient.CapacityErrorText(err))
 	const max = 300
 	if len(msg) > max {
-		return msg[:max] + "…"
+		return string(msg[:max]) + "…"
 	}
-	return msg
+	return string(msg)
 }
 
 // Describe 生成一句人话的状态描述，通知与日志共用。

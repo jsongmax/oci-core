@@ -1,6 +1,52 @@
 package ociclient
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+// redirectTransport 把所有请求改发到测试服务器，路径与请求体原样保留。
+type redirectTransport struct{ target *url.URL }
+
+func (rt redirectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host = rt.target.Scheme, rt.target.Host
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestCapacityReportAlwaysUsesTenancy 锁住容量报告只发租户 OCID。
+//
+// 这个接口拒绝子分区，而账号配置里的分区字段很可能填的就是子分区。
+// 先前由调用方传那个字段，手动查询、容量监控、守候预检三处同时 404，
+// 报错又只说"无权限或资源不存在"，很难联想到是分区传错了。
+func TestCapacityReportAlwaysUsesTenancy(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"shapeAvailabilities":[]}`))
+	}))
+	defer srv.Close()
+
+	target, _ := url.Parse(srv.URL)
+	creds := testCreds(t, testKey(t))
+	c, err := New(creds, WithHTTPClient(&http.Client{Transport: redirectTransport{target}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateCapacityReport(context.Background(), "ap-tokyo-1", "xxxx:AP-TOKYO-1-AD-1",
+		[]CapacityShapeRequest{{InstanceShape: "VM.Standard.A1.Flex"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got["compartmentId"] != creds.TenancyOCID {
+		t.Errorf("compartmentId 应为租户 OCID %q，实际 %v", creds.TenancyOCID, got["compartmentId"])
+	}
+}
 
 // TestHasCapacityOnlyOnAvailable 锁住"只有 AVAILABLE 才算有货"。
 //
@@ -78,5 +124,14 @@ func TestCapacityStatusTextCoversKnownStates(t *testing.T) {
 	// 未知状态原样透出，不要吞掉——Oracle 加了新状态时得能看见。
 	if got := CapacityStatusText("BRAND_NEW"); got != "BRAND_NEW" {
 		t.Errorf("未知状态应原样返回，实际 %q", got)
+	}
+}
+
+// 无权限时必须点明缺的是哪条策略：Oracle 只说"无权限或资源不存在"。
+func TestCapacityErrorTextNamesMissingPolicy(t *testing.T) {
+	err := &APIError{StatusCode: 404, Code: "NotAuthorizedOrNotFound",
+		Message: "Authorization failed or requested resource not found.", Class: ClassNotAuthorized}
+	if got := CapacityErrorText(err); !strings.Contains(got, "compute-capacity-reports") {
+		t.Errorf("无权限的提示里应包含所需策略，实际 %q", got)
 	}
 }

@@ -51,6 +51,27 @@ type CapacityReport struct {
 	TimeCreated         time.Time                   `json:"timeCreated"`
 }
 
+// CapacityPermissionHint 是容量报告被拒时给用户的处理建议。
+//
+// 这项权限不含在 instance-family 里，只授了计算/网络/存储三项的 IAM 用户
+// 一定会撞上。Oracle 返回的是笼统的 NotAuthorizedOrNotFound，不点明缺什么。
+const CapacityPermissionHint = "容量查询需要单独授权：Allow group <你的组> to manage compute-capacity-reports in tenancy"
+
+// CapacityErrorText 把容量报告的错误压成一行；无权限时附上需要补的策略。
+func CapacityErrorText(err error) string {
+	apiErr, ok := AsAPIError(err)
+	if !ok {
+		return err.Error()
+	}
+	if apiErr.Class == ClassNotAuthorized {
+		return apiErr.Message + "（" + CapacityPermissionHint + "）"
+	}
+	if advice := apiErr.Advice(); advice != "" {
+		return apiErr.Message + "（" + advice + "）"
+	}
+	return apiErr.Message
+}
+
 // CreateCapacityReport 查询某个可用域里指定规格的容量。
 //
 // 这是个**只读**操作：不创建任何资源、不消耗配额、不占用额度，
@@ -58,21 +79,18 @@ type CapacityReport struct {
 // 能把真正的创建请求量砍掉一个数量级——而风控盯的正是创建请求。
 //
 // 两个容易踩的点：
-//   - compartmentID 必须是**租户根分区**（tenancy OCID），子分区会被拒。
+//   - compartmentId 必须是**租户根分区**（tenancy OCID），子分区会被拒。
+//     所以这里不收分区参数，固定用租户 OCID——别让调用方传账号配置的分区。
 //   - 一次只能查一个可用域。要覆盖一个区域的三个 AD 就是三次调用。
 //
 // 只能查已订阅的区域：请求签名后发往 iaas.{region}.oraclecloud.com，
 // 未订阅的区域租户在那儿没有存在，会被直接拒掉。永久免费账号更严格，
 // 实例只能开在 home region，通常也订阅不了第二个区域。
-func (c *Client) CreateCapacityReport(ctx context.Context, region, compartmentID,
+func (c *Client) CreateCapacityReport(ctx context.Context, region,
 	availabilityDomain string, shapes []CapacityShapeRequest) (*CapacityReport, error) {
 
-	if compartmentID == "" {
-		compartmentID = c.creds.TenancyOCID
-	}
-
 	body := map[string]any{
-		"compartmentId":       compartmentID,
+		"compartmentId":       c.creds.TenancyOCID,
 		"availabilityDomain":  availabilityDomain,
 		"shapeAvailabilities": shapes,
 	}
