@@ -1,15 +1,18 @@
 <script setup lang="ts">
 /** §4.3.1 添加账号抽屉（520）：整段粘贴 OCI config 自动解析 + 逐项校验 */
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
-import { accounts as accountsApi, errorText, type CheckStepDTO } from '@/api'
+import { mask } from '@/lib/mask'
+import { accounts as accountsApi, proxies as proxiesApi, errorText, type CheckStepDTO, type ProxyDTO } from '@/api'
 import type { AccountColorIndex, CheckItem } from '@/types'
 import AppDrawer from '@/components/AppDrawer.vue'
 import DrawerBody from '@/components/DrawerBody.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import CredentialField from '@/components/CredentialField.vue'
 import CheckList from '@/components/CheckList.vue'
+import SelectMenu from '@/components/SelectMenu.vue'
 
 const { state, closeDrawer, toast, toastError, nextColorIndex, loadAccounts, syncNow } = useStore()
 
@@ -23,8 +26,70 @@ const form = reactive({
   key: '',
   alias: '',
   code: '',
-  colorIndex: nextColorIndex() as AccountColorIndex
+  colorIndex: nextColorIndex() as AccountColorIndex,
+  /** 网络出口：代理 id；DIRECT 表示明确选了直连；空串表示还没选 */
+  egress: ''
 })
+
+/* ---------- 网络出口 ---------- */
+
+/*
+ * 出口必须在测试连接之前就定下来。测试连接是这个租户第一次被访问，
+ * 用本机 IP 直连一次，之后再绑代理也抹不掉这次记录——这正是代理要避免的
+ * 关联信号。所以代理池里有空闲代理时，不选就不让测试、不让保存。
+ */
+const DIRECT = '__direct__'
+const router = useRouter()
+const proxyList = ref<ProxyDTO[]>([])
+const boundProxyIds = ref<Set<string>>(new Set())
+const proxiesLoaded = ref(false)
+
+/** 可选的代理：启用的、还没绑给别的账号的。一条代理只能绑一个账号。 */
+const freeProxies = computed(() =>
+  proxyList.value.filter(p => p.enabled && !boundProxyIds.value.has(p.id)))
+
+function proxyLabel(p: ProxyDTO): string {
+  const addr = `${p.host}:${p.port}`
+  const shown = state.privacyMode ? mask(addr, 'hostport') : addr
+  const status = p.lastStatus === 'ok' ? `${p.lastLatencyMs} ms`
+    : p.lastStatus === 'fail' ? '上次检测不通' : '未检测'
+  return `${p.label ? p.label + ' · ' : ''}${shown} · ${status}`
+}
+
+const egressGroups = computed(() => [
+  { label: '代理池', options: freeProxies.value.map(p => ({ value: p.id, label: proxyLabel(p) })) },
+  { label: '', options: [{ value: DIRECT, label: '直连（使用本机 IP）' }] }
+])
+
+async function loadProxies() {
+  try {
+    const list = await proxiesApi.list()
+    proxyList.value = list.proxies ?? []
+    boundProxyIds.value = new Set(Object.values(list.bindings ?? {}))
+  } catch {
+    // 读不到代理池就当它是空的，下面会按"没有可用代理"处理。
+    proxyList.value = []
+  } finally {
+    proxiesLoaded.value = true
+    // 没有可用代理时只能直连，不必逼用户多点一下；有的话留空，让用户自己选。
+    if (!freeProxies.value.length && !form.egress) form.egress = DIRECT
+  }
+}
+onMounted(() => void loadProxies())
+
+/** 换了出口，之前那次测试走的是另一条路，结果作废。 */
+watch(() => form.egress, () => {
+  steps.value = []
+  testError.value = ''
+  testAdvice.value = ''
+})
+
+const proxyId = computed(() => (form.egress && form.egress !== DIRECT ? form.egress : undefined))
+
+function goProxies() {
+  closeDrawer()
+  void router.push('/proxies')
+}
 
 const testing = ref(false)
 const saving = ref(false)
@@ -79,7 +144,7 @@ const codeTaken = computed(() =>
 )
 
 const canTest = computed(() =>
-  !!form.tenancy && !!form.user && !!form.fingerprint && form.key.trim().length > 20
+  !!form.tenancy && !!form.user && !!form.fingerprint && form.key.trim().length > 20 && !!form.egress
 )
 
 const canSave = computed(() =>
@@ -93,7 +158,9 @@ const checks = computed<CheckItem[]>(() => {
     return [{ tone: 'info', text: '校验中…' }]
   }
   if (steps.value.length === 0) {
-    return [{ tone: 'info', text: '点击「测试连接」逐项校验凭据与权限' }]
+    return [{ tone: 'info', text: form.egress
+      ? '点击「测试连接」逐项校验凭据与权限'
+      : '先在上面选好网络出口，再测试连接——测试本身就会访问这个租户' }]
   }
 
   const items: CheckItem[] = steps.value.map(s => ({
@@ -121,7 +188,8 @@ async function runTest() {
       userOcid: form.user,
       fingerprint: form.fingerprint,
       privateKeyPem: form.key,
-      region: form.region
+      region: form.region,
+      proxyId: proxyId.value
     })
     steps.value = result.steps
     if (!result.ok) {
@@ -152,7 +220,8 @@ async function save() {
       userOcid: form.user,
       fingerprint: form.fingerprint,
       privateKeyPem: form.key,
-      defaultRegion: form.region
+      defaultRegion: form.region,
+      proxyId: proxyId.value
     })
 
     await loadAccounts()
@@ -248,6 +317,22 @@ async function save() {
         </div>
       </SectionCard>
 
+      <SectionCard title="网络出口" note="测试连接与之后的全部请求都走这里">
+        <div class="pad">
+          <SelectMenu v-model="form.egress" :groups="egressGroups"
+                      :placeholder="proxiesLoaded ? '选择代理或直连' : '读取代理池…'"
+                      :disabled="!proxiesLoaded" :min-width="300" aria-label="网络出口" />
+          <CheckList v-if="proxiesLoaded && !freeProxies.length" :items="[{ tone: 'warn',
+            text: proxyList.length
+              ? '代理池里没有空闲的代理（都已绑给其他账号或已停用），只能直连。一条代理只能绑一个账号。'
+              : '代理池为空，只能直连。如需代理，先到代理页导入。' }]" />
+          <CheckList v-else-if="form.egress === DIRECT" :items="[{ tone: 'warn',
+            text: '直连会用本机 IP 访问这个租户。和其他账号用同一个出口，等于给它们加了一条关联线索。' }]" />
+          <button v-if="proxiesLoaded && !freeProxies.length" class="btn btn--sm egress__link"
+                  @click="goProxies()">去代理页导入</button>
+        </div>
+      </SectionCard>
+
       <SectionCard title="连接校验" note="逐项亮起">
         <template #action>
           <button class="btn btn--sm" style="border-color: var(--accent); color: var(--accent)"
@@ -276,6 +361,7 @@ async function save() {
 .pad { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .paste { height: 108px; }
 .row { display: flex; gap: 8px; }
+.egress__link { align-self: flex-start; }
 .ok-tag { margin-left: 6px; font-size: 11px; color: var(--success); }
 .input.is-ok { border-color: var(--success); background: var(--success-soft); }
 .identity { display: grid; grid-template-columns: 1fr 104px; gap: 10px; }

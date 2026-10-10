@@ -49,6 +49,8 @@ export interface CreateAccountInput {
   defaultRegion: string
   compartmentOcid?: string
   proxyUrl?: string
+  /** 代理池里的代理，创建时就绑上 */
+  proxyId?: string
   skipCheck?: boolean
 }
 
@@ -78,6 +80,8 @@ export const accounts = {
   checkDraft: (draft: {
     tenancyOcid: string; userOcid: string; fingerprint: string
     privateKeyPem: string; region: string; proxyUrl?: string
+    /** 由服务端解析代理地址，带密码的 URL 不经过前端 */
+    proxyId?: string
   }) => http.post<D.CheckResultDTO>('/api/accounts/check-draft', draft)
 }
 

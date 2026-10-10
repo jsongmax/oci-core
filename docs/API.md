@@ -114,6 +114,8 @@ X-OCI-Tools: 1
 
 > **私钥永不出现在任何响应里，也没有导出接口。** 添加时提交 `privateKeyPem`，此后无法读回。
 
+`POST /api/accounts` 可带 `proxyId`（代理池里的代理）：与账号在同一条 INSERT 里绑定，保存后的校验与此后的全部请求都走它。代理已绑给其他账号时返回 409 `proxy_shared`，账号不会落库；代理不存在返回 404。
+
 **`POST /api/accounts/parse-config`** — 添加账号抽屉的核心交互
 
 请求 `{ "text": "<粘贴的整段配置>" }`，响应：
@@ -129,6 +131,8 @@ X-OCI-Tools: 1
 区域三字母代号会自动展开（`nrt` → `ap-tokyo-1`），指纹统一转小写。`hasPassPhrase` 为 `true` 时需提示用户先用 `openssl rsa` 解密——本工具不支持带口令的私钥。
 
 **`POST /api/accounts/check-draft`** — 保存前测试
+
+请求可带 `proxyId`：由服务端解析出代理地址再发请求，带密码的代理 URL 不经过前端。这是这个租户第一次被访问，选了代理就必须走代理。
 
 ```json
 { "ok": true,

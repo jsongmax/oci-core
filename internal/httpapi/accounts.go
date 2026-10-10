@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"ocicore/internal/accountsvc"
 	"ocicore/internal/ociclient"
+	"ocicore/internal/proxypool"
 	"ocicore/internal/store"
 )
 
@@ -45,6 +47,8 @@ type createAccountRequest struct {
 	DefaultRegion   string `json:"defaultRegion"`
 	CompartmentOcid string `json:"compartmentOcid"`
 	ProxyUrl        string `json:"proxyUrl"`
+	// ProxyID 是代理池里的代理，创建时就绑上，保存后的校验也走它。
+	ProxyID string `json:"proxyId"`
 	// SkipCheck 为 true 时跳过保存后的连通性校验（离线环境下有用）。
 	SkipCheck bool `json:"skipCheck"`
 }
@@ -69,8 +73,13 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		DefaultRegion:   req.DefaultRegion,
 		CompartmentOCID: req.CompartmentOcid,
 		ProxyURL:        req.ProxyUrl,
+		ProxyID:         req.ProxyID,
 	})
 	if err != nil {
+		if errors.Is(err, proxypool.ErrDuplicateBinding) {
+			writeProxySharedError(w)
+			return
+		}
 		// 创建失败绝大多数是表单填写问题（PEM 无法解析、指纹不匹配、OCID 格式错），
 		// 这些都应该原样告诉用户，而不是笼统地报 500。
 		s.writeAccountInputError(w, err)
@@ -326,13 +335,26 @@ type checkDraftRequest struct {
 	PrivateKeyPem string `json:"privateKeyPem"`
 	Region        string `json:"region"`
 	ProxyUrl      string `json:"proxyUrl"`
+	// ProxyID 优先于 ProxyUrl：由服务端解析出代理地址，带密码的 URL 不必经过前端。
+	ProxyID string `json:"proxyId"`
 }
 
 // handleCheckDraft 在保存之前测试一份凭据是否可用。
+//
+// 选了代理就必须走代理：这是这个租户第一次被访问，用本机 IP 直连一次，
+// 之后再换代理也抹不掉这次记录。
 func (s *Server) handleCheckDraft(w http.ResponseWriter, r *http.Request) {
 	var req checkDraftRequest
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	if req.ProxyID != "" {
+		u, err := s.st.ProxyURL(r.Context(), req.ProxyID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_proxy", "所选代理不可用："+err.Error())
+			return
+		}
+		req.ProxyUrl = u
 	}
 	result := accountsvc.CheckDraft(r.Context(), accountsvc.Draft{
 		TenancyOCID:   req.TenancyOcid,

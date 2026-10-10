@@ -309,3 +309,40 @@ func mustGet(t *testing.T, st *Store, id string) *Proxy {
 func contains(s, sub string) bool {
 	return bytes.Contains([]byte(s), []byte(sub))
 }
+
+// 新建账号时就带上代理：proxy_id 与账号同一条 INSERT 写入，
+// 共用规则与 BindProxy 一致。
+func TestCreateAccountWithProxy(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	p, err := st.CreateProxy(ctx, testProxy("1.2.3.4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in := testAccount(t, "大阪", "OSA", "osa")
+	in.ProxyID = p.ID
+	a1, err := st.CreateAccount(ctx, in)
+	if err != nil {
+		t.Fatalf("带代理创建应成功: %v", err)
+	}
+	if got, _ := st.AccountProxyID(ctx, a1.ID); got != p.ID {
+		t.Errorf("创建后应已绑定代理 %s，实际 %q", p.ID, got)
+	}
+
+	in2 := testAccount(t, "首尔", "SEO", "seo")
+	in2.ProxyID = p.ID
+	if _, err := st.CreateAccount(ctx, in2); !errors.Is(err, proxypool.ErrDuplicateBinding) {
+		t.Errorf("代理已被占用时创建应被拒绝，实际 %v", err)
+	}
+	if accounts, _ := st.ListAccounts(ctx); len(accounts) != 1 {
+		t.Errorf("被拒绝的账号不应落库，实际有 %d 个账号", len(accounts))
+	}
+
+	in3 := testAccount(t, "东京", "TYO", "tyo")
+	in3.ProxyID = "no-such-proxy"
+	if _, err := st.CreateAccount(ctx, in3); !errors.Is(err, ErrNotFound) {
+		t.Errorf("代理不存在时应返回 ErrNotFound，实际 %v", err)
+	}
+}

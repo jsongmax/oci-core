@@ -167,11 +167,7 @@ func (s *Server) handleBindProxy(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.st.BindProxy(r.Context(), req.AccountID, req.ProxyID); err != nil {
 		if errors.Is(err, proxypool.ErrDuplicateBinding) {
-			// 这不是普通的参数错误，值得把原因讲清楚——用户十有八九
-			// 觉得"多个账号共用一条代理"是理所当然的。
-			writeError(w, http.StatusConflict, "proxy_shared",
-				"该代理已绑定其他账号。一条代理只能绑一个账号——两个账号共用同一出口，"+
-					"等于把它们绑在同一个 IP 上，反而制造了本来不存在的关联信号。")
+			writeProxySharedError(w)
 			return
 		}
 		writeStoreError(w, err)
@@ -183,6 +179,16 @@ func (s *Server) handleBindProxy(w http.ResponseWriter, r *http.Request) {
 	s.conns.Invalidate(req.AccountID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// writeProxySharedError 回应"代理已被别的账号占用"。绑定与新建账号共用。
+//
+// 这不是普通的参数错误，值得把原因讲清楚——用户十有八九
+// 觉得"多个账号共用一条代理"是理所当然的。
+func writeProxySharedError(w http.ResponseWriter) {
+	writeError(w, http.StatusConflict, "proxy_shared",
+		"该代理已绑定其他账号。一条代理只能绑一个账号——两个账号共用同一出口，"+
+			"等于把它们绑在同一个 IP 上，反而制造了本来不存在的关联信号。")
 }
 
 // handleCheckProxies 执行存活检测。

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ocicore/internal/ociclient"
+	"ocicore/internal/proxypool"
 )
 
 // 账号连通性状态。与前端 AccountCard 的四种状态一一对应
@@ -98,6 +99,11 @@ type NewAccount struct {
 	DefaultRegion   string
 	CompartmentOCID string
 	ProxyURL        string
+	// ProxyID 是代理池里的一条代理，创建时就绑上。
+	//
+	// 必须和账号在同一条 INSERT 里写入，而不是建完再绑：中间哪怕隔一瞬，
+	// 后台同步或保存后的校验就可能先用本机 IP 直连这个新租户。
+	ProxyID string
 }
 
 // AccountUpdate 描述可修改的字段。指针为 nil 表示不改动该字段。
@@ -172,15 +178,31 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 		return nil, err
 	}
 
+	// 一条代理只能绑一个账号，规则与 BindProxy 相同。
+	var proxyID any
+	if pid := strings.TrimSpace(in.ProxyID); pid != "" {
+		if _, err := s.GetProxy(ctx, pid); err != nil {
+			return nil, err
+		}
+		bindings, err := s.ProxyBindings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(proxypool.DuplicateOf(bindings, pid, "")) > 0 {
+			return nil, proxypool.ErrDuplicateBinding
+		}
+		proxyID = pid
+	}
+
 	now := nowUnix()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO accounts (id, alias, code, color_index, tenancy_ocid, user_ocid, fingerprint,
-			key_ciphertext, key_nonce, default_region, compartment_ocid, proxy_url,
+			key_ciphertext, key_nonce, default_region, compartment_ocid, proxy_url, proxy_id,
 			enabled, status, status_message, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,'',?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,'',?,?)`,
 		id, alias, code, colorIndex, creds.TenancyOCID, creds.UserOCID, creds.Fingerprint,
 		ciphertext, nonce, creds.Region, strings.TrimSpace(in.CompartmentOCID), strings.TrimSpace(in.ProxyURL),
-		StatusUnchecked, now, now)
+		proxyID, StatusUnchecked, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("%w: 该租户或代号已被占用", ErrConflict)
