@@ -454,11 +454,11 @@ function askDelete() {
           ]" />
         </SectionCard>
 
-        <SectionCard title="策略示例" note="在 Oracle 控制台 → 身份与安全 → 策略 中新建">
-          <CodeBlock copyable :code="`Allow group OCI Core to manage instance-family in tenancy
-Allow group OCI Core to manage virtual-network-family in tenancy
-Allow group OCI Core to manage volume-family in tenancy
-Allow group OCI Core to read all-resources in tenancy`" />
+        <SectionCard title="策略示例" note="在 Oracle 控制台 → 身份与安全 → 策略 中新建；把 'OCI Core' 换成你的组名，带空格时引号不能省">
+          <CodeBlock copyable :code="`Allow group 'OCI Core' to manage instance-family in tenancy
+Allow group 'OCI Core' to manage virtual-network-family in tenancy
+Allow group 'OCI Core' to manage volume-family in tenancy
+Allow group 'OCI Core' to read all-resources in tenancy`" />
         </SectionCard>
       </template>
 

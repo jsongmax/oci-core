@@ -107,6 +107,19 @@ async function loadMetrics() {
 const seriesOf = (name: string) =>
   metrics.value?.series.find(s => s.metric === name)?.datapoints?.map(d => d.value) ?? []
 
+/**
+ * 按最近一个内存使用率数据点折算出的已用 GB。
+ *
+ * 原先这里画的是 memGb / memGb，永远 100%、永远标红"已满"——那是总量，
+ * 不是用量。没有数据点时返回 null，不画进度条，免得把"不知道"画成 0。
+ */
+const memUsedGb = computed<number | null>(() => {
+  const points = seriesOf('MemoryUtilization')
+  const memGb = inst.value?.memGb
+  if (!points.length || !memGb) return null
+  return Math.round(memGb * points[points.length - 1] / 10) / 10
+})
+
 const metricLabels = computed<[string, string]>(() => {
   if (!metrics.value) return ['', '']
   const fmt = (iso: string) =>
@@ -630,8 +643,8 @@ watch(metricHours, () => void loadMetrics())
           <TrafficChart :values="seriesOf('MemoryUtilization')"
                         :labels="metricLabels" unit="%"
                         empty-text="暂无内存数据" />
-          <div class="pad">
-            <QuotaMeter label="内存总量" :used="inst.memGb" :limit="inst.memGb" unit=" GB" />
+          <div v-if="memUsedGb !== null" class="pad">
+            <QuotaMeter label="最近一次" :used="memUsedGb" :limit="inst.memGb" unit=" GB" />
           </div>
         </SectionCard>
       </template>

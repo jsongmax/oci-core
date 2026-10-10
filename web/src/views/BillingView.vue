@@ -235,7 +235,8 @@ function shareQty(rows: BillingBucketDTO[], v: number): number {
 
 /* ---------- 权限 ---------- */
 
-const POLICY = `Allow group OCI Core to read usage-report in tenancy`
+// 组名带空格必须加引号，否则 Oracle 会报策略语法错误。
+const POLICY = `Allow group 'OCI Core' to read usage-report in tenancy`
 
 const anyNoPermission = computed(() => noPermissionCount.value > 0)
 
