@@ -156,7 +156,7 @@ X-OCI-Tools: 1
 | POST | `/api/instances/sync` | 触发同步，`?accountId=` 可限定单账号 |
 | POST | `/api/instances/{ocid}/actions/{action}` | 开关机等操作 |
 | PATCH | `/api/instances/{ocid}` | 改名 |
-| POST | `/api/instances/{ocid}/reshape` | 改配置（**需先关机**） |
+| POST | `/api/instances/{ocid}/reshape` | 改配置（运行中会由 Oracle 重启一次） |
 | DELETE | `/api/instances/{ocid}?confirm={name}` | 终止，**需回传实例名** |
 | POST | `/api/instances/{ocid}/dismiss-error` | 清除该行的错误提示 |
 | POST | `/api/instances/{ocid}/change-ip?confirm=true` | 更换公网 IP |
@@ -174,9 +174,10 @@ X-OCI-Tools: 1
     "id": "ocid1.instance.oc1..aaaa", "accountId": "a3f1c2d4",
     "region": "ap-tokyo-1", "displayName": "arm-tokyo-01",
     "availabilityDomain": "xxxx:AP-TOKYO-1-AD-1", "faultDomain": "FAULT-DOMAIN-1",
-    "shape": "VM.Standard.A1.Flex", "ocpus": 4, "memoryGb": 24,
-    "lifecycleState": "RUNNING", "publicIp": "152.70.14.208", "privateIp": "10.0.0.5",
-    "ipv6": "", "bootVolumeGb": 50, "bootVolumeVpus": 10,
+    "shape": "VM.Standard.A1.Flex", "ocpus": 4, "memoryGb": 24, "baselineOcpuUtilization": "",
+    "lifecycleState": "RUNNING", "imageOs": "Canonical Ubuntu",
+    "publicIp": "152.70.14.208", "privateIp": "10.0.0.5",
+    "ipv6": "2001:db8::10,2001:db8::11", "bootVolumeGb": 50, "bootVolumeVpus": 10,
     "timeCreated": "…", "syncedAt": "…", "lastError": "",
     "accountAlias": "东京主号", "accountCode": "TYO", "accountColorIndex": 1
   }],
@@ -204,9 +205,13 @@ X-OCI-Tools: 1
 
 错误按（账号 × 区域）隔离：**一个账号失效不会让整张列表变空**。
 
-**`POST /api/instances/{ocid}/reshape`** — `{ "ocpus": 2, "memoryInGbs": 12 }`
+`ipv6` 是主网卡上的全部 IPv6，逗号分隔，未启用为空串。`imageOs` 是镜像的操作系统名，
+前端据此推断 SSH 用户与扩容后的命令；取不到时为空串。`baselineOcpuUtilization`
+是突发基线（`BASELINE_1_8` / `BASELINE_1_2`），空串或 `BASELINE_1_1` 表示不突发。
 
-实例非 `STOPPED` 时返回 400 并说明需先关机。OCPU/内存搭配按规格元数据实时校验（A1.Flex 每 OCPU 最多 6 GB）。
+**`POST /api/instances/{ocid}/reshape`** — `{ "ocpus": 2, "memoryInGbs": 12, "baselineOcpuUtilization": "" }`
+
+不要求先关机：运行中的实例由 Oracle 重启一次来应用变更；处于过渡态时返回 400。OCPU/内存搭配与突发基线按规格元数据实时校验（A1.Flex 每 OCPU 最多 6 GB）。`baselineOcpuUtilization` 留空表示不改突发设置，改回独占传 `BASELINE_1_1`。
 
 **`GET /api/instances/{ocid}/metrics`** — `?hours=6&metrics=CpuUtilization,NetworksBytesIn`
 
@@ -284,14 +289,15 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 ```json
 { "accountId": "a3f1c2d4", "region": "ap-tokyo-1", "availabilityDomain": "",
   "displayName": "arm-tokyo-02", "shape": "VM.Standard.A1.Flex",
-  "ocpus": 4, "memoryInGbs": 24, "imageId": "ocid1.image…", "bootVolumeGb": 50,
+  "ocpus": 4, "memoryInGbs": 24, "baselineOcpuUtilization": "",
+  "imageId": "ocid1.image…", "bootVolumeGb": 50,
   "subnetId": "", "autoCreateNetwork": true, "assignPublicIp": true, "enableIpv6": false,
   "sshPublicKey": "ssh-rsa AAAA…", "cloudInit": "#cloud-config\n…" }
 ```
 
 `availabilityDomain` 留空自动选第一个。`subnetId` 留空且 `autoCreateNetwork: true` 时自动创建 VCN + 网关 + 路由 + 子网。`cloudInit` 提交原文，服务端负责 base64 编码。
 
-创建前会做配额预检，不足时返回 400 `quota_exceeded`。
+创建前会做配额预检（只对 A1，账号配额只读了 ARM 那一项），不足时返回 400 `quota_exceeded`。`baselineOcpuUtilization` 为空表示不突发；填了规格不支持的基线返回 400 `invalid_shape_config`。容量守候的 `POST /api/hunt` 接受同名字段。
 
 `enableIpv6: true` 时，无论子网是手选、复用还是新建，都会先确认它能分配 IPv6：子网没有 IPv6 前缀就开通（VCN 没有前缀先申请 Oracle 分配的 /56，再从中切一段未占用的 /64 给子网；VCN 开通 IPv6 后无法关闭）。开通失败返回 502 `ipv6_unavailable`，实例不会创建。另外会照搬 IPv4 的现有配置补 `::/0` 路由与 `::/0` 出站规则：只有 IPv4 默认路由走互联网网关、且放行全部 IPv4 出站时才补；收紧过的不动，未完成的事项附在 `notice` 里。入站规则一律不自动添加。`POST /api/network/ensure?ipv6=true` 与 `POST /api/instances/{ocid}/enable-ipv6` 走同一套开通逻辑。
 
