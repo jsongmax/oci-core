@@ -11,6 +11,7 @@ import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { auth, ApiError, errorText } from '@/api'
 import { copy } from '@/lib/format'
+import QrCode from '@/components/QrCode.vue'
 
 type Mode = 'setup' | 'login' | 'totp' | 'enroll'
 
@@ -225,8 +226,10 @@ function onBackspace(i: number) {
       <div v-else-if="mode === 'enroll'" class="login__form">
         <p class="login__step-title">绑定两步验证</p>
         <p class="login__step-sub">
-          在验证器应用中选择「手动输入密钥」，录入下方密钥后填写验证码。
+          用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。
         </p>
+
+        <QrCode v-if="totpUri" class="login__qr" :value="totpUri" label="两步验证绑定二维码" />
 
         <div class="login__secret">
           <code class="login__secret-value mono">{{ groupedSecret }}</code>
@@ -306,6 +309,7 @@ function onBackspace(i: number) {
 }
 .login__secret-value { flex: 1 1 auto; font-size: 13px; letter-spacing: 0.06em; word-break: break-all; }
 .login__copy { flex: none; height: 28px; font-size: 11px; }
+.login__qr { align-self: center; }
 .login__uri { margin-top: -6px; font-size: 11px; color: var(--accent); }
 .login__totp { display: flex; gap: 8px; }
 .login__box {

@@ -13,6 +13,7 @@ import SwitchRow from '@/components/SwitchRow.vue'
 import KeyValueList from '@/components/KeyValueList.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import QrCode from '@/components/QrCode.vue'
 
 const router = useRouter()
 const { state, ask, toast, toastError, updateOptions, logout } = useStore()
@@ -418,8 +419,9 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
 
             <div v-else class="sub-form">
               <p class="t-xs dim">
-                在验证器应用中选择「手动输入密钥」，录入下方密钥后填写它显示的验证码。
+                用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。
               </p>
+              <QrCode v-if="totpUri" :value="totpUri" label="两步验证绑定二维码" />
               <div class="secret">
                 <code class="secret__value mono">{{ groupedSecret }}</code>
                 <button class="btn btn--sm" @click="copy(totpSecret)">复制</button>

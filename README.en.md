@@ -493,8 +493,6 @@ docs/
 
 ## Known limitations
 
-- TOTP binding provides the secret text and an `otpauth://` link but no QR code
-  (avoids pulling in a QR dependency). Choose "enter key manually" in your authenticator.
 - Metrics depend on the Oracle Cloud Agent running inside the instance. Without it the
   API returns successfully but the series are empty.
 - When the capacity report says capacity is available, **a launch can still fail** — it
