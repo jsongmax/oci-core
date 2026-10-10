@@ -106,14 +106,87 @@ const pulseBudget = computed(() => {
   return new Set(ids.map(i => i.id))
 })
 
+/* ---------- 排序 ---------- */
+
+type SortKey = 'name' | 'state' | 'account' | 'region' | 'shape' | 'boot' | 'note' | 'uptime'
+interface SortState { key: SortKey; dir: 1 | -1 }
+
+const SORT_STORAGE = 'oci.sort.instances'
+const SORTABLE = new Set<string>(['name', 'state', 'account', 'region', 'shape', 'boot', 'note', 'uptime'])
+
+function loadSort(): SortState | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SORT_STORAGE) ?? 'null')
+    return v && SORTABLE.has(v.key) && (v.dir === 1 || v.dir === -1) ? v : null
+  } catch {
+    return null
+  }
+}
+
+/** null 表示不排序，保持后端给的顺序。 */
+const sort = ref<SortState | null>(loadSort())
+
+/** 点表头循环：升序 → 降序 → 取消。 */
+function toggleSort(key: SortKey) {
+  const cur = sort.value
+  sort.value = !cur || cur.key !== key ? { key, dir: 1 }
+    : cur.dir === 1 ? { key, dir: -1 } : null
+  try {
+    localStorage.setItem(SORT_STORAGE, JSON.stringify(sort.value))
+  } catch {
+    // 偏好存不下就算了，不影响本次排序。
+  }
+}
+
+const ariaSort = (key: SortKey) =>
+  sort.value?.key !== key ? 'none' : sort.value.dir === 1 ? 'ascending' : 'descending'
+
+const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+
+/**
+ * 运行时长按开机时刻比较：越早开机越长。没在跑的实例没有运行时长，
+ * 不管升降序都排在最后——它们混在中间只会打断阅读。空备注同理。
+ */
+const startedAt = (i: Instance) =>
+  i.state === 'RUNNING' ? Date.parse(i.runningSince ?? i.createdAt) : NaN
+
+function compare(a: Instance, b: Instance, key: SortKey): number {
+  switch (key) {
+    case 'name': return collator.compare(a.name, b.name)
+    case 'state': return collator.compare(a.state, b.state)
+    case 'account': return collator.compare(accountById(a.accountId).code, accountById(b.accountId).code)
+    case 'region': return collator.compare(`${a.region} ${a.ad}`, `${b.region} ${b.ad}`)
+    case 'shape': return collator.compare(a.shape, b.shape) || a.ocpu - b.ocpu || a.memGb - b.memGb
+    case 'boot': return a.bootGb - b.bootGb
+    case 'note': return collator.compare(a.note, b.note)
+    case 'uptime': return startedAt(b) - startedAt(a)
+  }
+}
+
+function sortRows(rows: Instance[]): Instance[] {
+  const s = sort.value
+  if (!s) return rows
+  return [...rows].sort((a, b) => {
+    if (s.key === 'uptime') {
+      const na = Number.isNaN(startedAt(a))
+      const nb = Number.isNaN(startedAt(b))
+      if (na || nb) return Number(na) - Number(nb)
+    }
+    if (s.key === 'note' && (!a.note || !b.note)) return Number(!a.note) - Number(!b.note)
+    // 同值时按名称兜底，免得每次刷新同值的几行互换位置。
+    return s.dir * compare(a, b, s.key) || collator.compare(a.name, b.name)
+  })
+}
+
 interface Group { account?: ReturnType<typeof accountById>; rows: Instance[]; open: boolean }
 
 const groups = computed<Group[]>(() => {
-  if (!state.groupByAccount) return [{ rows: filteredInstances.value, open: true }]
+  // 分组时只在组内排序：组本身按账号顺序，打散了分组就没意义了。
+  if (!state.groupByAccount) return [{ rows: sortRows(filteredInstances.value), open: true }]
   return state.accounts
     .map(a => ({
       account: a,
-      rows: filteredInstances.value.filter(i => i.accountId === a.id),
+      rows: sortRows(filteredInstances.value.filter(i => i.accountId === a.id)),
       open: !collapsedGroups.value.has(a.id)
     }))
     .filter(g => g.rows.length > 0)
@@ -170,16 +243,17 @@ const bootTone = (i: Instance) =>
 
     <div class="card table">
       <div class="table-head cols" :style="{ gridTemplateColumns: cols.template.value }">
-        <span />
-        <span>状态</span><span>名称</span>
-        <span v-if="cols.has('account')">账号</span>
-        <span v-if="cols.has('region')">区域 · AD</span>
-        <span v-if="cols.has('shape')">规格</span>
-        <span v-if="cols.has('ip')">公网 IP</span>
-        <span v-if="cols.has('boot')">引导卷</span>
-        <span v-if="cols.has('note')">备注</span>
-        <span v-if="cols.has('uptime')">运行时长</span>
-        <span class="table__right">操作</span>
+        <template v-for="c in cols.visible.value" :key="c.key">
+          <span v-if="c.key === 'check'" />
+          <span v-else-if="c.key === 'actions'" class="table__right">操作</span>
+          <span v-else-if="!SORTABLE.has(c.key)">{{ c.label }}</span>
+          <span v-else :aria-sort="ariaSort(c.key as SortKey)">
+            <button class="th-sort" :class="{ 'is-on': sort?.key === c.key }"
+                    :title="`按${c.label}排序`" @click="toggleSort(c.key as SortKey)">
+              {{ c.label }}<span class="th-sort__dir">{{ sort?.key === c.key ? (sort.dir === 1 ? '↑' : '↓') : '↕' }}</span>
+            </button>
+          </span>
+        </template>
       </div>
 
       <SkeletonRows v-if="showSkeleton" :rows="6" />
@@ -204,31 +278,31 @@ const bootTone = (i: Instance) =>
             <span class="acct-bar" :style="{ background: acctColor(accountById(i.accountId).colorIndex) }" />
             <span v-if="state.selection.has(i.id)" class="sel-bar" />
 
-            <label class="cell cell--check">
+            <label class="cell cell--check" :style="{ order: cols.pos('check') }">
               <input type="checkbox" :checked="state.selection.has(i.id)" @change="toggleSelection(i.id)"
                      :aria-label="`选择 ${i.name}`" />
             </label>
 
-            <span class="cell">
+            <span class="cell" :style="{ order: cols.pos('state') }">
               <StateBadge :state="i.state" :anomaly="i.anomaly" :settled="!!i.settledAt"
                           :static-dot="isTransitional(i.state) && !pulseBudget.has(i.id)" />
             </span>
 
-            <span class="cell cell--name">
+            <span class="cell cell--name" :style="{ order: cols.pos('name') }">
               <button class="name" :class="{ 'is-terminated': i.state === 'TERMINATED' }"
                       @click="openDrawer({ kind: 'instance', id: i.id, tab: '概览' })">{{ i.name }}</button>
               <span class="mono t-2xs dim-3">ocid1…{{ i.ocidTail }}</span>
             </span>
 
-            <span v-if="cols.has('account')" class="cell"><AccountChip :account="accountById(i.accountId)" /></span>
-            <span v-if="cols.has('region')" class="cell mono t-xs dim">{{ i.region }} · {{ i.ad }}</span>
+            <span v-if="cols.has('account')" class="cell" :style="{ order: cols.pos('account') }"><AccountChip :account="accountById(i.accountId)" /></span>
+            <span v-if="cols.has('region')" class="cell mono t-xs dim" :style="{ order: cols.pos('region') }">{{ i.region }} · {{ i.ad }}</span>
 
-            <span v-if="cols.has('shape')" class="cell cell--shape">
+            <span v-if="cols.has('shape')" class="cell cell--shape" :style="{ order: cols.pos('shape') }">
               <span class="mono t-xs">{{ i.shape }}</span>
               <span class="mono t-2xs dim-3">{{ i.ocpu }} OCPU · {{ i.memGb }} GB</span>
             </span>
 
-            <span v-if="cols.has('ip')" class="cell mono t-xs ip"
+            <span v-if="cols.has('ip')" class="cell mono t-xs ip" :style="{ order: cols.pos('ip') }"
                   :class="{ 'is-fresh': i.settledAt, 'is-changed': i.previousIp }">
               <span class="ip__v">
                 <MaskedText :value="i.publicIp" kind="ip" />
@@ -243,12 +317,12 @@ const bootTone = (i: Instance) =>
                       @click.stop="copyIp(i.publicIp)">⧉</button>
             </span>
 
-            <span v-if="cols.has('boot')" class="cell cell--boot">
+            <span v-if="cols.has('boot')" class="cell cell--boot" :style="{ order: cols.pos('boot') }">
               <span class="mono t-xs" :style="{ color: bootTone(i) }">{{ i.bootGb }} GB</span>
               <span class="mono t-2xs dim-3">VPU {{ i.vpu }}</span>
             </span>
 
-            <span v-if="cols.has('note')" class="cell col-note">
+            <span v-if="cols.has('note')" class="cell col-note" :style="{ order: cols.pos('note') }">
               <input v-if="editingNote === i.id" ref="noteInput" class="note-edit" maxlength="500"
                      :value="noteDraft" @click.stop
                      @input="noteDraft = ($event.target as HTMLInputElement).value"
@@ -260,14 +334,14 @@ const bootTone = (i: Instance) =>
                 {{ i.note || '＋' }}
               </button>
             </span>
-            <span v-if="cols.has('uptime')" class="cell mono t-xs dim col-uptime"
+            <span v-if="cols.has('uptime')" class="cell mono t-xs dim col-uptime" :style="{ order: cols.pos('uptime') }"
                   :title="instanceUptime(i).approx
                     ? '面板未观测到本次开机（首次同步时它已在运行），这里显示的是创建至今的时长'
                     : '自面板观测到本次开机起'">
               <template v-if="instanceUptime(i).approx">~</template>{{ instanceUptime(i).text }}
             </span>
 
-            <span class="cell cell--actions"><InstanceRowActions :instance="i" /></span>
+            <span class="cell cell--actions" :style="{ order: cols.pos('actions') }"><InstanceRowActions :instance="i" /></span>
 
             <!-- 过渡期间的不定进度条（§7 Tier 1.2） -->
             <span v-if="isTransitional(i.state)" class="row-progress"><span /></span>
@@ -315,6 +389,15 @@ const bootTone = (i: Instance) =>
 }
 
 .ip { display: flex; align-items: center; gap: 6px; }
+
+.th-sort {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0;
+  border: 0; background: transparent; color: inherit; font: inherit;
+  letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+}
+.th-sort:hover, .th-sort.is-on { color: var(--text-primary); }
+.th-sort__dir { font-size: 10px; opacity: 0.45; }
+.th-sort.is-on .th-sort__dir { opacity: 1; color: var(--accent); }
 /* 本次会话里换过 IP 的行：新 IP 用强调色，下方带一行原 IP，方便核对 DNS */
 .ip.is-changed .ip__v { color: var(--accent); }
 /* 竖排：IPv4 在上，原 IP、IPv6 各占一行 */

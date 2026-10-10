@@ -51,6 +51,24 @@ function loadHidden(storageKey: string): Set<string> {
   }
 }
 
+function loadOrder(storageKey: string): string[] {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function save(storageKey: string, value: unknown) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(value))
+  } catch {
+    // 隐私模式下 localStorage 会抛。偏好丢了就丢了，不该影响使用。
+  }
+}
+
 export interface ColumnState {
   /** 当前真正要渲染的列，顺序即显示顺序 */
   visible: ComputedRef<ColumnDef[]>
@@ -58,45 +76,75 @@ export interface ColumnState {
   template: ComputedRef<string>
   /** 某列此刻是否渲染。单元格的 v-if 用它 */
   has: (key: string) => boolean
-  /** 用户可以切换的列（排除固定列） */
+  /**
+   * 某列在 visible 里的位置，绑到单元格的 CSS order。
+   *
+   * 模板里单元格的书写顺序是固定的，调列序不去改模板，而是靠 grid 的
+   * order 让它们按用户的顺序排进 grid-template-columns 的各个轨道。
+   */
+  pos: (key: string) => number
+  /** 用户可以切换的列（排除固定列），按定义顺序 */
   toggleable: ColumnDef[]
+  /** 同上，但按用户调整后的顺序。列选择器按它排 */
+  ordered: ComputedRef<ColumnDef[]>
   /** 用户是否勾选了这一列。注意与 has 不同：勾了但视口太窄仍然不渲染 */
   isOn: (key: string) => boolean
   toggle: (key: string) => void
+  /** 把 key 挪到 target 所在的位置（拖拽与上移/下移共用） */
+  moveTo: (key: string, target: string) => void
+  /** 恢复默认：全部显示、默认顺序 */
   reset: () => void
   /** 被视口宽度压掉的列数，用来在选择器里解释"勾了怎么没出来" */
   suppressed: ComputedRef<ColumnDef[]>
 }
 
 /**
- * 建立一张表的列状态。storageKey 决定偏好存在哪个 localStorage 键下。
+ * 建立一张表的列状态。storageKey 决定偏好存在哪个 localStorage 键下，
+ * 列序存在 `${storageKey}.order`。
  */
 export function useColumns(storageKey: string, defs: ColumnDef[]): ColumnState {
   const hidden = ref<Set<string>>(loadHidden(storageKey))
+  const toggleable = defs.filter(c => !c.fixed)
+  const order = ref<string[]>(loadOrder(storageKey + '.order'))
 
-  const persist = () => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify([...hidden.value]))
-    } catch {
-      // 隐私模式下 localStorage 会抛。偏好丢了就丢了，不该影响使用。
+  /**
+   * 可调列按用户顺序排；存的顺序里没有的列（新加的列）按定义顺序补在后面，
+   * 已经不存在的键直接忽略。
+   */
+  const ordered = computed(() => {
+    const byKey = new Map(toggleable.map(c => [c.key, c]))
+    const seen = new Set<string>()
+    const out: ColumnDef[] = []
+    for (const k of order.value) {
+      const c = byKey.get(k)
+      if (c && !seen.has(k)) { out.push(c); seen.add(k) }
     }
-  }
+    for (const c of toggleable) if (!seen.has(c.key)) out.push(c)
+    return out
+  })
+
+  /** 固定列留在定义里的位置（选择/状态/名称在前，操作在后），可调列依次填进其余位置。 */
+  const arranged = computed(() => {
+    let idx = 0
+    return defs.map(c => (c.fixed ? c : ordered.value[idx++]))
+  })
 
   const visible = computed(() =>
-    defs.filter(c =>
+    arranged.value.filter(c =>
       c.fixed || (!hidden.value.has(c.key) && vw.value >= (c.minViewport ?? 0))))
 
   const suppressed = computed(() =>
-    defs.filter(c =>
-      !c.fixed && !hidden.value.has(c.key) && vw.value < (c.minViewport ?? 0)))
+    toggleable.filter(c => !hidden.value.has(c.key) && vw.value < (c.minViewport ?? 0)))
 
-  const visibleKeys = computed(() => new Set(visible.value.map(c => c.key)))
+  const positions = computed(() => new Map(visible.value.map((c, i) => [c.key, i])))
 
   return {
     visible,
     template: computed(() => visible.value.map(c => c.width).join(' ')),
-    has: (key: string) => visibleKeys.value.has(key),
-    toggleable: defs.filter(c => !c.fixed),
+    has: (key: string) => positions.value.has(key),
+    pos: (key: string) => positions.value.get(key) ?? 0,
+    toggleable,
+    ordered,
     isOn: (key: string) => !hidden.value.has(key),
     toggle(key: string) {
       const next = new Set(hidden.value)
@@ -104,11 +152,24 @@ export function useColumns(storageKey: string, defs: ColumnDef[]): ColumnState {
       else next.add(key)
       // 换一个 Set 而不是原地增删：Vue 的响应式追踪不到 Set 的原地修改。
       hidden.value = next
-      persist()
+      save(storageKey, [...next])
+    },
+    moveTo(key: string, target: string) {
+      if (key === target) return
+      const keys = ordered.value.map(c => c.key)
+      const from = keys.indexOf(key)
+      const to = keys.indexOf(target)
+      if (from < 0 || to < 0) return
+      keys.splice(from, 1)
+      keys.splice(to, 0, key)
+      order.value = keys
+      save(storageKey + '.order', keys)
     },
     reset() {
       hidden.value = new Set()
-      persist()
+      order.value = []
+      save(storageKey, [])
+      save(storageKey + '.order', [])
     },
     suppressed
   }
