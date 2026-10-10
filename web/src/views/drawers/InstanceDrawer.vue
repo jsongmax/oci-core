@@ -89,7 +89,7 @@ function enableIpv6() {
       enablingIpv6.value = true
       try {
         const result = await instancesApi.enableIpv6(i.id)
-        i.ipv6 = result.address
+        i.ipv6 = [result.address]
         toast({
           tone: 'success', title: `${i.name} 已分配 IPv6`,
           body: [result.address, ...(result.steps ?? [])].join('\n')

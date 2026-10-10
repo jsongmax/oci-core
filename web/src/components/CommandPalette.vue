@@ -30,7 +30,7 @@ const instanceHits = computed(() => {
   const list = state.instances.filter(i =>
     // 用完整 OCID 而不是 ocidTail：搜索框上写着"OCID"，粘贴一整条
     // ocid1.instance.oc1... 却搜不到——尾巴装不下整条 OCID。
-    !q.value || `${i.name}${i.publicIp}${i.privateIp}${i.id}`.toLowerCase().includes(q.value))
+    !q.value || `${i.name}${i.publicIp}${i.privateIp}${i.ipv6.join(" ")}${i.id}`.toLowerCase().includes(q.value))
   return list.slice(0, 6)
 })
 const accountHits = computed(() => {

@@ -156,6 +156,9 @@ type Vnic struct {
 	MacAddress     string   `json:"macAddress"`
 	LifecycleState string   `json:"lifecycleState"`
 	NsgIDs         []string `json:"nsgIds"`
+	// Ipv6Addresses 是网卡上已分配的全部 IPv6。GetVnic 本来就会返回，
+	// 列表同步不必再为每张网卡单独 ListIpv6s。
+	Ipv6Addresses []string `json:"ipv6Addresses"`
 }
 
 // PrivateIP 是 VNIC 上的私网 IP 对象。更换公网 IP 时需要先定位到它。

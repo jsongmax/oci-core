@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -318,6 +319,7 @@ func (s *Service) syncAccountRegion(ctx context.Context, acc *store.Account, reg
 		if n, ok := netInfo[inst.ID]; ok {
 			row.PublicIP = n.publicIP
 			row.PrivateIP = n.privateIP
+			row.IPv6 = n.ipv6
 			row.VnicID = n.vnicID
 			row.SubnetID = n.subnetID
 		}
@@ -352,13 +354,14 @@ type netDetail struct {
 	subnetID  string
 	publicIP  string
 	privateIP string
+	// ipv6 是逗号分隔的全部地址；一张网卡可以有多个 IPv6。
+	ipv6 string
 }
 
 // collectNetworkInfo 取回每台实例主网卡上的 IP。
 //
 // 公网 IP 是实例列表里最关键的一列（用户要拿它 SSH），所以必须在同步时就取到。
-// IPv6 需要每个 VNIC 再发一次 ListIpv6s，成本翻倍且绝大多数用户没启用，
-// 因此只在实例详情接口里按需查询。
+// IPv6 随 GetVnic 的 ipv6Addresses 一起返回，不额外发请求。
 func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Client,
 	acc *store.Account, region string, instances []ociclient.Instance) map[string]netDetail {
 
@@ -408,6 +411,7 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 				subnetID:  vnic.SubnetID,
 				publicIP:  vnic.PublicIP,
 				privateIP: vnic.PrivateIP,
+				ipv6:      strings.Join(vnic.Ipv6Addresses, ","),
 			}
 			mu.Unlock()
 		}(instanceID, att)

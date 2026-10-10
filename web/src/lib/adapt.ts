@@ -250,7 +250,7 @@ export function toInstance(dto: InstanceDTO): Instance {
     memGb: dto.memoryGb,
     publicIp: dto.publicIp || '—',
     privateIp: dto.privateIp || '—',
-    ipv6: dto.ipv6 || undefined,
+    ipv6: dto.ipv6 ? dto.ipv6.split(',') : [],
     sshUser: sshUserFor(dto.imageOs),
     bootGb: dto.bootVolumeGb,
     // 免费额度的块存储总量是 200 GB，用作进度条的分母。

@@ -83,6 +83,7 @@ export interface InstanceDTO {
   imageOs: string
   publicIp: string
   privateIp: string
+  /** 主网卡上的全部 IPv6，逗号分隔；未启用为空串 */
   ipv6: string
   vnicId: string
   subnetId: string

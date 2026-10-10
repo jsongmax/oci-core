@@ -233,6 +233,11 @@ const bootTone = (i: Instance) =>
               <span class="ip__v">
                 <MaskedText :value="i.publicIp" kind="ip" />
                 <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" /></span>
+                <!-- IPv6 动辄 39 个字符，列宽放不下全部：显示第一个，其余数量标在后面，
+                     悬停看全部 -->
+                <span v-if="i.ipv6.length" class="ip__v6 t-2xs" :title="i.ipv6.join('\n')">
+                  <MaskedText :value="i.ipv6[0]" kind="ip" /><template v-if="i.ipv6.length > 1"> +{{ i.ipv6.length - 1 }}</template>
+                </span>
               </span>
               <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"
                       @click.stop="copyIp(i.publicIp)">⧉</button>
@@ -311,9 +316,12 @@ const bootTone = (i: Instance) =>
 
 .ip { display: flex; align-items: center; gap: 6px; }
 /* 本次会话里换过 IP 的行：新 IP 用强调色，下方带一行原 IP，方便核对 DNS */
-.ip.is-changed .ip__v { color: var(--accent); display: flex; flex-direction: column; line-height: 1.3; }
+.ip.is-changed .ip__v { color: var(--accent); }
+/* 竖排：IPv4 在上，原 IP、IPv6 各占一行 */
+.ip__v { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; overflow: hidden; }
+.ip__v > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ip__old { color: var(--text-tertiary); text-decoration: line-through; }
-.ip__v { overflow: hidden; text-overflow: ellipsis; }
+.ip__v6 { color: var(--text-tertiary); }
 .ip__copy {
   flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
   border: 0; border-radius: var(--radius-sm); background: transparent;
