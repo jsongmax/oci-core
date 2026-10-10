@@ -275,7 +275,9 @@ const aboutItems = computed(() => [
       ? `每 ${state.options.checkIntervalHours} 小时自动重跑一次连通性校验`
       : '已关闭——卡片上的校验时间只反映最后一次手动校验'
   },
-  { k: '实时连接', v: state.live ? '正常' : '已断开', tone: state.live ? 'var(--success)' : 'var(--warning)' }
+  { k: '实时连接', v: state.live ? '正常' : '已断开', tone: state.live ? 'var(--success)' : 'var(--warning)' },
+  // 与 README 的「关于开发方式」保持一致，改一处要改另一处。
+  { k: '开发方式', v: '代码主要由 AI 编程助手（Claude Code）编写，作者负责需求、审阅与测试' }
 ])
 
 /** 顶部副标题。总数由后端给，不等于已加载条数——那会让人以为只有这么多。 */

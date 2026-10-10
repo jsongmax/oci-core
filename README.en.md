@@ -49,26 +49,30 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 
 > **Out of scope**: invoices and payment records (Oracle exposes no API for them), multi-user RBAC.
 
+> **How this was built**: the code in this project was written mainly by an AI coding assistant
+> (Claude Code); the author is responsible for requirements, review and testing. Evaluate the code
+> and its security against your own standards before use — especially since it holds your cloud credentials.
+
 ---
 
 ## Features
 
 | Area | What you get |
 |---|---|
-| **Accounts** | Multi-tenancy API key onboarding, paste-and-parse OCI config, per-check connectivity validation, account type detection (trial / upgraded), account age, quota lookup, periodic credential re-check, encrypted key storage and rotation |
-| **Instances** | Cross-account aggregated list (cached), start / stop / restart, reshape, rename, notes, launch wizard, bulk actions, terminate, list & card views, configurable columns, live status over SSE |
-| **Networking** | VCN / subnet / security rule editing, automatic network provisioning, public IP replacement, IPv6 enablement, grouped by account |
-| **Storage** | Boot and block volume resize, VPU tuning, attach / detach, including **rescue mode** (detach boot volume → mount on another instance → fix files → reattach) |
+| **Accounts** | Multi-tenancy API key onboarding, paste-and-parse OCI config, egress proxy chosen at onboarding (the connection test goes through it too), per-check connectivity validation, account type detection (trial / upgraded), account age, quota lookup, periodic credential re-check, encrypted key storage and rotation |
+| **Instances** | Cross-account aggregated list (cached, shows IPv4 and IPv6), sortable columns, configurable column visibility and order, start / stop / restart, reshape (including burstable CPU), rename, notes, launch wizard (any shape the availability domain offers, beyond the free presets), bulk actions, terminate, SSH user inferred from the image OS, live status over SSE |
+| **Networking** | VCN / subnet / security rule editing, automatic network provisioning, public IP replacement (old and new IP kept in the list and audit log), IPv6 enablement (at launch or for an existing instance), grouped by account |
+| **Storage** | Boot and block volume resize, VPU tuning, attach / detach; after a resize, OS-specific commands to rescan the disk and grow the partition; including **rescue mode** (detach boot volume → mount on another instance → fix files → reattach) |
 | **Login policy** | Read and change the identity domain password expiry. Tenancies default to 120 days, which means periodically resetting every account by hand; the panel re-reads after writing and shows what the server actually stored |
 | **Proxies** | Proxy pool: bulk import (four common formats), liveness checks with latency, per-account egress binding. One proxy binds to exactly one account — a shared exit would create the very correlation signal you are trying to avoid |
-| **Billing** | Per-account cost for this month and last, daily trend, breakdown by service and region; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
+| **Billing** | Per-account cost for this month and last, daily trend, breakdown by service, region and SKU, with outbound data transfer shown on its own; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
 | **Capacity monitor** | Calls Oracle's official **read-only** capacity report API to watch when a shape becomes available; notifies on state change |
 | **Capacity hunter** | Repeatedly attempts to launch an instance until it succeeds. Checks capacity first by default and skips the round when there is none |
 | **Metrics** | CPU / memory / bidirectional traffic time series, resolution adapts to the time span |
 | **Console** | Serial console and VNC tunnel connection strings |
 | **Notifications** | Telegram / WeCom / DingTalk / Email / Webhook plus an event subscription matrix |
 | **Privacy** | Emails, public IPs, OCIDs and fingerprints are masked by default, each with a reveal button plus a one-click global toggle in the top bar. Copying always yields the real value — built for screenshots and screen sharing |
-| **Security** | argon2id password hashing, TOTP two-factor, session management with force logout, CSRF protection, login rate limiting, audit log (cursor pagination, full export, optional retention), three-tier confirmation for dangerous actions |
+| **Security** | argon2id password hashing, TOTP two-factor (scan to enrol), session management with force logout, CSRF protection, login rate limiting, audit log (cursor pagination, full export, optional retention), three-tier confirmation for dangerous actions |
 
 ---
 
@@ -166,7 +170,7 @@ the total look like "these accounts spent nothing".
 | Database | **SQLite** (`modernc.org/sqlite`) | Pure Go, no CGO, statically linkable |
 | OCI access | **Hand-rolled HTTP Signature** | draft-cavage, RSA-SHA256, no official SDK |
 | Crypto | **AES-256-GCM** envelope encryption · **argon2id** · **RFC 6238 TOTP** | Private keys encrypted at rest, AAD bound to account ID |
-| Frontend | **Vue 3 + TypeScript + Vite** | Composition API, no UI framework, hand-written CSS |
+| Frontend | **Vue 3 + TypeScript + Vite** | Composition API, no UI framework, hand-written CSS; QR encoding via the zero-dependency `qrcode-generator` |
 | Realtime | **SSE** | Server-pushed state changes |
 | Container | **Docker** (three-stage build) | node → golang → alpine |
 
@@ -401,20 +405,26 @@ This panel holds full control over **all** of your Oracle tenancies.
    The account detail page has a "permission self-check" tab with copy-pasteable policy examples.
    The billing page additionally needs `read usage-report in tenancy` — **leave it out if you
    would rather the tool could not read your bill**; nothing else is affected.
+   The capacity monitor and the hunter's capacity pre-check need `manage compute-capacity-reports
+   in tenancy`, which is not part of `instance-family`. Quote group names that contain spaces,
+   e.g. `Allow group 'OCI Core' to …`.
 2. **It listens on loopback by default.** Put a TLS reverse proxy in front for remote access.
 3. **Back up `master.key`.** It is the only key that decrypts every stored OCI private key.
    Lose it and every account must be re-entered. It must never enter version control
    (already covered by `.gitignore`).
-4. **Enable two-factor.** First-run setup walks you through it.
-5. Private keys are stored AES-256-GCM encrypted with AAD bound to the account ID.
+4. **Enable two-factor.** First-run setup walks you through it; scan the QR code with your authenticator.
+5. **Pick a proxy before adding each account.** Choose the egress when adding an account and both
+   the connection test and every later request go through it. Testing directly and binding a proxy
+   afterwards cannot undo that first direct visit.
+6. Private keys are stored AES-256-GCM encrypted with AAD bound to the account ID.
    **There is no UI path that exports or reveals a private key.**
-6. **Complete first-run setup immediately after deploying.** `GET /api/status` is a public
+7. **Complete first-run setup immediately after deploying.** `GET /api/status` is a public
    endpoint (the login page needs it to decide whether initialization is required) and returns
    `setupRequired`. A deployed panel with no administrator yet can be claimed by whoever
    finds it first.
-7. **Only enable `OCICORE_TRUST_PROXY` behind a reverse proxy** that overwrites the header
+8. **Only enable `OCICORE_TRUST_PROXY` behind a reverse proxy** that overwrites the header
    itself (Nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
-8. The frontend loads no external resources (no CDN, no Google Fonts). CSP is
+9. The frontend loads no external resources (no CDN, no Google Fonts). CSP is
    `default-src 'self'` — both a hardening measure and the reason the panel works
    on a fully offline network.
 
@@ -505,6 +515,11 @@ docs/
   "permission missing" along with a copy-pasteable policy — that is not an account failure.
 - **Invoices and payment records are not available.** They live only in Oracle's account
   centre, which does not use the OCI signing scheme and exposes no usable API.
+- After a boot volume resize you still have to log in and run the commands the panel shows to
+  grow the partition; Oracle's Run Command is not wired up yet.
+- Outbound data transfer is summed by SKU name (Outbound Data Transfer …) and shown in the unit
+  Oracle returns, without conversion.
+- Volume auto-tuning, instance configurations and instance pools are not implemented.
 - Backup and snapshot policies are not implemented.
 
 ---
@@ -533,7 +548,12 @@ docs/
    decryption of every stored OCI private key. Terminating instances and deleting boot
    volumes are **irreversible**. Keep your own backups.
 
-5. The software is provided "as is" without warranty of any kind. See [LICENSE](LICENSE).
+5. **The code was written mainly by AI.** The code in this project was written mainly by an AI
+   coding assistant (Claude Code); the author is responsible for requirements, review and testing.
+   AI-written code may contain mistakes that review did not catch — evaluate it yourself before
+   connecting important accounts.
+
+6. The software is provided "as is" without warranty of any kind. See [LICENSE](LICENSE).
 
 ---
 
