@@ -8,7 +8,7 @@ import { copy } from '@/lib/format'
 
 const props = defineProps<{ instance: Instance }>()
 const {
-  state, options, ask, toast, toastError, openDrawer,
+  state, options, ask, toast, toastError, openDrawer, markIpChanged,
   start, stop, restart, terminate
 } = useStore()
 
@@ -111,12 +111,7 @@ function changeIp() {
       try {
         const { instances } = await import('@/api')
         const result = await instances.changeIp(i.id)
-        i.publicIp = result.newIp
-        toast({
-          tone: 'success', title: `${i.name} 已更换公网 IP`,
-          body: `${result.oldIp} → ${result.newIp}`,
-          command: `ssh ${i.sshUser}@${result.newIp}`
-        })
+        markIpChanged(i, result.oldIp, result.newIp)
       } catch (err) {
         toastError('更换 IP 失败', err)
       }

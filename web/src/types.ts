@@ -67,6 +67,8 @@ export interface Instance {
   ipv6?: string
   /** SSH 默认登录用户，按镜像系统推断 */
   sshUser: string
+  /** 本次页面会话里更换公网 IP 前的地址，列表据此标出新旧对照 */
+  previousIp?: string
   bootGb: number
   bootLimitGb: number
   vpu: number

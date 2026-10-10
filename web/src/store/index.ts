@@ -189,7 +189,8 @@ watch(() => state.options.reduceMotion, r => {
 /* ---------- UI 原语 ---------- */
 
 /**
- * 弹一条 toast，ms 毫秒后自动收起。
+ * 弹一条 toast，ms 毫秒后自动收起；ms 为 0 则一直留着，直到用户手动关掉
+ * 或被下一条顶掉。
  *
  * 不能用 `state.toast === payload` 判断"还是不是同一条"：state 是 reactive()，
  * 赋进去的对象会被深度包成 Proxy，读回来跟原始对象永不相等，定时器于是形同
@@ -203,9 +204,27 @@ function toast(payload: ToastPayload, ms = 6000) {
   window.clearTimeout(toastTimer)
   const seq = ++toastSeq
   state.toast = payload
+  if (ms <= 0) return
   toastTimer = window.setTimeout(() => {
     if (seq === toastSeq) state.toast = null
   }, ms)
+}
+
+/**
+ * 更换公网 IP 成功后的统一收尾。行内菜单与网络页共用。
+ *
+ * 提示不自动消失：新 IP 是用户接下来要复制去连的东西，6 秒根本来不及。
+ * 列表那一行同时标出原 IP，刷新列表也保留，直到页面重新加载。
+ */
+function markIpChanged(inst: Instance, oldIp: string, newIp: string): void {
+  inst.previousIp = oldIp
+  inst.publicIp = newIp
+  toast({
+    tone: 'success', title: `${inst.name} 已更换公网 IP`,
+    body: `${oldIp} → ${newIp}
+新旧 IP 已记入「设置 → 审计日志」。`,
+    command: `ssh ${inst.sshUser}@${newIp}`
+  }, 0)
 }
 
 /** 手动关闭。同时作废待触发的定时器。 */
@@ -286,9 +305,10 @@ async function loadQuota(): Promise<void> {
 
 async function loadInstances(): Promise<void> {
   const { instances: dtos, sync } = await instancesApi.list()
-  // 保留本地的瞬时 UI 态（busy / settledAt），否则一次刷新会把
+  // 保留本地的瞬时 UI 态（busy / settledAt / previousIp），否则一次刷新会把
   // 正在播放的按钮 spinner 和落定高光全部抹掉。
-  const localUi = new Map(state.instances.map(i => [i.id, { busy: i.busy, settledAt: i.settledAt }]))
+  const localUi = new Map(state.instances.map(i =>
+    [i.id, { busy: i.busy, settledAt: i.settledAt, previousIp: i.previousIp }]))
   state.instances = dtos.map(dto => {
     const view = toInstance(dto)
     const ui = localUi.get(view.id)
@@ -690,7 +710,7 @@ export function useStore() {
     countByFilter,
     nextColorIndex,
 
-    toast, toastError, dismissToast, ask, openDrawer, closeDrawer,
+    toast, toastError, dismissToast, ask, openDrawer, closeDrawer, markIpChanged,
 
     loadAll, loadAccounts, loadInstances, refreshInstances, loadStatus, syncNow,
     startLiveUpdates, stopLiveUpdates,

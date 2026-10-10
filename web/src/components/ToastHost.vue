@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { copy } from '@/lib/format'
 
 const { state, dismissToast } = useStore()
 const copied = ref(false)
+// 换一条提示就重置，否则复制过一次之后，后面每条都显示"已复制"。
+watch(() => state.toast, () => { copied.value = false })
 const tone = computed(() => {
   const map = {
     success: 'var(--success)', warning: 'var(--warning)', danger: 'var(--danger)',

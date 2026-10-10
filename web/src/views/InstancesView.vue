@@ -228,8 +228,12 @@ const bootTone = (i: Instance) =>
               <span class="mono t-2xs dim-3">{{ i.ocpu }} OCPU · {{ i.memGb }} GB</span>
             </span>
 
-            <span v-if="cols.has('ip')" class="cell mono t-xs ip" :class="{ 'is-fresh': i.settledAt }">
-              <span class="ip__v"><MaskedText :value="i.publicIp" kind="ip" /></span>
+            <span v-if="cols.has('ip')" class="cell mono t-xs ip"
+                  :class="{ 'is-fresh': i.settledAt, 'is-changed': i.previousIp }">
+              <span class="ip__v">
+                <MaskedText :value="i.publicIp" kind="ip" />
+                <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" /></span>
+              </span>
               <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"
                       @click.stop="copyIp(i.publicIp)">⧉</button>
             </span>
@@ -306,6 +310,9 @@ const bootTone = (i: Instance) =>
 }
 
 .ip { display: flex; align-items: center; gap: 6px; }
+/* 本次会话里换过 IP 的行：新 IP 用强调色，下方带一行原 IP，方便核对 DNS */
+.ip.is-changed .ip__v { color: var(--accent); display: flex; flex-direction: column; line-height: 1.3; }
+.ip__old { color: var(--text-tertiary); text-decoration: line-through; }
 .ip__v { overflow: hidden; text-overflow: ellipsis; }
 .ip__copy {
   flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
