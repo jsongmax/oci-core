@@ -212,7 +212,7 @@ func (s *Server) handleTestChannel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// validateChannelConfig 检查必填字段是否齐全。
+// validateChannelConfig 检查必填字段是否齐全、下拉字段取值是否合法。
 func validateChannelConfig(kind string, config map[string]string) error {
 	for _, def := range notify.KindDefs() {
 		if def.Kind != kind {
@@ -223,6 +223,9 @@ func validateChannelConfig(kind string, config map[string]string) error {
 			if field.Required && strings.TrimSpace(config[field.Key]) == "" {
 				missing = append(missing, field.Label)
 			}
+			if len(field.Options) > 0 && !hasOption(field.Options, config[field.Key]) {
+				return &inputError{msg: def.Label + " 渠道的「" + field.Label + "」取值无效"}
+			}
 		}
 		if len(missing) > 0 {
 			return errMissingFields(def.Label, missing)
@@ -230,6 +233,15 @@ func validateChannelConfig(kind string, config map[string]string) error {
 		return nil
 	}
 	return errUnknownKind(kind)
+}
+
+func hasOption(options []notify.FieldOption, v string) bool {
+	for _, o := range options {
+		if o.Value == v {
+			return true
+		}
+	}
+	return false
 }
 
 func isMasked(v string) bool { return strings.Contains(v, "••••") }

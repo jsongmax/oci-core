@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ocicore/internal/store"
 )
@@ -175,5 +177,115 @@ func TestSendRejectsIncompleteConfig(t *testing.T) {
 		if err := d.Send(context.Background(), ch, Message{Title: "x"}); err == nil {
 			t.Errorf("渠道 %s 配置不全时应当报错", ch.Kind)
 		}
+	}
+}
+
+// 465 端口是隐式 TLS：连上后客户端必须先发 TLS ClientHello，
+// 而不是像 587 那样等服务器的明文问候。
+func TestSendMailImplicitTLSStartsHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	first := make(chan byte, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1)
+		if _, err := conn.Read(buf); err == nil {
+			first <- buf[0]
+		}
+	}()
+
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = sendMail(ctx, host, port, SecuritySSL, nil, "a@x", []string{"b@x"}, []byte("x"))
+
+	select {
+	case b := <-first:
+		if b != 0x16 { // TLS handshake record
+			t.Errorf("首字节 = %#x, 期望 TLS 握手记录 0x16", b)
+		}
+	default:
+		t.Error("客户端没有主动发起 TLS 握手")
+	}
+}
+
+// 服务器连上后一言不发（例如对 465 端口用了明文），发送必须按 ctx 超时返回，
+// 而不是永远挂着让前端停在"发送中"。
+func TestSendMailHonorsContextWhenServerSilent(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(io.Discard, conn)
+	}()
+
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err = sendMail(ctx, host, port, SecurityAuto, nil, "a@x", []string{"b@x"}, []byte("x"))
+	if err == nil {
+		t.Fatal("服务器不响应时应当报错")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("超时后没有及时返回，耗时 %v", elapsed)
+	}
+}
+
+// 选了 STARTTLS 而服务器不支持时，必须报错，不能退回明文发送。
+func TestSendMailRequiredStartTLSRejectsPlainServer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 512)
+		_, _ = conn.Write([]byte("220 fake ESMTP\r\n"))
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			line := string(buf[:n])
+			switch {
+			case strings.HasPrefix(line, "EHLO"):
+				_, _ = conn.Write([]byte("250-fake\r\n250 AUTH PLAIN\r\n"))
+			case strings.HasPrefix(line, "QUIT"):
+				_, _ = conn.Write([]byte("221 bye\r\n"))
+				return
+			default:
+				_, _ = conn.Write([]byte("250 ok\r\n"))
+			}
+		}
+	}()
+
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = sendMail(ctx, host, port, SecurityStartTLS, nil, "a@x", []string{"b@x"}, []byte("x"))
+	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
+		t.Errorf("err = %v, 期望提示不支持 STARTTLS", err)
 	}
 }

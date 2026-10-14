@@ -7,10 +7,12 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/smtp"
 	"strings"
@@ -80,6 +82,14 @@ type FieldDef struct {
 	Required bool   `json:"required"`
 	Secret   bool   `json:"secret"`
 	Hint     string `json:"hint,omitempty"`
+	// Options 非空时，该字段是下拉选择，值只能取其中之一。
+	Options []FieldOption `json:"options,omitempty"`
+}
+
+// FieldOption 是下拉字段的一个选项。
+type FieldOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 // KindDefs 返回全部渠道类型定义，供前端动态渲染配置表单。
@@ -100,7 +110,12 @@ func KindDefs() []KindDef {
 		}},
 		{Kind: KindEmail, Label: "邮件", Fields: []FieldDef{
 			{Key: "host", Label: "SMTP 服务器", Required: true},
-			{Key: "port", Label: "端口", Required: true, Hint: "通常是 587"},
+			{Key: "port", Label: "端口", Required: true, Hint: "587（STARTTLS）或 465（SSL）"},
+			{Key: "security", Label: "加密方式", Options: []FieldOption{
+				{Value: SecurityAuto, Label: "自动（465 用 SSL，其余尝试 STARTTLS）"},
+				{Value: SecuritySSL, Label: "SSL/TLS（隐式加密）"},
+				{Value: SecurityStartTLS, Label: "STARTTLS（必须升级加密）"},
+			}},
 			{Key: "username", Label: "用户名", Required: true},
 			{Key: "password", Label: "密码", Required: true, Secret: true},
 			{Key: "from", Label: "发件人", Required: true},
@@ -176,7 +191,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, msg Message) {
 }
 
 // Send 向单个渠道发送消息。测试按钮直接调用它。
+//
+// 自带 sendTimeout 上限：测试按钮传进来的是请求 ctx，没有超时，
+// 渠道一旦卡住，前端就一直停在"发送中"。
 func (d *Dispatcher) Send(ctx context.Context, ch *store.Channel, msg Message) error {
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+
 	switch ch.Kind {
 	case KindTelegram:
 		return d.sendTelegram(ctx, ch.Config, msg)
@@ -185,7 +206,7 @@ func (d *Dispatcher) Send(ctx context.Context, ch *store.Channel, msg Message) e
 	case KindDingTalk:
 		return d.sendDingTalk(ctx, ch.Config, msg)
 	case KindEmail:
-		return d.sendEmail(ch.Config, msg)
+		return d.sendEmail(ctx, ch.Config, msg)
 	case KindWebhook:
 		return d.sendWebhook(ctx, ch.Config, msg)
 	default:
@@ -313,7 +334,7 @@ func (d *Dispatcher) postJSON(ctx context.Context, url string, payload any) erro
 	return nil
 }
 
-func (d *Dispatcher) sendEmail(cfg map[string]string, msg Message) error {
+func (d *Dispatcher) sendEmail(ctx context.Context, cfg map[string]string, msg Message) error {
 	host, port := cfg["host"], cfg["port"]
 	username, password := cfg["username"], cfg["password"]
 	from, to := cfg["from"], cfg["to"]
@@ -340,10 +361,101 @@ func (d *Dispatcher) sendEmail(cfg map[string]string, msg Message) error {
 	body.WriteString("Content-Type: text/plain; charset=UTF-8\r\n\r\n")
 	body.WriteString(plainText(msg))
 
-	addr := host + ":" + port
 	var auth smtp.Auth
 	if username != "" {
 		auth = smtp.PlainAuth("", username, password, host)
 	}
-	return smtp.SendMail(addr, auth, from, recipients, body.Bytes())
+	security := cfg["security"]
+	if security == SecurityAuto && port == smtpsPort {
+		security = SecuritySSL
+	}
+	return sendMail(ctx, host, port, security, auth, from, recipients, body.Bytes())
+}
+
+// 邮件渠道的加密方式，对应配置里的 security 字段。
+const (
+	// SecurityAuto 按端口推断：465 用隐式 TLS，其余在服务器支持时升级 STARTTLS。
+	// 旧渠道没有这个字段，取值就是它。
+	SecurityAuto = ""
+	// SecuritySSL 是隐式 TLS（SMTPS）：连上就先握手。
+	SecuritySSL = "ssl"
+	// SecurityStartTLS 要求服务器支持 STARTTLS，不支持就报错而不是明文发送。
+	SecurityStartTLS = "starttls"
+)
+
+// smtpsPort 是隐式 TLS（SMTPS）的约定端口。
+const smtpsPort = "465"
+
+// sendMail 等价于 smtp.SendMail，但受 ctx 约束，并支持隐式 TLS。
+//
+// smtp.SendMail 既不认 ctx 也没有超时；对 465 端口用明文连接时，
+// 服务器等 TLS 握手、客户端等问候语，会永久互等。
+func sendMail(ctx context.Context, host, port, security string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	implicitTLS := security == SecuritySSL
+	addr := net.JoinHostPort(host, port)
+	tlsConfig := &tls.Config{ServerName: host}
+
+	var conn net.Conn
+	var err error
+	if implicitTLS {
+		conn, err = (&tls.Dialer{Config: tlsConfig}).DialContext(ctx, "tcp", addr)
+	} else {
+		conn, err = (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	}
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// 后续读写都是阻塞 IO，用 deadline 和 ctx 取消兜住。
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	defer stop()
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	if !implicitTLS {
+		ok, _ := c.Extension("STARTTLS")
+		if !ok && security == SecurityStartTLS {
+			return fmt.Errorf("SMTP 服务器不支持 STARTTLS")
+		}
+		if ok {
+			if err := c.StartTLS(tlsConfig); err != nil {
+				return err
+			}
+		}
+	}
+	if auth != nil {
+		if ok, _ := c.Extension("AUTH"); !ok {
+			return fmt.Errorf("SMTP 服务器不支持认证")
+		}
+		if err := c.Auth(auth); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }

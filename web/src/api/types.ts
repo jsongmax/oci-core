@@ -306,6 +306,8 @@ export interface ChannelFieldDTO {
   required: boolean
   secret: boolean
   hint?: string
+  /** 非空时渲染为下拉选择 */
+  options?: { value: string; label: string }[]
 }
 
 export interface ChannelKindDTO {

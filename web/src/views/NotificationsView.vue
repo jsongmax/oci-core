@@ -246,7 +246,10 @@ onMounted(load)
           <label :for="`cfg-${f.key}`">
             {{ f.label }}<span v-if="f.required" class="req">*</span>
           </label>
-          <input :id="`cfg-${f.key}`" v-model="form.config[f.key]" class="input mono"
+          <SelectMenu v-if="f.options?.length" :model-value="form.config[f.key] ?? ''"
+                      :groups="[{ label: '', options: f.options }]" :aria-label="f.label"
+                      @update:model-value="v => (form.config[f.key] = v)" />
+          <input v-else :id="`cfg-${f.key}`" v-model="form.config[f.key]" class="input mono"
                  :type="f.secret && !editingId ? 'password' : 'text'" :placeholder="f.hint" />
           <p v-if="f.hint" class="hint">{{ f.hint }}</p>
         </div>
