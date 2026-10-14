@@ -23,6 +23,22 @@ const (
 	MetricDiskBytesWritten  = "DiskBytesWritten"
 )
 
+// VCN 网卡的监控命名空间与流量指标。
+//
+// 与 oci_computeagent 不同，这组指标由 VCN 在宿主侧统计，不需要实例里装任何东西，
+// 实例停机时也照样留着历史数据。维度 resourceId 是 **VNIC** 的 OCID，不是实例的。
+//
+// 它统计的是网卡收发的全部字节，包括 VCN 内网、同区域 OCI 服务之间这些不计费的流量，
+// 所以只能当"这台机器跑了多少流量"看，计费口径以 Usage API 为准。
+const (
+	NamespaceVCN = "oci_vcn"
+
+	// MetricVnicToNetworkBytes 是网卡发往网络的字节数，即出站。
+	MetricVnicToNetworkBytes = "VnicToNetworkBytes"
+	// MetricVnicFromNetworkBytes 是网络发到网卡的字节数，即入站。
+	MetricVnicFromNetworkBytes = "VnicFromNetworkBytes"
+)
+
 // Datapoint 是一个时间序列数据点。
 type Datapoint struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -94,6 +110,11 @@ func (c *Client) SummarizeMetrics(ctx context.Context, q MetricQuery) ([]MetricS
 func InstanceMetricQuery(metricName, instanceOCID, interval, aggregation string) string {
 	return fmt.Sprintf(`%s[%s]{resourceId = "%s"}.%s()`,
 		metricName, interval, instanceOCID, aggregation)
+}
+
+// VnicMetricQuery 为单块网卡拼出 MQL 查询串，按 interval 求和得到每个窗口的字节数。
+func VnicMetricQuery(metricName, vnicOCID, interval string) string {
+	return fmt.Sprintf(`%s[%s]{resourceId = "%s"}.sum()`, metricName, interval, vnicOCID)
 }
 
 // DefaultAggregationFor 返回某指标的推荐聚合方式。

@@ -114,3 +114,14 @@ func (s *Server) handleBillingDetail(w http.ResponseWriter, r *http.Request) {
 	detail := s.billing.DetailFor(r.Context(), acc, days, refresh)
 	writeJSON(w, http.StatusOK, detail)
 }
+
+// handleBillingEgress 返回单个账号本月的出站流量，用来和每月 10 TB 免费额度对比。
+func (s *Server) handleBillingEgress(w http.ResponseWriter, r *http.Request) {
+	acc, err := s.st.GetAccount(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	refresh := r.URL.Query().Get("refresh") == "true"
+	writeJSON(w, http.StatusOK, s.billing.EgressFor(r.Context(), acc, refresh))
+}

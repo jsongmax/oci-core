@@ -3,11 +3,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
-import { acctColor } from '@/lib/format'
+import { acctColor, formatBytes } from '@/lib/format'
 import { relativeTime, instanceUptime } from '@/lib/adapt'
 import {
   instances as instancesApi, insights, storage, errorText,
-  type AuditEntryDTO, type InstanceDetailDTO, type MetricsDTO
+  type AuditEntryDTO, type InstanceDetailDTO, type MetricsDTO, type InstanceTrafficDTO
 } from '@/api'
 import type * as D from '@/api/types'
 import AppDrawer from '@/components/AppDrawer.vue'
@@ -23,6 +23,7 @@ import StateBadge from '@/components/StateBadge.vue'
 import BootVolumeEditor from '@/components/BootVolumeEditor.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
 import TrafficChart from '@/components/TrafficChart.vue'
+import DailyBars from '@/components/DailyBars.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 
 const props = defineProps<{ id: string; tab?: string }>()
@@ -168,6 +169,36 @@ const toMbps = (values: number[]) => values.map(v => Math.round((v * 8) / 1_000_
 const noMetricData = computed(() =>
   !!metrics.value && metrics.value.series.every(s => (s.datapoints?.length ?? 0) === 0)
 )
+
+/* ---------- 本月已用流量 ---------- */
+
+/**
+ * 与上面的监控图分开取：图看的是速率、跟着时间范围走；
+ * 这里看的是本月累计字节数，固定按自然月。数据来自 VCN 网卡指标，不依赖 Cloud Agent。
+ */
+const traffic = ref<InstanceTrafficDTO | null>(null)
+const trafficLoading = ref(false)
+const trafficError = ref('')
+
+async function loadTraffic() {
+  trafficLoading.value = true
+  trafficError.value = ''
+  try {
+    traffic.value = await instancesApi.traffic(props.id)
+  } catch (err) {
+    trafficError.value = errorText(err)
+  } finally {
+    trafficLoading.value = false
+  }
+}
+
+const trafficBars = computed(() =>
+  (traffic.value?.series ?? []).map(d => ({ date: d.date, value: d.outBytes })))
+
+function refreshMonitoring() {
+  void loadMetrics()
+  void loadTraffic()
+}
 
 /* ---------- 控制台 ---------- */
 
@@ -448,10 +479,13 @@ function askTerminate() {
 onMounted(() => {
   void loadDetail()
   void loadAudit()
+  // 直接以「监控」页打开抽屉时 watch(active) 不会触发，这里补一次。
+  if (active.value === '监控') refreshMonitoring()
 })
 
 watch(active, tab => {
   if (tab === '监控' && !metrics.value) void loadMetrics()
+  if (tab === '监控' && !traffic.value) void loadTraffic()
   if (tab === '操作记录') void loadAudit()
 })
 
@@ -658,9 +692,33 @@ watch(metricHours, () => void loadMetrics())
                 {{ h < 24 ? `${h} 小时` : `${h / 24} 天` }}
               </button>
             </div>
-            <button class="btn btn--sm" :disabled="metricsLoading" @click="loadMetrics()">
-              {{ metricsLoading ? '加载中…' : '刷新' }}
+            <button class="btn btn--sm" :disabled="metricsLoading || trafficLoading" @click="refreshMonitoring()">
+              {{ metricsLoading || trafficLoading ? '加载中…' : '刷新' }}
             </button>
+          </div>
+        </SectionCard>
+
+        <SectionCard title="本月已用流量"
+                     :note="traffic ? `${traffic.month}（UTC）· ${traffic.vnics} 块网卡` : 'VCN 网卡统计'">
+          <SkeletonRows v-if="trafficLoading && !traffic" :rows="2" />
+          <p v-else-if="trafficError" class="pad t-xs traffic__err">{{ trafficError }}</p>
+          <div v-else-if="traffic" class="pad">
+            <div class="traffic">
+              <div class="traffic__stat">
+                <span class="t-2xs dim-3">出站 · 本月</span>
+                <span class="mono traffic__v">{{ formatBytes(traffic.outBytes) }}</span>
+                <span class="mono t-2xs dim-3">近 24 小时 {{ formatBytes(traffic.last24hOutBytes) }}</span>
+              </div>
+              <div class="traffic__stat">
+                <span class="t-2xs dim-3">入站 · 本月</span>
+                <span class="mono traffic__v">{{ formatBytes(traffic.inBytes) }}</span>
+                <span class="mono t-2xs dim-3">近 24 小时 {{ formatBytes(traffic.last24hInBytes) }}</span>
+              </div>
+            </div>
+            <DailyBars :items="trafficBars" :format="formatBytes" :height="64"
+                       :aria-label="`${traffic.month} 每日出站流量`" />
+            <p v-if="traffic.error" class="t-2xs traffic__err">部分网卡查询失败：{{ traffic.error }}</p>
+            <p class="t-2xs dim-3 traffic__note">{{ traffic.notice }}</p>
           </div>
         </SectionCard>
 
@@ -753,6 +811,14 @@ watch(metricHours, () => void loadMetrics())
 .pad { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .pad--row { flex-direction: row; align-items: center; justify-content: space-between; }
 .range { display: flex; gap: 6px; }
+.traffic { display: flex; gap: 12px; flex-wrap: wrap; }
+.traffic__stat {
+  flex: 1 1 160px; display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-inset);
+}
+.traffic__v { font-size: 16px; font-weight: 600; }
+.traffic__err { color: var(--danger); margin: 0; }
+.traffic__note { margin: 0; line-height: 1.7; }
 .range .btn.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .err, .warn {
   margin: 12px 16px 0; padding: 10px 12px; border-radius: var(--radius-md);

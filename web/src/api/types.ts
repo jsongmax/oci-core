@@ -258,6 +258,25 @@ export interface MetricsDTO {
   notice: string
 }
 
+/** 实例本月（UTC 自然月）的已用流量，取自 VCN 网卡指标 */
+export interface InstanceTrafficDTO {
+  instanceId: string
+  /** YYYY-MM */
+  month: string
+  start: string
+  end: string
+  /** 参与统计的网卡数 */
+  vnics: number
+  outBytes: number
+  inBytes: number
+  last24hOutBytes: number
+  last24hInBytes: number
+  series: { date: string; outBytes: number; inBytes: number }[]
+  /** 部分网卡查询失败时的错误；数字仍是其余网卡的 */
+  error?: string
+  notice: string
+}
+
 export interface AttentionItemDTO {
   kind: string
   accountId?: string
@@ -676,6 +695,24 @@ export interface BillingDetailDTO {
   skus: BillingBucketDTO[] | null
   /** 出站流量合计（Outbound Data Transfer 各 Zone 相加）；没有这类计费项时缺省 */
   egress?: BillingBucketDTO
+  error?: string
+  fetchedAt: string
+}
+
+/** 账号本月（UTC 自然月）的计费出站流量，对比每月 10 TB 免费额度 */
+export interface BillingEgressDTO {
+  accountId: string
+  status: BillingStatusDTO
+  region: string
+  /** YYYY-MM */
+  month: string
+  usedGb: number
+  freeGb: number
+  /** Oracle 原始返回的单位 */
+  unit: string
+  series: { date: string; gb: number }[]
+  amount: number
+  currency: string
   error?: string
   fetchedAt: string
 }

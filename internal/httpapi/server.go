@@ -209,10 +209,12 @@ func (s *Server) routes() {
 	// 账单。纯只读查询，不走 guard——它不改变任何东西。
 	s.mux.HandleFunc("GET /api/billing", s.requireAuth(s.handleBilling))
 	s.mux.HandleFunc("GET /api/billing/{id}", s.requireAuth(s.handleBillingDetail))
+	s.mux.HandleFunc("GET /api/billing/{id}/egress", s.requireAuth(s.handleBillingEgress))
 
 	// 配额与监控。
 	s.mux.HandleFunc("GET /api/quota", s.requireAuth(s.handleQuota))
 	s.mux.HandleFunc("GET /api/instances/{id}/metrics", s.requireAuth(s.handleInstanceMetrics))
+	s.mux.HandleFunc("GET /api/instances/{id}/traffic", s.requireAuth(s.handleInstanceTraffic))
 
 	// 通知与设置。
 	s.mux.HandleFunc("GET /api/notifications/channels", s.requireAuth(s.handleListChannels))

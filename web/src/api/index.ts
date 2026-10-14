@@ -161,6 +161,9 @@ export const instances = {
       query: { hours, metrics: metrics?.join(',') }
     }),
 
+  traffic: (id: string) =>
+    http.get<D.InstanceTrafficDTO>(`/api/instances/${encodeURIComponent(id)}/traffic`),
+
   // publicKey 是必传的：Oracle 用它给串行控制台鉴权。
   // 这个参数一度漏掉，后端收到空 body 只能报「请求内容格式有误: EOF」——
   // 而前端明明刚校验过公钥非空，报错信息和实际原因对不上，很难查。
@@ -393,6 +396,11 @@ export const billing = {
   detail: (accountId: string, days = 30, refresh = false) =>
     http.get<D.BillingDetailDTO>(`/api/billing/${accountId}`, {
       query: { days, refresh: refresh ? 'true' : undefined }
+    }),
+
+  egress: (accountId: string, refresh = false) =>
+    http.get<D.BillingEgressDTO>(`/api/billing/${accountId}/egress`, {
+      query: { refresh: refresh ? 'true' : undefined }
     })
 }
 

@@ -14,11 +14,11 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
-import { acctColor } from '@/lib/format'
+import { acctColor, formatGB, pct, usageTone } from '@/lib/format'
 import { relativeTime } from '@/lib/adapt'
 import {
   billing as billingApi, errorText,
-  type BillingSummaryDTO, type BillingDetailDTO,
+  type BillingSummaryDTO, type BillingDetailDTO, type BillingEgressDTO,
   type BillingCurrencyTotalDTO, type BillingStatusDTO, type BillingBucketDTO
 } from '@/api'
 import SectionCard from '@/components/SectionCard.vue'
@@ -27,6 +27,7 @@ import SkeletonRows from '@/components/SkeletonRows.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import AccountChip from '@/components/AccountChip.vue'
+import DailyBars from '@/components/DailyBars.vue'
 
 const { accountById } = useStore()
 
@@ -171,14 +172,57 @@ async function loadDetail(refresh = false) {
   }
 }
 
+/* ---------- 本月出站流量 ---------- */
+
+/**
+ * 与明细分开取：明细跟着「最近 N 天」走，免费额度却按自然月算，
+ * 两者的时间窗不同，不能拿明细里的出站流量去和 10 TB 比。
+ */
+const egress = ref<BillingEgressDTO | null>(null)
+const egressLoading = ref(false)
+const egressError = ref('')
+let egressSeq = 0
+
+async function loadEgress(refresh = false) {
+  if (!selected.value) return
+  const seq = ++egressSeq
+  egressLoading.value = true
+  egressError.value = ''
+  try {
+    const res = await billingApi.egress(selected.value, refresh)
+    if (seq === egressSeq) egress.value = res
+  } catch (err) {
+    if (seq !== egressSeq) return
+    egressError.value = errorText(err)
+    egress.value = null
+  } finally {
+    if (seq === egressSeq) egressLoading.value = false
+  }
+}
+
+const egressBars = computed(() =>
+  (egress.value?.series ?? []).map(d => ({ date: d.date, value: d.gb })))
+
+function refreshDetail() {
+  void loadDetail(true)
+  void loadEgress(true)
+}
+
 function select(accountId: string) {
   // 再点一次收起。展开态没有独立入口，这是唯一的关闭方式。
   selected.value = selected.value === accountId ? '' : accountId
   detail.value = null
+  egress.value = null
+  egressError.value = ''
   // 收起时也要让在途的请求作废，否则它回来会把明细写进一个已经关掉的面板。
   detailSeq++
+  egressSeq++
   detailLoading.value = false
-  if (selected.value) void loadDetail()
+  egressLoading.value = false
+  if (selected.value) {
+    void loadDetail()
+    void loadEgress()
+  }
 }
 
 watch(days, () => {
@@ -375,7 +419,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                   :class="{ 'btn--primary': days === d }" @click="days = d">
             {{ d }} 天
           </button>
-          <button class="btn btn--xs" :disabled="detailLoading" @click="loadDetail(true)">刷新</button>
+          <button class="btn btn--xs" :disabled="detailLoading || egressLoading" @click="refreshDetail()">刷新</button>
         </div>
       </template>
 
@@ -425,6 +469,38 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
               资源都在免费额度内。下面是实际用量——免费额度也是有上限的，
               这些数字才是该盯的。
             </p>
+          </div>
+
+          <!-- 本月出站流量对比免费额度。额度按自然月算，所以单独按月取，
+               不跟上面的天数切换走 -->
+          <div class="egress-month">
+            <div class="egress-month__head">
+              <span class="t-2xs dim-3">本月出站流量<template v-if="egress"> · {{ egress.month }}（UTC）</template></span>
+              <span v-if="egress && egress.status === 'ok'" class="mono t-xs"
+                    :style="{ color: usageTone(egress.usedGb, egress.freeGb) }">
+                {{ formatGB(egress.usedGb) }} / {{ formatGB(egress.freeGb) }}
+                · {{ pct(egress.usedGb, egress.freeGb) }}%
+              </span>
+            </div>
+            <p v-if="egressLoading && !egress" class="t-2xs dim-3 egress-month__msg">查询中…</p>
+            <p v-else-if="egressError" class="t-2xs egress-month__msg egress-month__err">{{ egressError }}</p>
+            <p v-else-if="egress && egress.status !== 'ok'" class="t-2xs egress-month__msg egress-month__err">
+              {{ egress.error || '查询失败' }}
+            </p>
+            <template v-else-if="egress">
+              <span class="egress-month__track">
+                <span class="egress-month__fill"
+                      :style="{ width: pct(egress.usedGb, egress.freeGb) + '%',
+                                background: usageTone(egress.usedGb, egress.freeGb) }" />
+              </span>
+              <DailyBars class="egress-month__bars" :items="egressBars" :format="formatGB" :height="72"
+                         :aria-label="`${egress.month} 每日出站流量`" />
+              <p class="t-2xs dim-3 egress-month__msg">
+                计费口径，取自 Oracle 用量数据，通常延迟几小时到一天。永久免费额度为每月 10 TB。
+                <template v-if="egress.amount > 0">本月出站流量已产生费用 {{ money(egress.amount, egress.currency) }}。</template>
+                <template v-if="egress.unit && egress.unit.toUpperCase() !== 'GB'">Oracle 返回的单位是 {{ egress.unit }}，已换算成 GB。</template>
+              </p>
+            </template>
           </div>
 
           <!-- 出站流量单独拎出来：它是免费号最容易超的一项，而按服务分组时
@@ -590,6 +666,18 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
   background: var(--bg-inset);
 }
 .egress__v { font-size: 16px; font-weight: 600; }
+.egress-month {
+  margin: 0 16px 14px; padding: 12px 14px; border-radius: var(--radius-md);
+  background: var(--bg-inset); display: flex; flex-direction: column; gap: 10px;
+}
+.egress-month__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.egress-month__track {
+  display: block; height: 6px; border-radius: var(--radius-full);
+  background: var(--bg-hover); overflow: hidden;
+}
+.egress-month__fill { display: block; height: 100%; border-radius: var(--radius-full); }
+.egress-month__msg { margin: 0; line-height: 1.7; }
+.egress-month__err { color: var(--danger); }
 .split__head { margin: 0 0 10px; }
 .splits__none { margin: 0; line-height: 1.7; }
 

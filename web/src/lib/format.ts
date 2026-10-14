@@ -48,3 +48,24 @@ export function countUp(to: number, onTick: (v: number) => void, duration = 600)
   }
   requestAnimationFrame(step)
 }
+
+/**
+ * 流量字节数，按 1024 进制换算。
+ *
+ * 用 1024 而不是 1000：OCI 的免费额度「10 TB」按 10240 GB 算，
+ * 两边进制不一致时，快到上限的那几百 GB 会对不上。
+ */
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let i = 0
+  let v = bytes
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toLocaleString('zh-CN', { maximumFractionDigits: v < 10 ? 2 : 1 })} ${units[i]}`
+}
+
+/** 以 GB 计的流量，复用 formatBytes 的单位选择。 */
+export const formatGB = (gb: number) => formatBytes(gb * 1024 ** 3)

@@ -67,6 +67,7 @@ type Service struct {
 	mu      sync.Mutex
 	sums    map[string]*AccountSummary
 	details map[string]*Detail
+	egress  map[string]*EgressReport
 }
 
 // New 构造服务。
@@ -76,6 +77,7 @@ func New(d Deps) *Service {
 		conns:   d.Conns,
 		sums:    make(map[string]*AccountSummary),
 		details: make(map[string]*Detail),
+		egress:  make(map[string]*EgressReport),
 	}
 }
 

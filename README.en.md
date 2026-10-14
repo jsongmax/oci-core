@@ -65,10 +65,10 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 | **Storage** | Boot and block volume resize, VPU tuning, attach / detach; after a resize, OS-specific commands to rescan the disk and grow the partition; including **rescue mode** (detach boot volume → mount on another instance → fix files → reattach) |
 | **Login policy** | Read and change the identity domain password expiry. Tenancies default to 120 days, which means periodically resetting every account by hand; the panel re-reads after writing and shows what the server actually stored |
 | **Proxies** | Proxy pool: bulk import (four common formats), liveness checks with latency, per-account egress binding. One proxy binds to exactly one account — a shared exit would create the very correlation signal you are trying to avoid |
-| **Billing** | Per-account cost for this month and last, daily trend, breakdown by service, region and SKU, with outbound data transfer shown on its own; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
+| **Billing** | Per-account cost for this month and last, daily trend, breakdown by service, region and SKU, with outbound data transfer shown on its own and compared against the 10 TB monthly free allowance; free-tier accounts always read zero, so the page shows actual consumption instead (OCPU hours / GB months) |
 | **Capacity monitor** | Calls Oracle's official **read-only** capacity report API to watch when a shape becomes available; notifies on state change |
 | **Capacity hunter** | Repeatedly attempts to launch an instance until it succeeds. Checks capacity first by default and skips the round when there is none |
-| **Metrics** | CPU / memory / bidirectional traffic time series, resolution adapts to the time span |
+| **Metrics** | CPU / memory / bidirectional traffic time series, resolution adapts to the time span; plus month-to-date inbound/outbound traffic (from VCN VNIC metrics, no Cloud Agent needed) |
 | **Console** | Serial console and VNC tunnel connection strings |
 | **Notifications** | Telegram / WeCom / DingTalk / Email / Webhook plus an event subscription matrix |
 | **Privacy** | Emails, public IPs, OCIDs and fingerprints are masked by default, each with a reveal button plus a one-click global toggle in the top bar. Copying always yields the real value — built for screenshots and screen sharing |
