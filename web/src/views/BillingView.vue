@@ -12,9 +12,9 @@
  * 单独建的 IAM 用户只授了 compute / network / volume。那种情况下给的是
  * 一段可以直接照抄的策略，不是一句「查询失败」。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
-import { acctColor, formatGB, pct, usageTone } from '@/lib/format'
+import { acctColor, byteScale, formatGB, pct, usageTone } from '@/lib/format'
 import { relativeTime } from '@/lib/adapt'
 import {
   billing as billingApi, errorText,
@@ -27,7 +27,10 @@ import SkeletonRows from '@/components/SkeletonRows.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import AccountChip from '@/components/AccountChip.vue'
-import DailyBars from '@/components/DailyBars.vue'
+import type { MetricSeries } from '@/components/MetricChart.vue'
+
+/** ECharts 体积不小，只在展开明细时才加载。 */
+const MetricChart = defineAsyncComponent(() => import('@/components/MetricChart.vue'))
 
 const { accountById } = useStore()
 
@@ -200,8 +203,14 @@ async function loadEgress(refresh = false) {
   }
 }
 
-const egressBars = computed(() =>
-  (egress.value?.series ?? []).map(d => ({ date: d.date, value: d.gb })))
+const egressDays = computed(() => (egress.value?.series ?? []).map(d => d.date.slice(5)))
+/** 按单日最大值挑单位：免费号常常每天只有几十 MB，统一用 GB 刻度会全是 0.0x。 */
+const egressScale = computed(() => byteScale(
+  (egress.value?.series ?? []).reduce((m, d) => Math.max(m, d.gb), 0) * 1024 ** 3))
+const egressSeries = computed<MetricSeries[]>(() => {
+  const f = egressScale.value.factor / 1024 ** 3
+  return [{ name: '出站流量', data: (egress.value?.series ?? []).map(d => d.gb / f) }]
+})
 
 function refreshDetail() {
   void loadDetail(true)
@@ -493,8 +502,9 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                       :style="{ width: pct(egress.usedGb, egress.freeGb) + '%',
                                 background: usageTone(egress.usedGb, egress.freeGb) }" />
               </span>
-              <DailyBars class="egress-month__bars" :items="egressBars" :format="formatGB" :height="72"
-                         :aria-label="`${egress.month} 每日出站流量`" />
+              <MetricChart class="egress-month__bars" type="bar" :categories="egressDays"
+                           :series="egressSeries" :format="egressScale.format" :height="160"
+                           empty-text="本月暂无出站流量" />
               <p class="t-2xs dim-3 egress-month__msg">
                 计费口径，取自 Oracle 用量数据，通常延迟几小时到一天。永久免费额度为每月 10 TB。
                 <template v-if="egress.amount > 0">本月出站流量已产生费用 {{ money(egress.amount, egress.currency) }}。</template>

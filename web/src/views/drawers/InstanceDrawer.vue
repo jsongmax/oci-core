@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** §4.4.3 实例详情抽屉（720）：概览 / 网络 / 存储 / 监控 / 控制台 / 操作记录 */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
-import { acctColor, formatBytes } from '@/lib/format'
+import { acctColor, byteScale, formatBytes, formatBitRate, formatBits, formatPercent } from '@/lib/format'
 import { relativeTime, instanceUptime } from '@/lib/adapt'
 import {
   instances as instancesApi, insights, storage, errorText,
@@ -18,13 +18,14 @@ import SectionCard from '@/components/SectionCard.vue'
 import KeyValueList from '@/components/KeyValueList.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
-import QuotaMeter from '@/components/QuotaMeter.vue'
 import StateBadge from '@/components/StateBadge.vue'
 import BootVolumeEditor from '@/components/BootVolumeEditor.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
-import TrafficChart from '@/components/TrafficChart.vue'
-import DailyBars from '@/components/DailyBars.vue'
+import type { MetricSeries } from '@/components/MetricChart.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+
+/** ECharts 体积不小，只在打开监控页时才加载。 */
+const MetricChart = defineAsyncComponent(() => import('@/components/MetricChart.vue'))
 
 const props = defineProps<{ id: string; tab?: string }>()
 const {
@@ -140,31 +141,73 @@ async function loadMetrics() {
   }
 }
 
-const seriesOf = (name: string) =>
-  metrics.value?.series.find(s => s.metric === name)?.datapoints?.map(d => d.value) ?? []
+const pointsOf = (name: string) =>
+  metrics.value?.series.find(s => s.metric === name)?.datapoints ?? []
+
+/** 转成图表要的 [毫秒时间戳, 值]。 */
+const chartData = (name: string, scale = 1): [number, number][] =>
+  pointsOf(name).map(d => [new Date(d.timestamp).getTime(), d.value * scale])
+
+/** 一条序列的最新值、平均值、峰值。没有数据点时返回 null，界面显示「—」而不是 0。 */
+function statsOf(name: string): { last: number; avg: number; peak: number } | null {
+  const pts = pointsOf(name)
+  if (!pts.length) return null
+  let sum = 0
+  let peak = 0
+  for (const p of pts) {
+    sum += p.value
+    peak = Math.max(peak, p.value)
+  }
+  return { last: pts[pts.length - 1].value, avg: sum / pts.length, peak }
+}
+
+const cpuStats = computed(() => statsOf('CpuUtilization'))
+const memStats = computed(() => statsOf('MemoryUtilization'))
+const outStats = computed(() => statsOf('NetworksBytesOut'))
+const inStats = computed(() => statsOf('NetworksBytesIn'))
 
 /**
  * 按最近一个内存使用率数据点折算出的已用 GB。
  *
  * 原先这里画的是 memGb / memGb，永远 100%、永远标红"已满"——那是总量，
- * 不是用量。没有数据点时返回 null，不画进度条，免得把"不知道"画成 0。
+ * 不是用量。没有数据点时返回 null，免得把"不知道"画成 0。
  */
 const memUsedGb = computed<number | null>(() => {
-  const points = seriesOf('MemoryUtilization')
   const memGb = inst.value?.memGb
-  if (!points.length || !memGb) return null
-  return Math.round(memGb * points[points.length - 1] / 10) / 10
+  if (!memStats.value || !memGb) return null
+  return Math.round(memGb * memStats.value.last / 10) / 10
 })
 
-const metricLabels = computed<[string, string]>(() => {
-  if (!metrics.value) return ['', '']
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  return [fmt(metrics.value.start), fmt(metrics.value.end)]
+/** 使用率到 90% 才提示偏高：持续满载的机器值得看一眼。 */
+const HIGH_USAGE = 90
+
+const rateSeries = computed<MetricSeries[]>(() => [
+  // 指标是每秒字节数，图表用每秒比特，刻度才落在整数 Mbps 上。
+  { name: '出站', data: chartData('NetworksBytesOut', 8) },
+  { name: '入站', data: chartData('NetworksBytesIn', 8) }
+])
+
+const usageSeries = computed<MetricSeries[]>(() => [
+  { name: 'CPU', data: chartData('CpuUtilization') },
+  { name: '内存', data: chartData('MemoryUtilization') }
+])
+
+/** 粒度说明，例如「每 5 分钟一个点」。 */
+const resolutionText = computed(() => {
+  const r = metrics.value?.resolution
+  if (!r) return ''
+  const m = /^(\d+)([mhd])$/.exec(r)
+  if (!m) return r
+  const unit = { m: '分钟', h: '小时', d: '天' }[m[2] as 'm' | 'h' | 'd']
+  return `每 ${m[1]} ${unit}一个点`
 })
 
-/** 流量指标是每秒字节数，换算成更好读的 Mbps。 */
-const toMbps = (values: number[]) => values.map(v => Math.round((v * 8) / 1_000_000 * 100) / 100)
+const rangeText = computed(() =>
+  metricHours.value < 24 ? `最近 ${metricHours.value} 小时` : `最近 ${metricHours.value / 24} 天`)
+
+/** 单条指标查询失败时后端会带上错误；部分失败也要让人看见。 */
+const metricErrors = computed(() =>
+  (metrics.value?.series ?? []).filter(s => s.error).map(s => `${s.metric}：${s.error}`))
 
 const noMetricData = computed(() =>
   !!metrics.value && metrics.value.series.every(s => (s.datapoints?.length ?? 0) === 0)
@@ -192,8 +235,17 @@ async function loadTraffic() {
   }
 }
 
-const trafficBars = computed(() =>
-  (traffic.value?.series ?? []).map(d => ({ date: d.date, value: d.outBytes })))
+const trafficDays = computed(() => (traffic.value?.series ?? []).map(d => d.date.slice(5)))
+/** 柱状图统一用一个单位（按本月单日最大值挑），刻度才是整数。 */
+const trafficScale = computed(() => byteScale(
+  (traffic.value?.series ?? []).reduce((m, d) => Math.max(m, d.outBytes, d.inBytes), 0)))
+const trafficSeries = computed<MetricSeries[]>(() => {
+  const f = trafficScale.value.factor
+  return [
+    { name: '出站', data: (traffic.value?.series ?? []).map(d => d.outBytes / f) },
+    { name: '入站', data: (traffic.value?.series ?? []).map(d => d.inBytes / f) }
+  ]
+})
 
 function refreshMonitoring() {
   void loadMetrics()
@@ -698,58 +750,88 @@ watch(metricHours, () => void loadMetrics())
           </div>
         </SectionCard>
 
-        <SectionCard title="本月已用流量"
-                     :note="traffic ? `${traffic.month}（UTC）· ${traffic.vnics} 块网卡` : 'VCN 网卡统计'">
-          <SkeletonRows v-if="trafficLoading && !traffic" :rows="2" />
-          <p v-else-if="trafficError" class="pad t-xs traffic__err">{{ trafficError }}</p>
-          <div v-else-if="traffic" class="pad">
-            <div class="traffic">
-              <div class="traffic__stat">
-                <span class="t-2xs dim-3">出站 · 本月</span>
-                <span class="mono traffic__v">{{ formatBytes(traffic.outBytes) }}</span>
-                <span class="mono t-2xs dim-3">近 24 小时 {{ formatBytes(traffic.last24hOutBytes) }}</span>
-              </div>
-              <div class="traffic__stat">
-                <span class="t-2xs dim-3">入站 · 本月</span>
-                <span class="mono traffic__v">{{ formatBytes(traffic.inBytes) }}</span>
-                <span class="mono t-2xs dim-3">近 24 小时 {{ formatBytes(traffic.last24hInBytes) }}</span>
-              </div>
-            </div>
-            <DailyBars :items="trafficBars" :format="formatBytes" :height="64"
-                       :aria-label="`${traffic.month} 每日出站流量`" />
-            <p v-if="traffic.error" class="t-2xs traffic__err">部分网卡查询失败：{{ traffic.error }}</p>
-            <p class="t-2xs dim-3 traffic__note">{{ traffic.notice }}</p>
-          </div>
-        </SectionCard>
-
         <CheckList v-if="noMetricData"
                    :items="[{ tone: 'warn', text: metrics?.notice ?? '暂无监控数据' }]" />
+        <CheckList v-else-if="metricErrors.length"
+                   :items="metricErrors.map(text => ({ tone: 'warn' as const, text }))" />
 
-        <SectionCard title="出站流量" :note="`聚合方式 rate · 粒度 ${metrics?.resolution ?? '—'}`">
-          <TrafficChart :values="toMbps(seriesOf('NetworksBytesOut'))"
-                        :labels="metricLabels" unit=" Mbps"
-                        empty-text="暂无流量数据" />
-        </SectionCard>
-
-        <SectionCard title="入站流量">
-          <TrafficChart :values="toMbps(seriesOf('NetworksBytesIn'))"
-                        :labels="metricLabels" unit=" Mbps"
-                        empty-text="暂无流量数据" />
-        </SectionCard>
-
-        <SectionCard title="CPU 使用率">
-          <TrafficChart :values="seriesOf('CpuUtilization')"
-                        :labels="metricLabels" unit="%"
-                        empty-text="暂无 CPU 数据" />
-        </SectionCard>
-
-        <SectionCard title="内存使用率">
-          <TrafficChart :values="seriesOf('MemoryUtilization')"
-                        :labels="metricLabels" unit="%"
-                        empty-text="暂无内存数据" />
-          <div v-if="memUsedGb !== null" class="pad">
-            <QuotaMeter label="最近一次" :used="memUsedGb" :limit="inst.memGb" unit=" GB" />
+        <!-- 概况：先给结论，图表负责细节 -->
+        <div v-if="metrics" class="tiles">
+          <div class="tile">
+            <span class="tile__k">CPU 使用率 · 最新</span>
+            <span class="tile__v mono" :class="{ 'is-high': (cpuStats?.last ?? 0) >= HIGH_USAGE }">
+              {{ cpuStats ? formatPercent(cpuStats.last) : '—' }}
+            </span>
+            <span v-if="cpuStats" class="tile__sub mono">
+              平均 {{ formatPercent(cpuStats.avg) }} · 峰值 {{ formatPercent(cpuStats.peak) }}
+            </span>
+            <span v-if="(cpuStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">▲ 偏高</span>
           </div>
+          <div class="tile">
+            <span class="tile__k">内存使用率 · 最新</span>
+            <span class="tile__v mono" :class="{ 'is-high': (memStats?.last ?? 0) >= HIGH_USAGE }">
+              {{ memStats ? formatPercent(memStats.last) : '—' }}
+            </span>
+            <span v-if="memStats" class="tile__sub mono">
+              <template v-if="memUsedGb !== null">约 {{ memUsedGb }} / {{ inst.memGb }} GB · </template>峰值 {{ formatPercent(memStats.peak) }}
+            </span>
+            <span v-if="(memStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">▲ 偏高</span>
+          </div>
+          <div class="tile">
+            <span class="tile__k"><i class="dot dot--1" />出站速率 · 最新</span>
+            <span class="tile__v mono">{{ outStats ? formatBitRate(outStats.last) : '—' }}</span>
+            <span v-if="outStats" class="tile__sub mono">
+              平均 {{ formatBitRate(outStats.avg) }} · 峰值 {{ formatBitRate(outStats.peak) }}
+            </span>
+          </div>
+          <div class="tile">
+            <span class="tile__k"><i class="dot dot--2" />入站速率 · 最新</span>
+            <span class="tile__v mono">{{ inStats ? formatBitRate(inStats.last) : '—' }}</span>
+            <span v-if="inStats" class="tile__sub mono">
+              平均 {{ formatBitRate(inStats.avg) }} · 峰值 {{ formatBitRate(inStats.peak) }}
+            </span>
+          </div>
+        </div>
+        <p v-if="metrics" class="t-2xs dim-3 tiles__foot">
+          {{ rangeText }}的统计{{ resolutionText ? ' · ' + resolutionText : '' }} · 数据来自 Oracle Cloud Agent
+        </p>
+
+        <SectionCard title="网络速率" :note="`${rangeText} · 单位随数值自动切换`">
+          <SkeletonRows v-if="metricsLoading && !metrics" :rows="3" />
+          <MetricChart v-else :series="rateSeries" :format="formatBits" :height="220"
+                       empty-text="暂无流量数据" />
+        </SectionCard>
+
+        <SectionCard title="CPU 与内存使用率" :note="`${rangeText} · 纵轴固定 0–100%`">
+          <SkeletonRows v-if="metricsLoading && !metrics" :rows="3" />
+          <MetricChart v-else :series="usageSeries" :format="formatPercent" :y-max="100" :height="220"
+                       empty-text="暂无 CPU / 内存数据" />
+        </SectionCard>
+
+        <SectionCard title="本月已用流量"
+                     :note="traffic ? `${traffic.month}（UTC）· ${traffic.vnics} 块网卡 · 不受时间范围影响` : 'VCN 网卡统计'">
+          <SkeletonRows v-if="trafficLoading && !traffic" :rows="2" />
+          <p v-else-if="trafficError" class="pad t-xs traffic__err">{{ trafficError }}</p>
+          <template v-else-if="traffic">
+            <div class="tiles tiles--inset">
+              <div class="tile">
+                <span class="tile__k"><i class="dot dot--1" />出站 · 本月累计</span>
+                <span class="tile__v mono">{{ formatBytes(traffic.outBytes) }}</span>
+                <span class="tile__sub mono">近 24 小时 {{ formatBytes(traffic.last24hOutBytes) }}</span>
+              </div>
+              <div class="tile">
+                <span class="tile__k"><i class="dot dot--2" />入站 · 本月累计</span>
+                <span class="tile__v mono">{{ formatBytes(traffic.inBytes) }}</span>
+                <span class="tile__sub mono">近 24 小时 {{ formatBytes(traffic.last24hInBytes) }}</span>
+              </div>
+            </div>
+            <MetricChart type="bar" :categories="trafficDays" :series="trafficSeries"
+                         :format="trafficScale.format" :height="200" empty-text="本月暂无流量数据" />
+            <div class="pad pad--tight">
+              <p v-if="traffic.error" class="t-2xs traffic__err">部分网卡查询失败：{{ traffic.error }}</p>
+              <p class="t-2xs dim-3 traffic__note">{{ traffic.notice }}</p>
+            </div>
+          </template>
         </SectionCard>
       </template>
 
@@ -811,12 +893,30 @@ watch(metricHours, () => void loadMetrics())
 .pad { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .pad--row { flex-direction: row; align-items: center; justify-content: space-between; }
 .range { display: flex; gap: 6px; }
-.traffic { display: flex; gap: 12px; flex-wrap: wrap; }
-.traffic__stat {
-  flex: 1 1 160px; display: flex; flex-direction: column; gap: 2px;
-  padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-inset);
+.pad--tight { padding-top: 0; gap: 6px; }
+
+/* 概况卡：抽屉宽度下是 2×2，窄屏时自动折成一列 */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 480px) { .tiles { grid-template-columns: 1fr; } }
+.tiles--inset { padding: 14px 16px 0; }
+.tiles__foot { margin: -4px 0 0; }
+.tile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  padding: 12px 14px; border-radius: var(--radius-md);
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
 }
-.traffic__v { font-size: 16px; font-weight: 600; }
+.tiles--inset .tile { background: var(--bg-inset); border-color: transparent; }
+.tile__k { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+.tile__v { font-size: 20px; font-weight: 600; line-height: 1.25; color: var(--text-primary); }
+.tile__v.is-high { color: var(--warning); }
+.tile__sub { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile__flag { font-size: 11px; font-weight: 600; color: var(--warning); }
+/* 与 MetricChart 的分类色一致：出站蓝、入站橙 */
+.dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.dot--1 { background: #2a78d6; }
+.dot--2 { background: #eb6834; }
+:root[data-theme='dark'] .dot--1 { background: #3987e5; }
+:root[data-theme='dark'] .dot--2 { background: #d95926; }
 .traffic__err { color: var(--danger); margin: 0; }
 .traffic__note { margin: 0; line-height: 1.7; }
 .range .btn.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
