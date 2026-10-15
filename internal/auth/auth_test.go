@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,23 @@ func TestTOTPProvisioningURI(t *testing.T) {
 		if !strings.Contains(uri, want) {
 			t.Errorf("URI 缺少 %q: %s", want, uri)
 		}
+	}
+}
+
+// 并发计算达到上限时直接拒绝，而不是继续占内存排队。
+func TestPasswordHashingRejectsWhenSaturated(t *testing.T) {
+	encoded, err := HashPassword("a-very-long-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hashInFlight.Add(maxActiveHashes + maxQueuedHashes)
+	defer hashInFlight.Add(-(maxActiveHashes + maxQueuedHashes))
+
+	if _, err := HashPassword("a-very-long-password"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("HashPassword err = %v，期望 ErrBusy", err)
+	}
+	if _, err := VerifyPassword("a-very-long-password", encoded); !errors.Is(err, ErrBusy) {
+		t.Fatalf("VerifyPassword err = %v，期望 ErrBusy", err)
 	}
 }

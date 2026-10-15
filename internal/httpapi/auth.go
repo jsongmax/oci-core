@@ -85,11 +85,15 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		slog.Error("散列口令失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeHashError(w, "散列口令失败", err)
 		return
 	}
-	user, err := s.st.CreateUser(r.Context(), req.Username, hash)
+	// 上面的 count 只是提前拒绝，真正守住"零用户"的是这条原子插入。
+	user, err := s.st.CreateFirstUser(r.Context(), req.Username, hash)
+	if errors.Is(err, store.ErrAlreadyInitialized) {
+		writeError(w, http.StatusConflict, "already_initialized", "系统已完成初始化")
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -107,6 +111,19 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// writeHashError 把口令计算的失败转成响应。
+//
+// ErrBusy 是负载保护在起作用，回 503 让客户端稍后重试；其余是散列串
+// 损坏之类的内部问题。
+func writeHashError(w http.ResponseWriter, what string, err error) {
+	if errors.Is(err, auth.ErrBusy) {
+		writeError(w, http.StatusServiceUnavailable, "busy", "请求过多，请稍后再试")
+		return
+	}
+	slog.Error(what, "err", err)
+	writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+}
+
 // ---- 登录 ----
 
 type loginRequest struct {
@@ -121,7 +138,7 @@ type loginResponse struct {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	allowed, remaining := s.logins.Allow(ip)
+	allowed, remaining := s.logins.Reserve(ip)
 	if !allowed {
 		writeError(w, http.StatusTooManyRequests, "rate_limited",
 			"登录失败次数过多，请 15 分钟后再试")
@@ -136,13 +153,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// 用户名不存在与口令错误必须给出完全相同的响应，
 	// 否则接口就变成了用户名枚举器。
 	fail := func() {
-		s.logins.Fail(ip)
 		_ = s.st.Audit(r.Context(), store.AuditEntry{
 			Action: "login", Target: req.Username, IP: ip, Result: store.ResultFail,
 		})
 		writeJSON(w, http.StatusUnauthorized, errorBody{
 			Code:    "invalid_credentials",
-			Message: "用户名或口令错误，还可尝试 " + itoa(remaining-1) + " 次",
+			Message: "用户名或口令错误，还可尝试 " + itoa(remaining) + " 次",
 		})
 	}
 
@@ -150,7 +166,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// 即使用户不存在也要走一次散列计算，抹平响应时间差异。
-			_, _ = auth.HashPassword(req.Password)
+			// 繁忙时与已存在用户走同一个 503，否则负载高时能借此区分用户名。
+			if _, err := auth.HashPassword(req.Password); errors.Is(err, auth.ErrBusy) {
+				writeHashError(w, "散列口令失败", err)
+				return
+			}
 			fail()
 			return
 		}
@@ -160,8 +180,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := auth.VerifyPassword(req.Password, user.PasswordHash)
 	if err != nil {
-		slog.Error("校验口令失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeHashError(w, "校验口令失败", err)
 		return
 	}
 	if !ok {
@@ -177,8 +196,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 启用了 TOTP 的用户先拿到"半登录"会话，只能调用 TOTP 校验接口。
-	totpVerified := !user.TOTPEnabled
-	if err := s.st.CreateSession(r.Context(), user.ID, token, ip, r.UserAgent(), s.cfg.SessionTTL, totpVerified); err != nil {
+	// 会话按口令校验前读到的用户快照签发；校验期间若启用了 TOTP 或改了口令，
+	// 快照已过时，拒绝这次登录而不是按旧状态放行。
+	if err := s.st.CreateLoginSession(r.Context(), user, token, ip, r.UserAgent(), s.cfg.SessionTTL); err != nil {
+		if errors.Is(err, store.ErrAuthStateChanged) {
+			writeError(w, http.StatusConflict, "auth_state_changed", "账户的认证设置刚刚发生变化，请重新登录")
+			return
+		}
 		writeStoreError(w, err)
 		return
 	}
@@ -209,7 +233,7 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, _ := s.logins.Allow("totp:" + ip)
+	allowed, _ := s.logins.Reserve("totp:" + ip)
 	if !allowed {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后再试")
 		return
@@ -222,7 +246,6 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 
 	counter, ok := auth.VerifyTOTPWithCounter(user.TOTPSecret, req.Code, time.Now())
 	if !ok {
-		s.logins.Fail("totp:" + ip)
 		_ = s.st.Audit(r.Context(), store.AuditEntry{
 			UserID: user.ID, Action: "totp_verify", IP: ip, Result: store.ResultFail,
 		})
@@ -338,14 +361,51 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 			"验证码不正确。请确认手机时间准确，并使用当前显示的验证码。")
 		return
 	}
+	// EnableTOTP 会撤销该用户的全部会话：启用前的会话只通过了口令，
+	// 不能在加上第二因子之后继续通行。当前请求刚提交了正确验证码，换发一个新会话。
 	if err := s.st.EnableTOTP(r.Context(), user.ID, counter); err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if !s.reissueSession(w, r, user.ID, true) {
 		return
 	}
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "totp_enable", IP: s.clientIP(r),
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// reissueSession 为当前请求签发一个全新的完整会话并写入 Cookie。
+//
+// 用于 TOTP 启用、关闭这类会撤销全部会话的认证状态变更之后：
+// 旧令牌已随撤销失效，当前用户刚完成了足够强的复核，不该被一并踢下线。
+// totpEnabled 是变更之后的 TOTP 状态；签发时会核对它，状态又被并发改掉则拒绝。
+// 失败时已写好错误响应，返回 false。
+func (s *Server) reissueSession(w http.ResponseWriter, r *http.Request, userID string, totpEnabled bool) bool {
+	token, err := auth.NewToken()
+	if err != nil {
+		slog.Error("生成会话令牌失败", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		return false
+	}
+	ip, ua := s.clientIP(r), r.UserAgent()
+	if totpEnabled {
+		err = s.st.CreateTOTPVerifiedSession(r.Context(), userID, token, ip, ua, s.cfg.SessionTTL)
+	} else {
+		err = s.st.CreateSession(r.Context(), userID, token, ip, ua, s.cfg.SessionTTL, true)
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrAuthStateChanged) {
+			s.clearSessionCookie(w, r)
+			writeError(w, http.StatusConflict, "auth_state_changed", "账户的认证设置刚刚发生变化，请重新登录")
+			return false
+		}
+		writeStoreError(w, err)
+		return false
+	}
+	s.setSessionCookie(w, r, token)
+	return true
 }
 
 // ---- 关闭两步验证 ----
@@ -368,7 +428,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := s.clientIP(r)
-	allowed, _ := s.logins.Allow("totp:" + ip)
+	allowed, _ := s.logins.Reserve("totp:" + ip)
 	if !allowed {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后再试")
 		return
@@ -381,31 +441,35 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := auth.VerifyPassword(req.Password, user.PasswordHash)
 	if err != nil {
-		slog.Error("校验口令失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeHashError(w, "校验口令失败", err)
 		return
 	}
 	if !ok {
-		s.logins.Fail("totp:" + ip)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "口令不正确")
 		return
 	}
 
 	counter, valid := auth.VerifyTOTPWithCounter(user.TOTPSecret, req.Code, time.Now())
 	if !valid {
-		s.logins.Fail("totp:" + ip)
 		writeError(w, http.StatusUnauthorized, "invalid_code", "验证码不正确")
 		return
 	}
-	// 即便这个码马上就要作废，也照样占用它的时间窗——
-	// 否则同一个码还能拿去做别的事。
-	if _, err := s.st.ConsumeTOTPCounter(r.Context(), user.ID, counter); err != nil {
+	// 消费时间窗、关闭 TOTP、撤销全部会话在同一事务里完成。
+	// 已用过的验证码必须拒绝：一次性是 TOTP 防重放的全部意义，
+	// 关闭第二因子这一步更不能放松。撤销会话则是为了不让还停在第二步的
+	// 半登录会话在 TOTP 关闭后直接变成完整会话。
+	fresh, err := s.st.DisableTOTP(r.Context(), user.ID, counter)
+	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-
-	if err := s.st.DisableTOTP(r.Context(), user.ID); err != nil {
-		writeStoreError(w, err)
+	if !fresh {
+		writeError(w, http.StatusUnauthorized, "code_reused",
+			"该验证码已被使用，请等待下一个验证码")
+		return
+	}
+	// DisableTOTP 已在同一事务里关掉了危险操作复核开关。
+	if !s.reissueSession(w, r, user.ID, false) {
 		return
 	}
 
@@ -435,8 +499,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	ok, err := auth.VerifyPassword(req.Current, user.PasswordHash)
 	if err != nil {
-		slog.Error("校验口令失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeHashError(w, "校验口令失败", err)
 		return
 	}
 	if !ok {
@@ -450,8 +513,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := auth.HashPassword(req.New)
 	if err != nil {
-		slog.Error("散列口令失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeHashError(w, "散列口令失败", err)
 		return
 	}
 	// SetPassword 会顺带清空该用户的全部会话——改密后所有旧会话必须下线。

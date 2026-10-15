@@ -387,6 +387,7 @@ ci: 多架构镜像推送到 GHCR
 | `OCICORE_STATIC_DIR` | 空 | 前端产物目录，非空时优先于嵌入资源（开发用） |
 | `OCICORE_SESSION_TTL` | `12h` | 会话有效期，滑动续期 |
 | `OCICORE_TRUST_PROXY` | `false` | 是否采信 `X-Forwarded-*`。**仅在确实位于反向代理之后才可开启** |
+| `OCICORE_NOTIFY_ALLOWED_NETS` | 空 | 通知 webhook 额外放行的网段，逗号分隔（如 `10.0.0.0/8,192.168.1.5`）。默认禁止访问回环、内网与链路本地地址。通知请求不经过 `HTTP_PROXY`／`HTTPS_PROXY` 等环境代理（经代理时目标由代理解析，面板无法限制） |
 
 面板内还可配置：后台同步间隔、凭据复查间隔、审计日志保留期限、危险操作策略。
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -29,6 +30,36 @@ const (
 // ErrInvalidHash 表示存储的散列串格式无法解析。
 var ErrInvalidHash = errors.New("auth: 口令散列格式无效")
 
+// ErrBusy 表示同时进行的口令计算已达上限，本次直接拒绝。
+var ErrBusy = errors.New("auth: 口令校验繁忙，请稍后再试")
+
+// 每次 Argon2 占 64 MiB。不设上限时，登录接口来多少并发就同时算多少，
+// 1C1G 的小机器几十个请求就会被内存压垮——限流按 IP 计数，挡不住这个。
+// 所以全局只允许 maxActiveHashes 个同时计算，另外最多 maxQueuedHashes 个排队，
+// 再多的请求立即拿到 ErrBusy，不再占内存也不再堆积。
+const (
+	maxActiveHashes = 2
+	maxQueuedHashes = 16
+)
+
+var (
+	hashSlots    = make(chan struct{}, maxActiveHashes)
+	hashInFlight atomic.Int32
+)
+
+// idKey 是带全局并发闸门的 argon2.IDKey。
+func idKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) ([]byte, error) {
+	if hashInFlight.Add(1) > maxActiveHashes+maxQueuedHashes {
+		hashInFlight.Add(-1)
+		return nil, ErrBusy
+	}
+	defer hashInFlight.Add(-1)
+
+	hashSlots <- struct{}{}
+	defer func() { <-hashSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen), nil
+}
+
 // HashPassword 用 argon2id 散列口令，返回自描述的编码串，
 // 格式与 PHC 规范一致，便于日后调参而不破坏旧数据。
 func HashPassword(password string) (string, error) {
@@ -36,7 +67,10 @@ func HashPassword(password string) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return "", fmt.Errorf("auth: 生成盐失败: %w", err)
 	}
-	hash := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	hash, err := idKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	if err != nil {
+		return "", err
+	}
 
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonTime, argonThreads,
@@ -45,14 +79,17 @@ func HashPassword(password string) (string, error) {
 	), nil
 }
 
-// VerifyPassword 校验口令。返回的 error 只表示散列串本身有问题；
-// 口令不匹配通过 false 返回，调用方不应把两者区别对待地反馈给用户。
+// VerifyPassword 校验口令。返回的 error 表示散列串本身有问题，或计算繁忙
+// （ErrBusy）；口令不匹配通过 false 返回，调用方不应把两者区别对待地反馈给用户。
 func VerifyPassword(password, encoded string) (bool, error) {
 	params, salt, want, err := decodeHash(encoded)
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(password), salt, params.time, params.memory, params.threads, uint32(len(want)))
+	got, err := idKey([]byte(password), salt, params.time, params.memory, params.threads, uint32(len(want)))
+	if err != nil {
+		return false, err
+	}
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

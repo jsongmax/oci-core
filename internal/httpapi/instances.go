@@ -86,6 +86,9 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if isForcefulAction(action) && !s.requireDangerTOTP(w, r) {
+		return
+	}
 
 	inst, err := s.instances.Action(r.Context(), instanceID, action)
 	if err != nil {

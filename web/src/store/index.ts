@@ -7,7 +7,7 @@ import { toAccount, toInstance, toQuota } from '@/lib/adapt'
 import {
   accounts as accountsApi, auth as authApi, instances as instancesApi,
   insights, launch as launchApi, settings as settingsApi,
-  ApiError, errorText, type InstanceAction, type LaunchInput
+  ApiError, errorText, setDangerCodeProvider, type InstanceAction, type LaunchInput
 } from '@/api'
 import { connectEvents, type ServerEvent } from '@/api/events'
 
@@ -82,6 +82,8 @@ const state = reactive({
 
   drawer: null as DrawerRequest | null,
   confirm: null as ConfirmRequest | null,
+  /** 危险操作复核：后端要验证码时由 HTTP 层发起，DangerTotpPrompt 负责展示 */
+  dangerPrompt: null as { message: string, resolve: (code: string | null) => void } | null,
   toast: null as ToastPayload | null,
   paletteOpen: false,
 
@@ -240,6 +242,21 @@ function toastError(title: string, err: unknown) {
 }
 
 function ask(request: ConfirmRequest) { state.confirm = request }
+
+/**
+ * 弹出验证码框并等用户输入。同时只会有一个：新请求进来时先把旧的当作取消，
+ * 不然旧请求的 Promise 永远等不到结果。
+ */
+function requestDangerCode(message: string): Promise<string | null> {
+  state.dangerPrompt?.resolve(null)
+  return new Promise(resolve => {
+    state.dangerPrompt = {
+      message,
+      resolve: code => { state.dangerPrompt = null; resolve(code) }
+    }
+  })
+}
+setDangerCodeProvider(requestDangerCode)
 function openDrawer(request: DrawerRequest) { state.drawer = request }
 function closeDrawer() { state.drawer = null }
 

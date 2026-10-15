@@ -56,6 +56,9 @@ func (b *Box) Seal(plaintext []byte, aad string) (ciphertext, nonce []byte, err 
 	return ciphertext, nonce, nil
 }
 
+// NonceSize 返回 Seal 生成的 nonce 长度，供把 nonce 与密文拼在一起存储的调用方切分。
+func (b *Box) NonceSize() int { return b.aead.NonceSize() }
+
 // Open 解密。aad 必须与加密时完全一致，否则认证失败。
 func (b *Box) Open(ciphertext, nonce []byte, aad string) ([]byte, error) {
 	if len(nonce) != b.aead.NonceSize() {

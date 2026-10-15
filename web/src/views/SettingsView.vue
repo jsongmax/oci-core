@@ -484,7 +484,7 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
                  sub="关闭后行首复选框与批量操作条隐藏，批量接口同时拒绝"
                  @update:model-value="v => updateOptions({ allowBulkActions: v })" />
       <SwitchRow :model-value="state.options.reauthForDanger" title="危险操作需重新验证 TOTP"
-                 sub="L2 / L3 确认框追加一次 6 位验证码校验"
+                 sub="L2 / L3 操作需再输一次 6 位验证码，通过后 5 分钟内不再询问。需先绑定两步验证"
                  @update:model-value="v => updateOptions({ requireTotpForDanger: v })" />
       <SwitchRow v-model="state.options.confirmForceRestart" title="强制重启需要二次确认"
                  sub="按 L2 门槛处理。仅前端行为，不影响接口" />

@@ -108,7 +108,7 @@ func TestSendWebhookPostsPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(nil)
+	d := loopbackDispatcher()
 	ch := &store.Channel{Kind: KindWebhook, Config: map[string]string{"url": srv.URL}}
 
 	err := d.Send(context.Background(), ch, Message{
@@ -134,7 +134,7 @@ func TestSendDetectsBusinessErrorInBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(nil)
+	d := loopbackDispatcher()
 	ch := &store.Channel{Kind: KindWeCom, Config: map[string]string{"webhook": srv.URL}}
 
 	err := d.Send(context.Background(), ch, Message{Title: "测试"})
@@ -153,7 +153,7 @@ func TestSendReportsHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(nil)
+	d := loopbackDispatcher()
 	ch := &store.Channel{Kind: KindWebhook, Config: map[string]string{"url": srv.URL}}
 
 	err := d.Send(context.Background(), ch, Message{Title: "测试"})

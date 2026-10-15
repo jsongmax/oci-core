@@ -5,6 +5,7 @@
  *  1. 写操作自动带 CSRF 头（后端要求，见 docs/API.md）
  *  2. 错误统一成 ApiError，保留原始 OCI 错误码与处理建议
  *  3. 401 广播一次全局事件，由路由层决定跳登录还是弹两步验证
+ *  4. 危险操作要求复核时（403 danger_totp_*）向用户要验证码，带上后重发
  */
 
 /** 后端约定的 CSRF 请求头。浏览器不允许跨源请求携带自定义头。 */
@@ -13,6 +14,24 @@ const CSRF_VALUE = '1'
 
 /** 401 时广播的事件名。 */
 export const AUTH_REQUIRED_EVENT = 'oci:auth-required'
+
+/** 危险操作附带验证码的请求头，与后端 dangerCodeHeader 一致。 */
+const DANGER_CODE_HEADER = 'X-OCI-TOTP-Code'
+
+/** 后端要求（或拒绝了）危险操作验证码时的错误码。 */
+const DANGER_CODES = new Set(['danger_totp_required', 'danger_totp_invalid', 'danger_totp_reused'])
+
+/**
+ * 向用户索取验证码。返回 null 表示用户取消。
+ *
+ * 由 store 注册：HTTP 层不该知道弹窗长什么样。没注册时直接把错误抛出去。
+ */
+type DangerCodeProvider = (message: string) => Promise<string | null>
+let dangerCodeProvider: DangerCodeProvider | null = null
+
+export function setDangerCodeProvider(fn: DangerCodeProvider): void {
+  dangerCodeProvider = fn
+}
 
 export interface ApiErrorBody {
   code?: string
@@ -78,8 +97,28 @@ function buildUrl(path: string, query?: RequestOptions['query']): string {
   return qs ? `${path}?${qs}` : path
 }
 
+/**
+ * 危险操作被要求复核时，在这里补上验证码重发——业务代码不必知道这件事。
+ *
+ * 验证码错误或已被使用时后端会再次拒绝，带着原因重新问一次，直到成功或用户取消。
+ */
 async function request<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+  let code: string | undefined
+  for (;;) {
+    try {
+      return await send<T>(method, path, opts, code)
+    } catch (err) {
+      if (!(err instanceof ApiError) || !DANGER_CODES.has(err.code) || !dangerCodeProvider) throw err
+      const next = await dangerCodeProvider(err.message)
+      if (next === null) throw err
+      code = next
+    }
+  }
+}
+
+async function send<T>(method: Method, path: string, opts: RequestOptions, dangerCode?: string): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
+  if (dangerCode) headers[DANGER_CODE_HEADER] = dangerCode
 
   // 读操作不需要 CSRF 头，带上也无害，但保持与后端约定一致更清楚。
   if (method !== 'GET') {

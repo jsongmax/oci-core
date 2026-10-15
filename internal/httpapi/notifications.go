@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -226,6 +227,13 @@ func validateChannelConfig(kind string, config map[string]string) error {
 			if len(field.Options) > 0 && !hasOption(field.Options, config[field.Key]) {
 				return &inputError{msg: def.Label + " 渠道的「" + field.Label + "」取值无效"}
 			}
+			// 地址类字段只接受 http(s)。目的 IP 的限制在真正发送时按解析结果执行，
+			// 这里拦不住 DNS 重绑定，只负责尽早挡掉明显填错的值。
+			if v := strings.TrimSpace(config[field.Key]); v != "" && (field.Key == "url" || field.Key == "webhook") {
+				if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return &inputError{msg: def.Label + " 渠道的「" + field.Label + "」必须是 http(s) 地址"}
+				}
+			}
 		}
 		if len(missing) > 0 {
 			return errMissingFields(def.Label, missing)
@@ -293,6 +301,28 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	current, err := s.st.Settings(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	user := userFrom(r.Context())
+	// 打开复核却没有绑定两步验证，之后所有危险操作都会被挡住、又没有码可输。
+	if req.RequireTOTPForDanger != nil && *req.RequireTOTPForDanger && !user.TOTPEnabled {
+		writeError(w, http.StatusConflict, "totp_not_enabled",
+			"请先绑定两步验证，再开启危险操作复核")
+		return
+	}
+	if loosensDangerPolicy(current, req) {
+		// 账户没绑两步验证时复核本来就无从执行，这时允许直接关掉开关，
+		// 否则旧数据里"开着开关、没绑 TOTP"的用户会被永久锁住。
+		turningOffOnly := req.RequireTOTPForDanger != nil && !*req.RequireTOTPForDanger &&
+			req.AllowTerminate == nil && req.AllowBulkActions == nil && req.AuditRetentionDays == nil
+		if !(turningOffOnly && !user.TOTPEnabled) && !s.requireDangerTOTP(w, r) {
+			return
+		}
+	}
+
 	settings, err := s.st.UpdateSettings(r.Context(), store.SettingsUpdate{
 		AllowTerminate:       req.AllowTerminate,
 		AllowBulkActions:     req.AllowBulkActions,
@@ -315,7 +345,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		s.instances.SetSyncInterval(time.Duration(settings.SyncIntervalMinutes) * time.Minute)
 	}
 
-	user := userFrom(r.Context())
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "settings_update", IP: s.clientIP(r),
 	})
@@ -323,4 +352,22 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"settings": settings,
 		"notice":   "已保存并立即生效。",
 	})
+}
+
+// loosensDangerPolicy 判断这次设置修改是否在放宽危险操作的防护。
+//
+// 关掉复核、重新允许终止或批量、改审计保留期（缩短会清掉旧日志）都要先过
+// 复核，否则窃取会话的人第一步就能把门槛拆掉。收紧方向的修改不拦。
+func loosensDangerPolicy(cur store.Settings, req updateSettingsRequest) bool {
+	switch {
+	case cur.RequireTOTPForDanger && req.RequireTOTPForDanger != nil && !*req.RequireTOTPForDanger:
+		return true
+	case !cur.AllowTerminate && req.AllowTerminate != nil && *req.AllowTerminate:
+		return true
+	case !cur.AllowBulkActions && req.AllowBulkActions != nil && *req.AllowBulkActions:
+		return true
+	case req.AuditRetentionDays != nil && *req.AuditRetentionDays != cur.AuditRetentionDays:
+		return true
+	}
+	return false
 }

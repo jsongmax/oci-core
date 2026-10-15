@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,10 @@ type Config struct {
 	// TrustProxyHeaders 决定是否采信 X-Forwarded-For / X-Forwarded-Proto。
 	// 只有确实部署在反向代理之后才应开启，否则客户端可以伪造来源 IP 绕过登录限流。
 	TrustProxyHeaders bool
+
+	// NotifyAllowedNets 是通知 webhook 额外允许访问的网段。
+	// 默认禁止通知请求访问回环、内网与链路本地地址，确需推到内网服务时在这里显式放行。
+	NotifyAllowedNets []netip.Prefix
 }
 
 // DBPath 返回数据库文件路径。
@@ -89,6 +94,14 @@ func Load() (Config, error) {
 		cfg.SessionTTL = d
 	}
 
+	if v := lookupEnv("NOTIFY_ALLOWED_NETS"); v != "" {
+		nets, err := parseAllowedNets(v)
+		if err != nil {
+			return cfg, fmt.Errorf("config: %sNOTIFY_ALLOWED_NETS 无效: %w", envPrefix, err)
+		}
+		cfg.NotifyAllowedNets = nets
+	}
+
 	abs, err := filepath.Abs(cfg.DataDir)
 	if err != nil {
 		return cfg, fmt.Errorf("config: 解析数据目录失败: %w", err)
@@ -124,4 +137,29 @@ func orDefault(v, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseAllowedNets 解析逗号分隔的网段或单个 IP，例如 "10.0.0.0/8,192.168.1.5"。
+func parseAllowedNets(s string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			p, err := netip.ParsePrefix(part)
+			if err != nil {
+				return nil, fmt.Errorf("网段 %q 无效: %w", part, err)
+			}
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(part)
+		if err != nil {
+			return nil, fmt.Errorf("地址 %q 无效: %w", part, err)
+		}
+		out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+	}
+	return out, nil
 }
