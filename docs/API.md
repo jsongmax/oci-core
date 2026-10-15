@@ -48,6 +48,11 @@ X-OCI-Tools: 1
 | `missing_account` | 缺少 `accountId` 查询参数 |
 | `quota_exceeded` | 配额不足 |
 | `rate_limited` | 登录失败次数过多 |
+| `busy` | 同时进行的口令计算过多（503），稍后重试 |
+| `already_initialized` | 系统已有用户，首次设置不可用 |
+| `danger_totp_required` | 危险操作复核已开启，需附带验证码（403） |
+| `danger_totp_invalid` / `danger_totp_reused` | 复核验证码错误 / 已被使用（403） |
+| `danger_totp_not_enrolled` | 复核已开启但账户未绑定两步验证（403） |
 
 ---
 
@@ -102,7 +107,7 @@ X-OCI-Tools: 1
   "id": "a3f1c2d4e5b60718", "alias": "东京主号", "code": "TYO", "colorIndex": 1,
   "tenancyOcid": "ocid1.tenancy.oc1..aaaa", "userOcid": "ocid1.user.oc1..aaaa",
   "fingerprint": "20:3b:97:13:…", "defaultRegion": "ap-tokyo-1",
-  "compartmentOcid": "", "proxyUrl": "", "enabled": true,
+  "compartmentOcid": "", "enabled": true,
   "status": "ok", "statusMessage": "", "lastCheckedAt": "2026-08-17T12:00:00Z",
   "subscribedRegions": ["ap-tokyo-1", "ap-osaka-1"], "homeRegion": "ap-tokyo-1",
   "email": "me@example.com", "tenancyName": "my-tenancy",
@@ -113,6 +118,8 @@ X-OCI-Tools: 1
 `status`：`unchecked` / `ok` / `error`。前端的 `checking` 是本地瞬时态。
 
 > **私钥永不出现在任何响应里，也没有导出接口。** 添加时提交 `privateKeyPem`，此后无法读回。
+>
+> 创建／修改账号时仍接受兼容字段 `proxyUrl`（完整代理地址），服务端会把它转成代理池里的一条（密码加密）并绑定，不保存原文，响应里也不再返回该字段。新客户端请用 `proxyId`。
 
 `POST /api/accounts` 可带 `proxyId`（代理池里的代理）：与账号在同一条 INSERT 里绑定，保存后的校验与此后的全部请求都走它。代理已绑给其他账号时返回 409 `proxy_shared`，账号不会落库；代理不存在返回 404。
 
@@ -729,3 +736,24 @@ Allow group <你的组> to read usage-report in tenancy
 | L3 | **删除账号** | `?confirm={账号别名}` |
 
 前端的确认框是体验，**这些校验才是防线**。
+
+### 危险操作复核（`requireTotpForDanger`）
+
+设置中打开后，下列接口要求请求头附带当前的两步验证码：
+
+```
+X-OCI-TOTP-Code: 123456
+```
+
+缺少时返回 `403 danger_totp_required`。验证码同样一次性，与登录第二步共用限流；通过后该会话 5 分钟内免再次输入（仅存于内存，服务重启后失效）。
+
+- 终止实例、改配置、更换公网 IP、开启 IPv6
+- 强制关机 / 强制重启；除批量开机外的批量操作
+- 引导卷与块存储的修改、分离与挂载
+- 覆盖写安全列表
+- 删除账号、启停账号、轮换密钥、修改身份域密码策略
+- 强制所有会话下线
+- 建立与删除容量守候任务；删除容量监控、通知渠道、代理
+- 放宽策略的设置修改：关闭复核本身、重新允许终止或批量、修改审计保留期
+
+开启前必须已绑定两步验证（否则 `409 totp_not_enabled`）；关闭两步验证时该开关随之关闭。

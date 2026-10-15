@@ -297,6 +297,10 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 			"单次批量操作最多 "+itoa(maxBulkSize)+" 台，请分批执行")
 		return
 	}
+	// 批量开机不会丢数据也不会断业务，其余批量动作一次波及多台机器，算危险操作。
+	if action != "START" && !s.requireDangerTOTP(w, r) {
+		return
+	}
 
 	results := make([]bulkResult, len(req.InstanceIDs))
 	var wg sync.WaitGroup

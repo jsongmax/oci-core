@@ -389,6 +389,7 @@ All via environment variables.
 | `OCICORE_STATIC_DIR` | empty | Frontend asset directory; takes precedence over embedded assets (development) |
 | `OCICORE_SESSION_TTL` | `12h` | Session lifetime, sliding renewal |
 | `OCICORE_TRUST_PROXY` | `false` | Whether to trust `X-Forwarded-*`. **Only enable behind a real reverse proxy** |
+| `OCICORE_NOTIFY_ALLOWED_NETS` | empty | Extra networks notification webhooks may reach, comma-separated (e.g. `10.0.0.0/8,192.168.1.5`). Loopback, private and link-local destinations are blocked by default. Notification requests ignore `HTTP_PROXY`/`HTTPS_PROXY` (through a proxy the target is resolved by the proxy, which the panel cannot restrict) |
 
 Configurable in the UI as well: background sync interval, credential re-check interval,
 audit log retention, dangerous-action policy.

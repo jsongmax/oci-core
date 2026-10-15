@@ -46,7 +46,6 @@ export interface AccountDTO {
   fingerprint: string
   defaultRegion: string
   compartmentOcid: string
-  proxyUrl: string
   enabled: boolean
   status: AccountStatusDTO
   statusMessage: string

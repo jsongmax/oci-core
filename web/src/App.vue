@@ -5,6 +5,7 @@ import AppSidebar from '@/components/AppSidebar.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import DangerTotpPrompt from '@/components/DangerTotpPrompt.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import DrawerHost from '@/components/DrawerHost.vue'
 
@@ -29,6 +30,7 @@ const bare = computed(() => route.meta.bare === true)
     </div>
     <DrawerHost />
     <ConfirmDialog />
+    <DangerTotpPrompt />
     <CommandPalette />
     <ToastHost />
   </div>

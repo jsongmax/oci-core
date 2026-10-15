@@ -213,53 +213,131 @@ func (s *Store) UpdateProxy(ctx context.Context, id string, up ProxyUpdate) (*Pr
 // 那些值必须自动接过来，否则用户升级完会发现代理静默失效——而这类
 // 失效不会报错，只会表现为"这个账号突然连不上了"。
 //
-// 幂等：已经有 proxy_id 的账号跳过；同一个出口被多个账号用过时，
-// 只有第一个能绑上（唯一约束 + 禁止共用），其余留空并保留原字段，
-// 由用户到界面上显式处理——那种情况下他本来就该重新分配。
-func (s *Store) migrateLegacyProxies(ctx context.Context) error {
+// 旧字段里是带明文密码的完整地址，迁移成功（或账号早已绑定代理池）后立即清空。
+// 迁不过去的（解析失败，或同一出口已绑给别的账号）也不能留明文：改写成密文
+// （AAD 绑定账号 ID），建连时由 LegacyProxyURL 解密兜底——不能为了清掉明文
+// 就让账号静默改成本机直连。这类账号仍由用户到界面上显式处理。
+//
+// 幂等：已经有 proxy_id 的账号跳过；已加密但仍未迁移的行每次启动都会再试一次。
+// changed 是改写过的账号行数。
+func (s *Store) migrateLegacyProxies(ctx context.Context) (changed int, err error) {
+	// 已绑定代理池的账号，旧字段不会再被读到（proxyFor 优先 proxy_id），留着只是泄露面。
+	if err := s.execCounting(ctx, &changed, `
+		UPDATE accounts SET proxy_url = ''
+		WHERE proxy_url != '' AND proxy_id IS NOT NULL AND proxy_id != ''`); err != nil {
+		return changed, fmt.Errorf("store: 清理已迁移的旧代理字段失败: %w", err)
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, alias, proxy_url FROM accounts
 		WHERE proxy_url != '' AND (proxy_id IS NULL OR proxy_id = '')`)
 	if err != nil {
-		return fmt.Errorf("store: 查询待迁移代理失败: %w", err)
+		return changed, fmt.Errorf("store: 查询待迁移代理失败: %w", err)
 	}
-	type legacy struct{ id, alias, url string }
+	type legacy struct{ id, alias, stored string }
 	var pending []legacy
 	for rows.Next() {
 		var l legacy
-		if err := rows.Scan(&l.id, &l.alias, &l.url); err != nil {
+		if err := rows.Scan(&l.id, &l.alias, &l.stored); err != nil {
 			rows.Close()
-			return err
+			return changed, err
 		}
 		pending = append(pending, l)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return changed, err
 	}
 
+	var errs []error
 	for _, l := range pending {
-		parsed, err := proxypool.ParseLine(l.url)
+		raw, err := s.openText(l.stored, aadLegacyProxyURL+l.id)
 		if err != nil {
-			// 解析不了就留着原样，不阻断启动。旧字段还在，
-			// proxyFor 的兜底分支仍会用它。
+			errs = append(errs, fmt.Errorf("账号 %s 的旧代理字段解密失败: %w", l.id, err))
 			continue
 		}
-		if parsed.Label == "" {
-			parsed.Label = l.alias
-		}
-		p, err := s.CreateProxy(ctx, parsed)
-		if errors.Is(err, ErrProxyExists) {
+		if pid, _, err := s.adoptProxyURL(ctx, raw, l.alias, l.id); err == nil {
+			if err := s.execCounting(ctx, &changed,
+				`UPDATE accounts SET proxy_id = ?, proxy_url = '', updated_at = ? WHERE id = ?`,
+				pid, nowUnix(), l.id); err != nil {
+				errs = append(errs, fmt.Errorf("账号 %s: %w", l.id, err))
+			}
 			continue
+		}
+		// 迁不过去：至少别再以明文躺在库里。
+		if isSealed(l.stored) {
+			continue
+		}
+		sealed, err := s.sealText(raw, aadLegacyProxyURL+l.id)
+		if err == nil {
+			err = s.execCounting(ctx, &changed,
+				`UPDATE accounts SET proxy_url = ? WHERE id = ? AND proxy_url = ?`, sealed, l.id, l.stored)
 		}
 		if err != nil {
-			continue
-		}
-		if err := s.BindProxy(ctx, l.id, p.ID); err != nil {
-			continue
+			errs = append(errs, fmt.Errorf("加密账号 %s 的旧代理字段失败: %w", l.id, err))
 		}
 	}
-	return nil
+	return changed, errors.Join(errs...)
+}
+
+// LegacyProxyURL 返回账号行上未能迁入代理池的旧代理地址（已解密），没有则为空串。
+//
+// 只供建连兜底使用，返回值含明文密码，不该进日志或 API 响应。
+func (s *Store) LegacyProxyURL(ctx context.Context, accountID string) (string, error) {
+	var stored string
+	err := s.db.QueryRowContext(ctx, `SELECT proxy_url FROM accounts WHERE id = ?`, accountID).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: 读取旧代理字段失败: %w", err)
+	}
+	raw, err := s.openText(stored, aadLegacyProxyURL+accountID)
+	if err != nil {
+		return "", fmt.Errorf("store: 解密旧代理字段失败（主密钥是否换过？）: %w", err)
+	}
+	return raw, nil
+}
+
+// adoptProxyURL 把一条完整代理地址（兼容旧的 proxyUrl 字段）落成代理池里的实体，
+// 返回可以绑给 accountID 的代理 id；created 表示是否新建了一条。
+//
+// 同一出口（协议、主机、端口、用户名）已在池里时复用那一条，并以本次提供的密码为准；
+// 但它若已绑给别的账号则拒绝——共用出口的规则与 BindProxy 相同。
+// 错误信息里不带原始地址：那里面可能就是明文密码。
+func (s *Store) adoptProxyURL(ctx context.Context, raw, label, accountID string) (id string, created bool, err error) {
+	parsed, err := proxypool.ParseLine(raw)
+	if err != nil {
+		return "", false, errors.New("代理地址无效，支持 host:port、host:port:user:pass、scheme://user:pass@host:port")
+	}
+	if parsed.Label == "" {
+		parsed.Label = label
+	}
+
+	p, err := s.CreateProxy(ctx, parsed)
+	switch {
+	case err == nil:
+		return p.ID, true, nil
+	case !errors.Is(err, ErrProxyExists):
+		return "", false, err
+	}
+
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM proxies WHERE scheme = ? AND host = ? AND port = ? AND username = ?`,
+		parsed.Scheme, parsed.Host, parsed.Port, parsed.Username).Scan(&id); err != nil {
+		return "", false, fmt.Errorf("store: 查询已有代理失败: %w", err)
+	}
+	bindings, err := s.ProxyBindings(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if len(proxypool.DuplicateOf(bindings, id, accountID)) > 0 {
+		return "", false, proxypool.ErrDuplicateBinding
+	}
+	if _, err := s.UpdateProxy(ctx, id, ProxyUpdate{Password: &parsed.Password}); err != nil {
+		return "", false, err
+	}
+	return id, false, nil
 }
 
 // RecordProxyCheck 写回一次存活检测的结果。

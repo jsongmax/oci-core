@@ -48,8 +48,9 @@ func Open(path string, box *cryptobox.Box) (*Store, error) {
 	}
 
 	// WAL 提升并发读性能；busy_timeout 避免瞬时锁冲突直接报错；
-	// foreign_keys 让 ON DELETE CASCADE 真正生效（SQLite 默认是关的）。
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	// foreign_keys 让 ON DELETE CASCADE 真正生效（SQLite 默认是关的）；
+	// secure_delete 让被删除或覆盖的内容在页内清零，凭据迁移成密文后不在空闲页里留下明文。
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=secure_delete(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: 打开数据库失败: %w", err)
@@ -73,10 +74,22 @@ func Open(path string, box *cryptobox.Box) (*Store, error) {
 	}
 
 	s := &Store{db: db, box: box}
+	ctx := context.Background()
+	// 升级前的 TOTP 密钥与渠道凭据是明文，启动时改写成密文。
+	// 失败不阻断启动：未迁移的行仍能按明文读出，下次启动会再试。
+	secrets, err := s.migratePlaintextSecrets(ctx)
+	if err != nil {
+		slog.Warn("加密旧版明文凭据失败，下次启动会重试", "err", err)
+	}
 	// 数据迁移放在建表与列迁移之后：它要写 proxies 表，也要用到 box 加密。
-	// 失败不阻断启动——旧的 proxy_url 字段还在，建连时有兜底分支。
-	if err := s.migrateLegacyProxies(context.Background()); err != nil {
+	// 失败不阻断启动——旧的 proxy_url 字段（已加密）还在，建连时有兜底分支。
+	proxies, err := s.migrateLegacyProxies(ctx)
+	if err != nil {
 		slog.Warn("旧代理配置迁移失败，将继续使用账号上的原字段", "err", err)
+	}
+	// 收尾放在所有迁移之后：任何一项改过数据都要把 WAL 合回主库。
+	if secrets+proxies > 0 {
+		s.checkpointAfterMigration(ctx)
 	}
 	return s, nil
 }

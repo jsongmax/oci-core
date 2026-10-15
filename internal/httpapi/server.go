@@ -57,6 +57,9 @@ type Server struct {
 	capacity  *capacitysvc.Service
 	billing   *billingsvc.Service
 	started   time.Time
+
+	// elevations 记录通过了危险操作复核的会话，见 danger.go。
+	elevations *dangerElevations
 }
 
 // New 构造服务并注册全部路由。
@@ -69,8 +72,10 @@ func New(deps Deps) *Server {
 		mux:       http.NewServeMux(),
 		logins:    newAttemptLimiter(5, 15*time.Minute),
 		quotas:    newQuotaCache(),
-		notifier:  notify.NewDispatcher(deps.Store),
+		notifier:  notify.NewDispatcher(deps.Store, notify.WithAllowedNets(deps.Config.NotifyAllowedNets)),
 		started:   time.Now(),
+
+		elevations: newDangerElevations(),
 	}
 	if s.conns == nil {
 		s.conns = ociconn.New(deps.Store)
@@ -107,6 +112,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/logout", s.guard(s.requireSession(s.handleLogout)))
 
 	// 需要完整会话。
+	//
+	// 套了 s.danger 的接口对应前端 L2 / L3 确认框，「危险操作需重新验证 TOTP」
+	// 打开时要求附带验证码。只在部分参数下才危险的接口（强制关机、批量操作、
+	// 启停账号与轮换密钥、放宽策略的设置）在处理器里自己判断。
 	s.mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
 	s.mux.HandleFunc("POST /api/auth/totp/setup", s.guard(s.requireAuth(s.handleTOTPSetup)))
 	s.mux.HandleFunc("POST /api/auth/totp/enable", s.guard(s.requireAuth(s.handleTOTPEnable)))
@@ -117,7 +126,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/accounts", s.guard(s.requireAuth(s.handleCreateAccount)))
 	s.mux.HandleFunc("GET /api/accounts/{id}", s.requireAuth(s.handleGetAccount))
 	s.mux.HandleFunc("PATCH /api/accounts/{id}", s.guard(s.requireAuth(s.handleUpdateAccount)))
-	s.mux.HandleFunc("DELETE /api/accounts/{id}", s.guard(s.requireAuth(s.handleDeleteAccount)))
+	s.mux.HandleFunc("DELETE /api/accounts/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteAccount))))
 	s.mux.HandleFunc("POST /api/accounts/{id}/check", s.guard(s.requireAuth(s.handleCheckAccount)))
 	s.mux.HandleFunc("GET /api/accounts/{id}/regions", s.requireAuth(s.handleAccountRegions))
 
@@ -136,13 +145,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/instances/{id}/actions/{action}", s.guard(s.requireAuth(s.handleInstanceAction)))
 	s.mux.HandleFunc("PATCH /api/instances/{id}", s.guard(s.requireAuth(s.handleRenameInstance)))
 	s.mux.HandleFunc("PATCH /api/instances/{id}/note", s.guard(s.requireAuth(s.handleSetInstanceNote)))
-	s.mux.HandleFunc("POST /api/instances/{id}/reshape", s.guard(s.requireAuth(s.handleReshapeInstance)))
-	s.mux.HandleFunc("DELETE /api/instances/{id}", s.guard(s.requireAuth(s.handleTerminateInstance)))
+	s.mux.HandleFunc("POST /api/instances/{id}/reshape", s.guard(s.requireAuth(s.danger(s.handleReshapeInstance))))
+	s.mux.HandleFunc("DELETE /api/instances/{id}", s.guard(s.requireAuth(s.danger(s.handleTerminateInstance))))
 	s.mux.HandleFunc("POST /api/instances/{id}/dismiss-error", s.guard(s.requireAuth(s.handleDismissInstanceError)))
 
 	s.mux.HandleFunc("POST /api/instances/{id}/console", s.guard(s.requireAuth(s.handleCreateConsole)))
 	s.mux.HandleFunc("POST /api/instances/bulk", s.guard(s.requireAuth(s.handleBulkAction)))
-	s.mux.HandleFunc("POST /api/auth/sessions/revoke-all", s.guard(s.requireAuth(s.handleRevokeSessions)))
+	s.mux.HandleFunc("POST /api/auth/sessions/revoke-all", s.guard(s.requireAuth(s.danger(s.handleRevokeSessions))))
 
 	// 实时事件流。SSE 单向推送足够，不需要 WebSocket 的双向能力。
 	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.handleEvents))
@@ -151,24 +160,24 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/network/vcns", s.requireAuth(s.handleListVcns))
 	s.mux.HandleFunc("GET /api/network/subnets", s.requireAuth(s.handleListSubnets))
 	s.mux.HandleFunc("GET /api/network/security-lists", s.requireAuth(s.handleListSecurityLists))
-	s.mux.HandleFunc("PUT /api/network/security-lists/{id}", s.guard(s.requireAuth(s.handleUpdateSecurityList)))
+	s.mux.HandleFunc("PUT /api/network/security-lists/{id}", s.guard(s.requireAuth(s.danger(s.handleUpdateSecurityList))))
 	s.mux.HandleFunc("GET /api/network/rule-templates", s.requireAuth(s.handleRuleTemplates))
 	s.mux.HandleFunc("GET /api/network/public-ips", s.requireAuth(s.handleListPublicIPs))
 	s.mux.HandleFunc("POST /api/network/ensure", s.guard(s.requireAuth(s.handleEnsureNetwork)))
-	s.mux.HandleFunc("POST /api/instances/{id}/change-ip", s.guard(s.requireAuth(s.handleChangePublicIP)))
-	s.mux.HandleFunc("POST /api/instances/{id}/enable-ipv6", s.guard(s.requireAuth(s.handleEnableIPv6)))
+	s.mux.HandleFunc("POST /api/instances/{id}/change-ip", s.guard(s.requireAuth(s.danger(s.handleChangePublicIP))))
+	s.mux.HandleFunc("POST /api/instances/{id}/enable-ipv6", s.guard(s.requireAuth(s.danger(s.handleEnableIPv6))))
 
 	// 存储。
 	s.mux.HandleFunc("GET /api/storage/boot-volumes", s.requireAuth(s.handleListBootVolumes))
-	s.mux.HandleFunc("PATCH /api/storage/boot-volumes/{id}", s.guard(s.requireAuth(s.handleUpdateBootVolume)))
+	s.mux.HandleFunc("PATCH /api/storage/boot-volumes/{id}", s.guard(s.requireAuth(s.danger(s.handleUpdateBootVolume))))
 	s.mux.HandleFunc("GET /api/storage/volumes", s.requireAuth(s.handleListVolumes))
-	s.mux.HandleFunc("PATCH /api/storage/volumes/{id}", s.guard(s.requireAuth(s.handleUpdateVolume)))
-	s.mux.HandleFunc("POST /api/storage/boot-volume-attachments/detach", s.guard(s.requireAuth(s.handleDetachBootVolume)))
-	s.mux.HandleFunc("POST /api/storage/boot-volume-attachments/attach", s.guard(s.requireAuth(s.handleAttachBootVolume)))
+	s.mux.HandleFunc("PATCH /api/storage/volumes/{id}", s.guard(s.requireAuth(s.danger(s.handleUpdateVolume))))
+	s.mux.HandleFunc("POST /api/storage/boot-volume-attachments/detach", s.guard(s.requireAuth(s.danger(s.handleDetachBootVolume))))
+	s.mux.HandleFunc("POST /api/storage/boot-volume-attachments/attach", s.guard(s.requireAuth(s.danger(s.handleAttachBootVolume))))
 	// 数据盘挂载。救援模式要靠它把坏机器的引导卷挂到好机器上当普通盘改文件——
 	// 上面那对 boot-volume-attachments 只能让卷当引导卷，改不了里面的东西。
-	s.mux.HandleFunc("POST /api/storage/volume-attachments/attach", s.guard(s.requireAuth(s.handleAttachVolume)))
-	s.mux.HandleFunc("POST /api/storage/volume-attachments/detach", s.guard(s.requireAuth(s.handleDetachVolume)))
+	s.mux.HandleFunc("POST /api/storage/volume-attachments/attach", s.guard(s.requireAuth(s.danger(s.handleAttachVolume))))
+	s.mux.HandleFunc("POST /api/storage/volume-attachments/detach", s.guard(s.requireAuth(s.danger(s.handleDetachVolume))))
 
 	// 创建实例。
 	s.mux.HandleFunc("GET /api/launch/shapes", s.requireAuth(s.handleListShapes))
@@ -180,9 +189,9 @@ func (s *Server) routes() {
 	// 容量守候（抢机）。创建走 guard：它会持续调用 Oracle，
 	// 属于需要二次确认的操作，和普通只读接口不是一个量级。
 	s.mux.HandleFunc("GET /api/hunt", s.requireAuth(s.handleListHuntTasks))
-	s.mux.HandleFunc("POST /api/hunt", s.guard(s.requireAuth(s.handleCreateHuntTask)))
+	s.mux.HandleFunc("POST /api/hunt", s.guard(s.requireAuth(s.danger(s.handleCreateHuntTask))))
 	s.mux.HandleFunc("POST /api/hunt/{id}/{action}", s.guard(s.requireAuth(s.handleSetHuntState)))
-	s.mux.HandleFunc("DELETE /api/hunt/{id}", s.guard(s.requireAuth(s.handleDeleteHuntTask)))
+	s.mux.HandleFunc("DELETE /api/hunt/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteHuntTask))))
 
 	// 容量监控。查询本身是只读的（Oracle 的容量报告接口，不创建任何资源），
 	// 所以 probe 不走 guard；增删监控项会影响后台轮询，走 guard。
@@ -190,18 +199,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/capacity/probe", s.requireAuth(s.handleProbeCapacity))
 	s.mux.HandleFunc("POST /api/capacity", s.guard(s.requireAuth(s.handleCreateCapacityWatch)))
 	s.mux.HandleFunc("POST /api/capacity/{id}/{action}", s.guard(s.requireAuth(s.handleSetCapacityWatchEnabled)))
-	s.mux.HandleFunc("DELETE /api/capacity/{id}", s.guard(s.requireAuth(s.handleDeleteCapacityWatch)))
+	s.mux.HandleFunc("DELETE /api/capacity/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteCapacityWatch))))
 
 	// 身份域密码策略。读是只读；写会改变整个租户的登录行为，走 guard。
 	s.mux.HandleFunc("GET /api/accounts/{id}/password-policy", s.requireAuth(s.handleGetPasswordPolicy))
-	s.mux.HandleFunc("PATCH /api/accounts/{id}/password-policy", s.guard(s.requireAuth(s.handleUpdatePasswordPolicy)))
+	s.mux.HandleFunc("PATCH /api/accounts/{id}/password-policy", s.guard(s.requireAuth(s.danger(s.handleUpdatePasswordPolicy))))
 
 	// 代理池。读操作不走 guard；导入、绑定、改删都会影响所有账号出网，
 	// 一律走 guard。检测是纯出网请求，不打 Oracle 接口，也不走 guard。
 	s.mux.HandleFunc("GET /api/proxies", s.requireAuth(s.handleListProxies))
 	s.mux.HandleFunc("POST /api/proxies/import", s.guard(s.requireAuth(s.handleImportProxies)))
 	s.mux.HandleFunc("PATCH /api/proxies/{id}", s.guard(s.requireAuth(s.handleUpdateProxy)))
-	s.mux.HandleFunc("DELETE /api/proxies/{id}", s.guard(s.requireAuth(s.handleDeleteProxy)))
+	s.mux.HandleFunc("DELETE /api/proxies/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteProxy))))
 	s.mux.HandleFunc("POST /api/proxies/bind", s.guard(s.requireAuth(s.handleBindProxy)))
 	s.mux.HandleFunc("POST /api/proxies/check", s.requireAuth(s.handleCheckProxies))
 	s.mux.HandleFunc("POST /api/proxies/{id}/check", s.requireAuth(s.handleCheckProxies))
@@ -220,7 +229,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/notifications/channels", s.requireAuth(s.handleListChannels))
 	s.mux.HandleFunc("POST /api/notifications/channels", s.guard(s.requireAuth(s.handleCreateChannel)))
 	s.mux.HandleFunc("PATCH /api/notifications/channels/{id}", s.guard(s.requireAuth(s.handleUpdateChannel)))
-	s.mux.HandleFunc("DELETE /api/notifications/channels/{id}", s.guard(s.requireAuth(s.handleDeleteChannel)))
+	s.mux.HandleFunc("DELETE /api/notifications/channels/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteChannel))))
 	s.mux.HandleFunc("POST /api/notifications/channels/{id}/test", s.guard(s.requireAuth(s.handleTestChannel)))
 	s.mux.HandleFunc("GET /api/notifications/events", s.requireAuth(s.handleNotificationEvents))
 	s.mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleGetSettings))
@@ -399,8 +408,12 @@ func newAttemptLimiter(max int, window time.Duration) *attemptLimiter {
 	return &attemptLimiter{max: max, window: window, buckets: make(map[string]*bucket)}
 }
 
-// Allow 报告该 key 是否还能再尝试一次，并返回剩余次数。
-func (l *attemptLimiter) Allow(key string) (allowed bool, remaining int) {
+// Reserve 在请求进入时预占一次尝试额度，返回是否放行与预占后的剩余次数。
+//
+// 额度必须在校验之前扣：以前是先 Allow 只看计数、校验失败后才 Fail 加一，
+// 进行中的请求不占额度，首批 Argon2 算完之前同一 IP 能放进任意多个请求。
+// 现在每次进入都算一次尝试，成功后由 Reset 清零。
+func (l *attemptLimiter) Reserve(key string) (allowed bool, remaining int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -417,22 +430,8 @@ func (l *attemptLimiter) Allow(key string) (allowed bool, remaining int) {
 	if b.count >= l.max {
 		return false, 0
 	}
-	return true, l.max - b.count
-}
-
-// Fail 记录一次失败尝试。
-func (l *attemptLimiter) Fail(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	b, ok := l.buckets[key]
-	if !ok || now.After(b.resetAt) {
-		b = &bucket{resetAt: now.Add(l.window)}
-		l.buckets[key] = b
-	}
 	b.count++
-	b.lastTouch = now
+	return true, l.max - b.count
 }
 
 // Reset 在登录成功后清除计数。

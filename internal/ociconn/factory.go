@@ -132,8 +132,9 @@ func (f *Factory) proxyFor(ctx context.Context, acc *store.Account) (string, err
 	}
 	if proxyID == "" {
 		// 兜底：代理升级成独立实体之前，地址直接存在账号行上。
-		// 启动迁移会把它搬进 proxies 表，这里是迁移没跑成时的保险。
-		return acc.ProxyURL, nil
+		// 启动迁移会把它搬进 proxies 表；迁不过去的（例如出口与别的账号冲突）
+		// 以密文留在原字段，这里解密后照用，不静默改成直连。
+		return f.st.LegacyProxyURL(ctx, acc.ID)
 	}
 	u, err := f.st.ProxyURL(ctx, proxyID)
 	if err != nil {

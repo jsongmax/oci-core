@@ -46,7 +46,9 @@ type createAccountRequest struct {
 	PrivateKeyPem   string `json:"privateKeyPem"`
 	DefaultRegion   string `json:"defaultRegion"`
 	CompartmentOcid string `json:"compartmentOcid"`
-	ProxyUrl        string `json:"proxyUrl"`
+	// ProxyUrl 是兼容旧客户端的完整代理地址，服务端会转成代理池里的加密实体并绑定，
+	// 不会原样保存，也不会出现在任何响应里。ProxyID 非空时忽略。
+	ProxyUrl string `json:"proxyUrl"`
 	// ProxyID 是代理池里的代理，创建时就绑上，保存后的校验也走它。
 	ProxyID string `json:"proxyId"`
 	// SkipCheck 为 true 时跳过保存后的连通性校验（离线环境下有用）。
@@ -129,6 +131,10 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 			"私钥不能为空。若不想修改私钥，请不要提交该字段。")
 		return
 	}
+	// 启停账号与轮换密钥对应前端的 L2 确认；改别名、颜色之类不算。
+	if (req.Enabled != nil || req.PrivateKeyPem != nil) && !s.requireDangerTOTP(w, r) {
+		return
+	}
 
 	acc, err := s.st.UpdateAccount(r.Context(), r.PathValue("id"), store.AccountUpdate{
 		Alias:           req.Alias,
@@ -143,6 +149,10 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		PrivateKeyPEM:   req.PrivateKeyPem,
 	})
 	if err != nil {
+		if errors.Is(err, proxypool.ErrDuplicateBinding) {
+			writeProxySharedError(w)
+			return
+		}
 		s.writeAccountInputError(w, err)
 		return
 	}

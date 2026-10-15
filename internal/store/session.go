@@ -29,17 +29,55 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// CreateSession 记录一个新会话，返回值即写入 Cookie 的原始令牌。
-// 原始令牌只在这一刻存在于内存中，此后无法从库中还原。
+// ErrAuthStateChanged 表示签发会话时，用户的认证状态（口令或 TOTP）已与调用方读到的不同。
+// 调用方应拒绝本次签发，让用户重新走认证流程。
+var ErrAuthStateChanged = errors.New("store: 认证状态已变化")
+
+// CreateSession 记录一个新会话。原始令牌只在这一刻存在于内存中，此后无法从库中还原。
+//
+// totpVerified 为 true 的会话只能签给当前**未启用** TOTP 的用户：判断与插入是同一条
+// INSERT ... SELECT，SQLite 单条语句原子，不存在"先读用户再插入"的窗口。
+// 已启用 TOTP 的用户只能拿到半登录会话，通过 MarkTOTPVerified 提升，
+// 或在刚校验过验证码之后用 CreateTOTPVerifiedSession。
+// 条件不满足（含用户不存在）时返回 ErrAuthStateChanged。
 func (s *Store) CreateSession(ctx context.Context, userID, token, ip, userAgent string, ttl time.Duration, totpVerified bool) error {
+	cond := `id = ?`
+	args := []any{userID}
+	if totpVerified {
+		cond += ` AND totp_enabled = 0`
+	}
+	return s.insertSession(ctx, token, ip, userAgent, ttl, totpVerified, cond, args)
+}
+
+// CreateLoginSession 为一次口令登录签发会话，并要求用户状态仍与 snapshot 一致。
+//
+// 登录在 Argon2 校验之前读出用户，校验要花上百毫秒。这期间若用户启用了 TOTP 或改了口令，
+// 按旧快照签发的会话就会绕过新状态（例如 totp_verified=1 却面对已启用 TOTP 的用户）。
+// 这里把快照里的 totp_enabled 与 password_hash 一并写进插入条件，状态已变则返回 ErrAuthStateChanged。
+func (s *Store) CreateLoginSession(ctx context.Context, snapshot *User, token, ip, userAgent string, ttl time.Duration) error {
+	return s.insertSession(ctx, token, ip, userAgent, ttl, !snapshot.TOTPEnabled,
+		`id = ? AND totp_enabled = ? AND password_hash = ?`,
+		[]any{snapshot.ID, boolToInt(snapshot.TOTPEnabled), snapshot.PasswordHash})
+}
+
+// CreateTOTPVerifiedSession 为已启用 TOTP、且本次请求刚校验过一次新鲜验证码的用户签发完整会话。
+// 用户此刻未启用 TOTP 时返回 ErrAuthStateChanged。
+func (s *Store) CreateTOTPVerifiedSession(ctx context.Context, userID, token, ip, userAgent string, ttl time.Duration) error {
+	return s.insertSession(ctx, token, ip, userAgent, ttl, true, `id = ? AND totp_enabled = 1`, []any{userID})
+}
+
+// insertSession 仅当 users 中存在满足 cond 的行时插入会话。
+func (s *Store) insertSession(ctx context.Context, token, ip, userAgent string, ttl time.Duration, totpVerified bool, cond string, condArgs []any) error {
 	now := time.Now()
-	_, err := s.db.ExecContext(ctx, `
+	args := append([]any{hashToken(token), boolToInt(totpVerified), ip, userAgent, now.Unix(), now.Add(ttl).Unix()}, condArgs...)
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO sessions (token_hash, user_id, totp_verified, ip, user_agent, created_at, expires_at)
-		VALUES (?,?,?,?,?,?,?)`,
-		hashToken(token), userID, boolToInt(totpVerified), ip, userAgent,
-		now.Unix(), now.Add(ttl).Unix())
+		SELECT ?, id, ?, ?, ?, ?, ? FROM users WHERE `+cond, args...)
 	if err != nil {
 		return fmt.Errorf("store: 创建会话失败: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAuthStateChanged
 	}
 	return nil
 }

@@ -12,6 +12,9 @@ import (
 
 // Channel 是一个通知渠道。
 //
+// Config 里有 Telegram token、SMTP 密码、群机器人 webhook 等凭据，
+// 整份 JSON 以 AES-GCM 密文落库（AAD 绑定渠道 ID），这里是解密后的明文。
+//
 // Config 用 map 而非具体结构体：各渠道需要的字段差异很大
 // （Telegram 要 token 和 chatId，SMTP 要五六个字段），
 // 让 notify 包各自解析比在这里定义一个巨大的联合结构清楚得多。
@@ -57,7 +60,7 @@ func (s *Store) ListChannels(ctx context.Context) ([]Channel, error) {
 
 	out := make([]Channel, 0, 8)
 	for rows.Next() {
-		ch, err := scanChannel(rows)
+		ch, err := s.scanChannel(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +73,7 @@ func (s *Store) ListChannels(ctx context.Context) ([]Channel, error) {
 func (s *Store) GetChannel(ctx context.Context, id string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+channelColumns+` FROM notification_channels WHERE id = ?`, id)
-	ch, err := scanChannel(row)
+	ch, err := s.scanChannel(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -90,9 +93,9 @@ func (s *Store) CreateChannel(ctx context.Context, in NewChannel) (*Channel, err
 	if err != nil {
 		return nil, err
 	}
-	configJSON, err := json.Marshal(orMap(in.Config))
+	configJSON, err := s.sealChannelConfig(id, orMap(in.Config))
 	if err != nil {
-		return nil, fmt.Errorf("store: 序列化渠道配置失败: %w", err)
+		return nil, err
 	}
 	eventsJSON, err := json.Marshal(orSlice(in.Events))
 	if err != nil {
@@ -103,7 +106,7 @@ func (s *Store) CreateChannel(ctx context.Context, in NewChannel) (*Channel, err
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO notification_channels (id, kind, name, config, events, enabled, created_at, updated_at)
 		VALUES (?,?,?,?,?,1,?,?)`,
-		id, in.Kind, strings.TrimSpace(in.Name), string(configJSON), string(eventsJSON), now, now)
+		id, in.Kind, strings.TrimSpace(in.Name), configJSON, string(eventsJSON), now, now)
 	if err != nil {
 		return nil, fmt.Errorf("store: 创建通知渠道失败: %w", err)
 	}
@@ -128,12 +131,12 @@ func (s *Store) UpdateChannel(ctx context.Context, id string, up ChannelUpdate) 
 		args = append(args, name)
 	}
 	if up.Config != nil {
-		data, err := json.Marshal(up.Config)
+		sealed, err := s.sealChannelConfig(id, up.Config)
 		if err != nil {
-			return nil, fmt.Errorf("store: 序列化渠道配置失败: %w", err)
+			return nil, err
 		}
 		sets = append(sets, "config = ?")
-		args = append(args, string(data))
+		args = append(args, sealed)
 	}
 	if up.Events != nil {
 		data, err := json.Marshal(up.Events)
@@ -180,7 +183,20 @@ func (s *Store) RecordChannelSend(ctx context.Context, id, errMsg string) error 
 	return nil
 }
 
-func scanChannel(sc rowScanner) (*Channel, error) {
+// sealChannelConfig 序列化并加密渠道配置。
+func (s *Store) sealChannelConfig(id string, config map[string]string) (string, error) {
+	data, err := json.Marshal(config)
+	if err != nil {
+		return "", fmt.Errorf("store: 序列化渠道配置失败: %w", err)
+	}
+	sealed, err := s.sealText(string(data), aadChannelConfig+id)
+	if err != nil {
+		return "", fmt.Errorf("store: 加密渠道配置失败: %w", err)
+	}
+	return sealed, nil
+}
+
+func (s *Store) scanChannel(sc rowScanner) (*Channel, error) {
 	var (
 		ch         Channel
 		configJSON string
@@ -197,7 +213,13 @@ func scanChannel(sc rowScanner) (*Channel, error) {
 	}
 
 	ch.Config = map[string]string{}
-	_ = json.Unmarshal([]byte(configJSON), &ch.Config)
+	// 解不开时不让整张渠道列表跟着失败：配置置空、原因写进 LastError，
+	// 发送会因缺少字段报错，用户在通知页能看到并重新填写。
+	if plain, err := s.openText(configJSON, aadChannelConfig+ch.ID); err != nil {
+		ch.LastError = "渠道配置解密失败（主密钥是否换过？），请重新填写配置"
+	} else {
+		_ = json.Unmarshal([]byte(plain), &ch.Config)
+	}
 	ch.Events = []string{}
 	_ = json.Unmarshal([]byte(eventsJSON), &ch.Events)
 

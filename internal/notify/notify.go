@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/smtp"
 	"strings"
 	"sync"
@@ -146,11 +147,27 @@ type Dispatcher struct {
 	client *http.Client
 }
 
-// NewDispatcher 创建分发器。
-func NewDispatcher(st *store.Store) *Dispatcher {
+// Option 调整分发器的行为。
+type Option func(*dispatcherOptions)
+
+type dispatcherOptions struct {
+	allowedNets []netip.Prefix
+}
+
+// WithAllowedNets 放行默认禁止的内网目的地，见 egress.go。
+func WithAllowedNets(nets []netip.Prefix) Option {
+	return func(o *dispatcherOptions) { o.allowedNets = append(o.allowedNets, nets...) }
+}
+
+// NewDispatcher 创建分发器。HTTP 类渠道默认不能访问回环、内网与链路本地地址。
+func NewDispatcher(st *store.Store, opts ...Option) *Dispatcher {
+	var o dispatcherOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	return &Dispatcher{
 		st:     st,
-		client: &http.Client{Timeout: sendTimeout},
+		client: newHTTPClient(o.allowedNets),
 	}
 }
 

@@ -37,7 +37,6 @@ type Account struct {
 	Fingerprint     string     `json:"fingerprint"`
 	DefaultRegion   string     `json:"defaultRegion"`
 	CompartmentOCID string     `json:"compartmentOcid"`
-	ProxyURL        string     `json:"proxyUrl"`
 	Enabled         bool       `json:"enabled"`
 	Status          string     `json:"status"`
 	StatusMessage   string     `json:"statusMessage"`
@@ -98,7 +97,9 @@ type NewAccount struct {
 	PrivateKeyPEM   string
 	DefaultRegion   string
 	CompartmentOCID string
-	ProxyURL        string
+	// ProxyURL 是兼容旧客户端的完整代理地址。它不会原样落库：
+	// 创建时解析成代理池里的一条（密码加密）并绑定，ProxyID 非空时忽略。
+	ProxyURL string
 	// ProxyID 是代理池里的一条代理，创建时就绑上。
 	//
 	// 必须和账号在同一条 INSERT 里写入，而不是建完再绑：中间哪怕隔一瞬，
@@ -113,8 +114,9 @@ type AccountUpdate struct {
 	ColorIndex      *int
 	DefaultRegion   *string
 	CompartmentOCID *string
-	ProxyURL        *string
-	Enabled         *bool
+	// ProxyURL 非 nil 时：空串只清除旧版遗留地址，非空则转成代理池实体并绑定。
+	ProxyURL *string
+	Enabled  *bool
 	// PrivateKeyPEM 非 nil 时轮换私钥。空字符串是非法输入，由调用方拦截。
 	PrivateKeyPEM *string
 	Fingerprint   *string
@@ -122,7 +124,7 @@ type AccountUpdate struct {
 }
 
 const accountColumns = `id, alias, code, color_index, tenancy_ocid, user_ocid, fingerprint,
-	default_region, compartment_ocid, proxy_url, enabled, status, status_message,
+	default_region, compartment_ocid, enabled, status, status_message,
 	last_checked_at, created_at, updated_at, subscribed_regions, home_region,
 	email, tenancy_name, payment_model, subscription_state,
 	subscription_starts_at, subscription_ends_at`
@@ -179,7 +181,10 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 	}
 
 	// 一条代理只能绑一个账号，规则与 BindProxy 相同。
-	var proxyID any
+	var (
+		proxyID      any
+		adoptedProxy string // 本次从 ProxyURL 新建的代理，账号写入失败时要删掉
+	)
 	if pid := strings.TrimSpace(in.ProxyID); pid != "" {
 		if _, err := s.GetProxy(ctx, pid); err != nil {
 			return nil, err
@@ -192,18 +197,31 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 			return nil, proxypool.ErrDuplicateBinding
 		}
 		proxyID = pid
+	} else if strings.TrimSpace(in.ProxyURL) != "" {
+		pid, created, err := s.adoptProxyURL(ctx, in.ProxyURL, alias, id)
+		if err != nil {
+			return nil, err
+		}
+		if created {
+			adoptedProxy = pid
+		}
+		proxyID = pid
 	}
 
 	now := nowUnix()
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO accounts (id, alias, code, color_index, tenancy_ocid, user_ocid, fingerprint,
-			key_ciphertext, key_nonce, default_region, compartment_ocid, proxy_url, proxy_id,
+			key_ciphertext, key_nonce, default_region, compartment_ocid, proxy_id,
 			enabled, status, status_message, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,'',?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,'',?,?)`,
 		id, alias, code, colorIndex, creds.TenancyOCID, creds.UserOCID, creds.Fingerprint,
-		ciphertext, nonce, creds.Region, strings.TrimSpace(in.CompartmentOCID), strings.TrimSpace(in.ProxyURL),
+		ciphertext, nonce, creds.Region, strings.TrimSpace(in.CompartmentOCID),
 		proxyID, StatusUnchecked, now, now)
 	if err != nil {
+		if adoptedProxy != "" {
+			// 账号没写进去，刚建的代理就成了没人知道来历的孤儿。
+			_, _ = s.db.ExecContext(ctx, `DELETE FROM proxies WHERE id = ?`, adoptedProxy)
+		}
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("%w: 该租户或代号已被占用", ErrConflict)
 		}
@@ -288,7 +306,15 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 		add("compartment_ocid = ?", strings.TrimSpace(*up.CompartmentOCID))
 	}
 	if up.ProxyURL != nil {
-		add("proxy_url = ?", strings.TrimSpace(*up.ProxyURL))
+		// 无论哪种情况，旧版明文地址都不再保留。
+		add("proxy_url = ?", "")
+		if raw := strings.TrimSpace(*up.ProxyURL); raw != "" {
+			pid, _, err := s.adoptProxyURL(ctx, raw, current.Alias, id)
+			if err != nil {
+				return nil, err
+			}
+			add("proxy_id = ?", pid)
+		}
 	}
 	if up.Enabled != nil {
 		add("enabled = ?", boolToInt(*up.Enabled))
@@ -553,7 +579,7 @@ func scanAccount(sc rowScanner) (*Account, error) {
 	)
 	err := sc.Scan(
 		&a.ID, &a.Alias, &a.Code, &a.ColorIndex, &a.TenancyOCID, &a.UserOCID, &a.Fingerprint,
-		&a.DefaultRegion, &a.CompartmentOCID, &a.ProxyURL, &enabled, &a.Status, &a.StatusMessage,
+		&a.DefaultRegion, &a.CompartmentOCID, &enabled, &a.Status, &a.StatusMessage,
 		&lastCheck, &created, &updated, &regionsCSV, &a.HomeRegion,
 		&a.Email, &a.TenancyName,
 		&a.PaymentModel, &a.SubscriptionState, &subStarts, &subEnds,
