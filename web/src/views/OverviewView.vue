@@ -273,6 +273,7 @@ const timeline = computed(() =>
     </section>
 
     <div class="grid-6-4">
+      <div class="col-left">
       <SectionCard title="实例分布矩阵" note="行为账号，列为区域，色块深浅表示密度">
         <!-- 列数必须跟着区域数走。写死列数时，格子会在错误的位置换行——
              1 账号 1 区域刚好排成一行看不出问题，接第二个账号就散了。 -->
@@ -321,6 +322,7 @@ const timeline = computed(() =>
           <span class="tl__at mono">{{ t.at }}</span>
         </div>
       </SectionCard>
+      </div>
 
       <SectionCard title="配额与用量"
                    :note="hiddenQuotaAccounts > 0
@@ -368,9 +370,10 @@ const timeline = computed(() =>
 .alerts__text { flex: 1 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .alerts__detail { flex: 0 0 auto; font-size: 11px; color: var(--text-tertiary); }
 
-/* 左列可以放多张卡，配额卡始终占右列。
-   显式指定网格位置而不是靠文档流：卡片是条件渲染的（守候卡没任务就不存在），
-   靠顺序自动排会让配额卡在没有守候卡时跳到左列去。 */
+/* 左列的卡片装进一个纵向容器，网格只有左右两格，配额卡固定在右列。
+   卡片是条件渲染的（守候卡没任务就不存在），放进容器后不会影响配额卡的位置。
+   以前让配额卡 grid-row: 1 / span 99 跨行：隐式生成的 99 行之间各算一次
+   gap，页面底部凭空多出约 1500px 空白。 */
 .grid-6-4 {
   margin-top: 24px;
   display: grid;
@@ -378,8 +381,7 @@ const timeline = computed(() =>
   gap: 16px;
   align-items: start;
 }
-.grid-6-4 > :last-child { grid-column: 2; grid-row: 1 / span 99; }
-.grid-6-4 > :not(:last-child) { grid-column: 1; }
+.col-left { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .stack { min-width: 0; }
 
 .hunt {
@@ -416,9 +418,5 @@ const timeline = computed(() =>
 @media (max-width: 1279px) {
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .grid-6-4 { grid-template-columns: 1fr; }
-  /* 单列时必须把显式定位撤掉。留着 grid-column: 2 会让浏览器凭空造出
-     第二条隐式列，配额卡跑到屏幕外，看起来就是这张卡整个消失了。 */
-  .grid-6-4 > :last-child,
-  .grid-6-4 > :not(:last-child) { grid-column: 1; grid-row: auto; }
 }
 </style>
