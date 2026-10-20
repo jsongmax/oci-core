@@ -471,7 +471,14 @@ function applyEvent(event: ServerEvent): void {
         inst.anomaly = false
         inst.lastError = undefined
         inst.settledAt = Date.now()
-        window.setTimeout(() => { inst.settledAt = undefined }, 1200)
+        // 按 id 重新找：下面的 refreshInstances 会整体替换 state.instances，
+        // 并把 settledAt 拷到新对象上。清旧对象的话新对象上的高光永远不消失，
+        // 扫光动画结束后那条渐变就一直停在行首。
+        const id = inst.id
+        window.setTimeout(() => {
+          const cur = state.instances.find(i => i.id === id)
+          if (cur) cur.settledAt = undefined
+        }, 1200)
         announceSettled(inst, previous, next)
         // 落定时公网 IP 等字段可能变了，补一次全量。
         void refreshInstances()
