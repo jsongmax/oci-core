@@ -144,6 +144,8 @@ export interface KvItem {
    * 复制仍然复制原文。
    */
   secret?: MaskKind
+  /** 非空时值渲染成外链，新标签页打开。 */
+  href?: string
 }
 
 /** CheckList 的一项（权限自检、连接校验、诊断） */

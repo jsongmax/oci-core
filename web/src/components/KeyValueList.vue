@@ -30,6 +30,9 @@ async function onCopy(item: KvItem) {
           :style="{ color: item.tone ?? 'var(--text-primary)' }">
         <MaskedText :value="item.v" :kind="item.secret" :copyable="item.copyable" />
       </dd>
+      <dd v-else-if="item.href" :class="{ mono: item.mono }">
+        <a :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.v }}</a>
+      </dd>
       <dd v-else :class="{ mono: item.mono, 'is-copyable': item.copyable }"
           :style="{ color: item.tone ?? 'var(--text-primary)' }"
           @click="onCopy(item)">{{ item.v }}</dd>
@@ -46,4 +49,6 @@ dt, dd {
 dt { color: var(--text-secondary); }
 dd.is-copyable { cursor: copy; }
 dd.is-copyable:hover { color: var(--accent); }
+dd a { color: var(--accent); text-decoration: none; }
+dd a:hover { text-decoration: underline; }
 </style>

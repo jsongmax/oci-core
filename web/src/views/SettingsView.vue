@@ -264,6 +264,7 @@ function exportCsv() {
 
 const aboutItems = computed(() => [
   { k: '版本', v: state.version || 'dev', mono: true },
+  { k: '项目主页', v: 'github.com/jsongmax/oci-core', href: 'https://github.com/jsongmax/oci-core', mono: true },
   { k: '前端', v: 'Vue 3 + TypeScript · 产物 embed 进单二进制' },
   // 只写引擎，不写路径：路径对使用者没有意义，而且是部署细节——
   // 容器里的 /app/data 和宿主机上的卷不是一回事，写出来反而误导。
