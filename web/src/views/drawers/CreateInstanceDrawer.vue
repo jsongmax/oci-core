@@ -658,11 +658,29 @@ onMounted(async () => {
   await Promise.all([loadPresets(), loadHuntLimits()])
   if (!form.region) form.region = account.value.regions[0] ?? ''
   await Promise.all([loadRegionOptions(), loadQuota()])
-  if (!form.name) {
-    // 预填一个不会撞名的默认值，用户改起来也方便。
-    form.name = `${account.value.code.toLowerCase()}-${Date.now().toString(36).slice(-4)}`
-  }
+  if (!form.name) refreshAutoName()
 })
+
+/**
+ * 默认实例名：当前区域缩写 + 4 位随机串，如 ap-tokyo-1 → tok-x7k2。
+ *
+ * 缩写规则与后端 store.SuggestCode 一致（城市段前 3 位）。不能直接用
+ * account.code——那是按账号默认区域生成的，换了区域名字就对不上了。
+ */
+function autoName(r: string): string {
+  const abbr = (r.split('-')[1] ?? '').slice(0, 3).toLowerCase() || 'oci'
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(4)), b => chars[b % chars.length]).join('')
+  return `${abbr}-${rand}`
+}
+
+/** 上一次自动生成的名字；用户改过名称后就不再跟着区域变。 */
+let lastAutoName = ''
+function refreshAutoName() {
+  if (form.name && form.name !== lastAutoName) return
+  lastAutoName = autoName(region.value)
+  form.name = lastAutoName
+}
 
 watch(() => form.accountId, async () => {
   form.region = accountById(form.accountId).regions[0] ?? ''
@@ -670,6 +688,7 @@ watch(() => form.accountId, async () => {
 })
 
 watch(() => form.region, () => void loadRegionOptions())
+watch(region, refreshAutoName)
 // 换可用域要重查规格：各 AD 的硬件不一定一样，永久免费的 E2.1.Micro
 // 更是只在其中一个 AD 上提供。
 watch(() => form.ad, () => void loadShapes())
