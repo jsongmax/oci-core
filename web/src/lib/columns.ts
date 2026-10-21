@@ -18,7 +18,13 @@ export interface ColumnDef {
   fixed?: boolean
   /** 视口窄于这个宽度时自动隐藏，与用户的选择取交集 */
   minViewport?: number
+  /** 拖动调宽的下限（px），默认 60。设为 0 表示这一列不能拖 */
+  minWidth?: number
 }
+
+/** 拖宽的上限。再宽只会把右边的列挤出表格，没有意义 */
+export const MAX_COLUMN_WIDTH = 600
+const DEFAULT_MIN_WIDTH = 60
 
 /* ---------- 视口宽度 ---------- */
 
@@ -61,6 +67,21 @@ function loadOrder(storageKey: string): string[] {
   }
 }
 
+function loadWidths(storageKey: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    const obj = raw ? JSON.parse(raw) : {}
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {}
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
 function save(storageKey: string, value: unknown) {
   try {
     localStorage.setItem(storageKey, JSON.stringify(value))
@@ -92,7 +113,18 @@ export interface ColumnState {
   toggle: (key: string) => void
   /** 把 key 挪到 target 所在的位置（拖拽与上移/下移共用） */
   moveTo: (key: string, target: string) => void
-  /** 恢复默认：全部显示、默认顺序 */
+  /** 这一列能不能拖宽 */
+  resizable: (key: string) => boolean
+  /** 用户拖过的宽度（px），没拖过为 undefined */
+  widthOf: (key: string) => number | undefined
+  /**
+   * 设定列宽，会夹到 [minWidth, MAX_COLUMN_WIDTH]。
+   * 拖动过程中每帧都会调，persist=false 只改内存，松手时再落盘一次。
+   */
+  setWidth: (key: string, px: number, persist?: boolean) => void
+  /** 恢复某一列的默认宽度（双击拖动条） */
+  resetWidth: (key: string) => void
+  /** 恢复默认：全部显示、默认顺序、默认列宽 */
   reset: () => void
   /** 被视口宽度压掉的列数，用来在选择器里解释"勾了怎么没出来" */
   suppressed: ComputedRef<ColumnDef[]>
@@ -106,6 +138,9 @@ export function useColumns(storageKey: string, defs: ColumnDef[]): ColumnState {
   const hidden = ref<Set<string>>(loadHidden(storageKey))
   const toggleable = defs.filter(c => !c.fixed)
   const order = ref<string[]>(loadOrder(storageKey + '.order'))
+  const widths = ref<Record<string, number>>(loadWidths(storageKey + '.widths'))
+  const byKey = new Map(defs.map(c => [c.key, c]))
+  const minOf = (key: string) => byKey.get(key)?.minWidth ?? DEFAULT_MIN_WIDTH
 
   /**
    * 可调列按用户顺序排；存的顺序里没有的列（新加的列）按定义顺序补在后面，
@@ -140,7 +175,9 @@ export function useColumns(storageKey: string, defs: ColumnDef[]): ColumnState {
 
   return {
     visible,
-    template: computed(() => visible.value.map(c => c.width).join(' ')),
+    // 拖过的列改成固定像素；没拖过的照旧用定义里的值，fr 列继续吃剩余空间。
+    template: computed(() =>
+      visible.value.map(c => (widths.value[c.key] ? `${widths.value[c.key]}px` : c.width)).join(' ')),
     has: (key: string) => positions.value.has(key),
     pos: (key: string) => positions.value.get(key) ?? 0,
     toggleable,
@@ -165,11 +202,27 @@ export function useColumns(storageKey: string, defs: ColumnDef[]): ColumnState {
       order.value = keys
       save(storageKey + '.order', keys)
     },
+    resizable: (key: string) => minOf(key) > 0,
+    widthOf: (key: string) => widths.value[key],
+    setWidth(key: string, px: number, persist = true) {
+      if (minOf(key) <= 0) return
+      const w = Math.round(Math.min(MAX_COLUMN_WIDTH, Math.max(minOf(key), px)))
+      if (widths.value[key] !== w) widths.value = { ...widths.value, [key]: w }
+      if (persist) save(storageKey + '.widths', widths.value)
+    },
+    resetWidth(key: string) {
+      if (!(key in widths.value)) return
+      const { [key]: _, ...rest } = widths.value
+      widths.value = rest
+      save(storageKey + '.widths', rest)
+    },
     reset() {
       hidden.value = new Set()
       order.value = []
+      widths.value = {}
       save(storageKey, [])
       save(storageKey + '.order', [])
+      save(storageKey + '.widths', {})
     },
     suppressed
   }

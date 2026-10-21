@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** §4.4.1 实例列表：跨账号聚合表格 · 筛选 · 分组 · 密度 · 批量条 */
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useStore, type StateFilter } from '@/store'
 import { acctColor, copy } from '@/lib/format'
 import { baselineText, instanceUptime } from '@/lib/adapt'
@@ -56,6 +56,55 @@ async function saveNote(i: Instance) {
   }
 }
 
+/* ---------- 实例名就地编辑 ---------- */
+
+const editingName = ref('')
+const nameDraft = ref('')
+
+/** 已终止或正在终止的实例改名没有意义，OCI 也会拒。 */
+const canRename = (i: Instance) => i.state !== 'TERMINATED' && i.state !== 'TERMINATING'
+
+function startRename(i: Instance) {
+  editingName.value = i.id
+  nameDraft.value = i.name
+  void nextTick(() => {
+    const el = document.querySelector<HTMLInputElement>('.name-edit')
+    el?.focus()
+    el?.select()
+  })
+}
+
+async function saveName(i: Instance) {
+  if (editingName.value !== i.id) return
+  const next = nameDraft.value.trim()
+  editingName.value = ''
+  // 空名 OCI 会拒，直接当作取消，不必发一次注定失败的请求。
+  if (!next || next === i.name) return
+
+  // 与备注一样先乐观更新；不同的是改名要走 OCI，失败的概率高得多，
+  // 所以失败时必须回滚并把原因报出来。
+  const before = i.name
+  i.name = next
+  try {
+    const { instances: api } = await import('@/api')
+    await api.rename(i.id, next)
+    toast({ tone: 'accent', title: '已重命名', body: `${before} → ${next}` })
+  } catch (err) {
+    i.name = before
+    toastError('重命名失败', err)
+  }
+}
+
+/* ---------- 公网 IP 一键显隐 ---------- */
+
+/**
+ * 只作用于本表的 IP 列，不动全局隐私模式：别处的租户 OCID、邮箱仍然打码。
+ * 不持久化——刷新后回到打码，免得下次截图时忘了它还开着。
+ */
+const ipsRevealed = ref(false)
+// 隐私模式被重新开启（revealEpoch 递增）时一并收回，与 MaskedText 的单项展开同一规则。
+watch(() => state.revealEpoch, () => { ipsRevealed.value = false })
+
 /** 复制公网 IP。整行是可点的，按钮必须 @click.stop 才不会顺手打开抽屉。 */
 function copyIp(ip: string) {
   void copy(ip).then(() => toast({ tone: 'accent', title: '已复制公网 IP', body: ip }))
@@ -71,20 +120,60 @@ const collapsedGroups = ref<Set<string>>(new Set())
  * 不会出现「CSS 藏了一列但 grid 模板还留着那一格」导致整行错位。
  */
 const INSTANCE_COLUMNS: ColumnDef[] = [
-  { key: 'check',   label: '选择',     width: '40px',                 fixed: true },
+  { key: 'check',   label: '选择',     width: '40px',                 fixed: true, minWidth: 0 },
   { key: 'state',   label: '状态',     width: '104px',                fixed: true },
-  { key: 'name',    label: '名称',     width: 'minmax(180px, 1.5fr)', fixed: true },
+  { key: 'name',    label: '名称',     width: 'minmax(180px, 1.5fr)', fixed: true, minWidth: 120 },
   { key: 'account', label: '账号',     width: '78px' },
   { key: 'region',  label: '区域 · AD', width: '158px',               minViewport: 1024 },
   { key: 'shape',   label: '规格',     width: 'minmax(170px, 1.2fr)', minViewport: 1024 },
-  { key: 'ip',      label: '公网 IP',  width: '132px' },
+  // 172px 放得下最长的 IPv4（15 位）+ 展开按钮 + 复制按钮。
+  // 原来 132px 时 xxx.xxx.xxx.xxx 一展开就被截成省略号。
+  { key: 'ip',      label: '公网 IP',  width: '172px' },
   { key: 'boot',    label: '引导卷',   width: '84px',                 minViewport: 1280 },
   { key: 'note',    label: '备注',     width: 'minmax(110px, 1fr)',   minViewport: 1280 },
   { key: 'uptime',  label: '运行时长', width: '88px',                 minViewport: 1600 },
-  { key: 'actions', label: '操作',     width: '132px',                fixed: true }
+  { key: 'actions', label: '操作',     width: '132px',                fixed: true, minWidth: 0 }
 ]
 
 const cols = useColumns('oci.cols.instances', INSTANCE_COLUMNS)
+
+/* ---------- 拖动调列宽 ---------- */
+
+/** 正在拖的列，拖动条在拖动期间保持高亮 */
+const resizing = ref('')
+
+/**
+ * 从表头单元格的实际渲染宽度起算，而不是从定义里的值：fr 列的定义
+ * 只是个比例，换算不出像素。拖动中只改内存，松手才写 localStorage。
+ */
+function startResize(e: PointerEvent, key: string) {
+  if (e.button !== 0) return
+  e.preventDefault()
+  const handle = e.currentTarget as HTMLElement
+  const cell = handle.parentElement
+  if (!cell) return
+  const startX = e.clientX
+  const startW = cell.getBoundingClientRect().width
+  resizing.value = key
+  handle.setPointerCapture(e.pointerId)
+  // 拖动期间全局光标与禁选，否则指针一离开 4px 的拖动条光标就跳回去，还会顺手选中一片文字。
+  document.body.classList.add('is-col-resizing')
+
+  const onMove = (ev: PointerEvent) => cols.setWidth(key, startW + ev.clientX - startX, false)
+  const onUp = (ev: PointerEvent) => {
+    handle.releasePointerCapture(ev.pointerId)
+    handle.removeEventListener('pointermove', onMove)
+    handle.removeEventListener('pointerup', onUp)
+    handle.removeEventListener('pointercancel', onUp)
+    document.body.classList.remove('is-col-resizing')
+    resizing.value = ''
+    const w = cols.widthOf(key)
+    if (w !== undefined) cols.setWidth(key, w)
+  }
+  handle.addEventListener('pointermove', onMove)
+  handle.addEventListener('pointerup', onUp)
+  handle.addEventListener('pointercancel', onUp)
+}
 
 const filters: { key: StateFilter; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -233,6 +322,10 @@ const bootTone = (i: Instance) =>
         {{ f.label }}<span class="mono toolbar__count">{{ countByFilter(f.key) }}</span>
       </button>
       <span class="toolbar__spacer" />
+      <!-- 隐私模式关着时 IP 本来就是明文，按钮没有意义 -->
+      <button v-if="state.privacyMode" class="pill" :class="{ 'is-active': ipsRevealed }"
+              :title="ipsRevealed ? '重新给公网 IP 打码' : '显示全部公网 IP 原文'"
+              @click="ipsRevealed = !ipsRevealed">{{ ipsRevealed ? '隐藏 IP' : '显示 IP' }}</button>
       <button class="pill" :class="{ 'is-active': state.groupByAccount }"
               @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
       <button class="pill" @click="state.density = state.density === 'comfy' ? 'compact' : 'comfy'">
@@ -243,17 +336,21 @@ const bootTone = (i: Instance) =>
 
     <div class="card table">
       <div class="table-head cols" :style="{ gridTemplateColumns: cols.template.value }">
-        <template v-for="c in cols.visible.value" :key="c.key">
-          <span v-if="c.key === 'check'" />
-          <span v-else-if="c.key === 'actions'" class="table__right">操作</span>
-          <span v-else-if="!SORTABLE.has(c.key)">{{ c.label }}</span>
-          <span v-else :aria-sort="ariaSort(c.key as SortKey)">
-            <button class="th-sort" :class="{ 'is-on': sort?.key === c.key }"
-                    :title="`按${c.label}排序`" @click="toggleSort(c.key as SortKey)">
-              {{ c.label }}<span class="th-sort__dir">{{ sort?.key === c.key ? (sort.dir === 1 ? '↑' : '↓') : '↕' }}</span>
-            </button>
-          </span>
-        </template>
+        <span v-for="c in cols.visible.value" :key="c.key" class="th"
+              :class="{ table__right: c.key === 'actions' }"
+              :aria-sort="SORTABLE.has(c.key) ? ariaSort(c.key as SortKey) : undefined">
+          <template v-if="c.key === 'check'" />
+          <template v-else-if="c.key === 'actions'">操作</template>
+          <template v-else-if="!SORTABLE.has(c.key)">{{ c.label }}</template>
+          <button v-else class="th-sort" :class="{ 'is-on': sort?.key === c.key }"
+                  :title="`按${c.label}排序`" @click="toggleSort(c.key as SortKey)">
+            {{ c.label }}<span class="th-sort__dir">{{ sort?.key === c.key ? (sort.dir === 1 ? '↑' : '↓') : '↕' }}</span>
+          </button>
+          <span v-if="cols.resizable(c.key)" class="th__resize" :class="{ 'is-active': resizing === c.key }"
+                role="separator" aria-orientation="vertical" :aria-label="`调整${c.label}列宽`"
+                title="拖动调整列宽，双击恢复默认"
+                @pointerdown="startResize($event, c.key)" @dblclick.stop="cols.resetWidth(c.key)" />
+        </span>
       </div>
 
       <SkeletonRows v-if="showSkeleton" :rows="6" />
@@ -289,8 +386,19 @@ const bootTone = (i: Instance) =>
             </span>
 
             <span class="cell cell--name" :style="{ order: cols.pos('name') }">
-              <button class="name" :class="{ 'is-terminated': i.state === 'TERMINATED' }"
-                      @click="openDrawer({ kind: 'instance', id: i.id, tab: '概览' })">{{ i.name }}</button>
+              <input v-if="editingName === i.id" class="name-edit" maxlength="255"
+                     :value="nameDraft" @click.stop
+                     @input="nameDraft = ($event.target as HTMLInputElement).value"
+                     @keydown.enter.stop.prevent="saveName(i)"
+                     @keydown.esc.stop.prevent="editingName = ''"
+                     @blur="saveName(i)" />
+              <span v-else class="name-row">
+                <button class="name" :class="{ 'is-terminated': i.state === 'TERMINATED' }"
+                        @click="openDrawer({ kind: 'instance', id: i.id, tab: '概览' })">{{ i.name }}</button>
+                <button v-if="canRename(i)" class="name__edit"
+                        title="重命名（仅改显示名称，不改系统主机名）" aria-label="重命名"
+                        @click.stop="startRename(i)">✎</button>
+              </span>
               <span class="mono t-2xs dim-3">ocid1…{{ i.ocidTail }}</span>
             </span>
 
@@ -305,12 +413,12 @@ const bootTone = (i: Instance) =>
             <span v-if="cols.has('ip')" class="cell mono t-xs ip" :style="{ order: cols.pos('ip') }"
                   :class="{ 'is-fresh': i.settledAt, 'is-changed': i.previousIp }">
               <span class="ip__v">
-                <MaskedText :value="i.publicIp" kind="ip" />
-                <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" /></span>
+                <MaskedText :value="i.publicIp" kind="ip" :plain="ipsRevealed" />
+                <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" :plain="ipsRevealed" /></span>
                 <!-- IPv6 动辄 39 个字符，列宽放不下全部：显示第一个，其余数量标在后面，
                      悬停看全部 -->
                 <span v-if="i.ipv6.length" class="ip__v6 t-2xs" :title="i.ipv6.join('\n')">
-                  <span class="ip__v6-addr"><MaskedText :value="i.ipv6[0]" kind="ip" /></span>
+                  <span class="ip__v6-addr"><MaskedText :value="i.ipv6[0]" kind="ip" :plain="ipsRevealed" /></span>
                   <span v-if="i.ipv6.length > 1" class="ip__v6-more">+{{ i.ipv6.length - 1 }}</span>
                 </span>
               </span>
@@ -435,7 +543,21 @@ const bootTone = (i: Instance) =>
 }
 .toolbar__count { font-size: 11px; opacity: 0.65; }
 
-.table { overflow: hidden; }
+/* 列拖宽后总宽可能超出卡片，这时让表格内部横向滚动，而不是把操作列裁掉 */
+.table { overflow-x: auto; overflow-y: hidden; }
+.th { position: relative; min-width: 0; align-self: stretch; display: flex; align-items: center; }
+.th.table__right { justify-content: flex-end; }
+.th__resize {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 7px; z-index: 1;
+  cursor: col-resize; touch-action: none;
+}
+.th__resize::after {
+  content: ''; position: absolute; top: 25%; bottom: 25%; right: 3px; width: 1px;
+  background: var(--border-default); opacity: 0; transition: opacity var(--dur-fast);
+}
+.table-head:hover .th__resize::after { opacity: 1; }
+.th__resize:hover::after, .th__resize.is-active::after { opacity: 1; width: 2px; background: var(--accent); }
+:global(body.is-col-resizing) { cursor: col-resize; user-select: none; }
 /* grid-template-columns 由 cols.template 内联给出——列是可隐藏的，
    写死在这里就会和实际渲染的单元格数量对不上。 */
 .cols { padding-left: 0; }
@@ -454,6 +576,22 @@ const bootTone = (i: Instance) =>
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .name:hover { color: var(--accent); }
+.name-row { display: flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+/* 与复制 IP 按钮同一套：平时隐藏，悬停行时出现，避免一整列铅笔 */
+.name__edit {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-tertiary); font-size: 12px; line-height: 1; cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.table-row:hover .name__edit, .name__edit:focus-visible { opacity: 1; }
+.name__edit:hover { background: var(--bg-hover); color: var(--text-primary); }
+.name-edit {
+  width: 100%; height: 26px; padding: 0 6px;
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--bg-surface); color: var(--text-primary);
+  font-size: 13px; font-weight: 500; font-family: inherit; outline: none;
+}
 .name.is-terminated { text-decoration: line-through; }
 
 .is-selected { background: var(--accent-soft); }
