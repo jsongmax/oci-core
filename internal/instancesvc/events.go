@@ -11,6 +11,10 @@ const (
 	EventInstanceUpdated = "instance.updated"
 	EventInstanceRemoved = "instance.removed"
 	EventInstanceError   = "instance.error"
+	// EventInstanceNetwork 表示实例的网卡增减已落定、网络缓存已刷新。
+	// 与 instance.updated 分开：后者只在状态跃迁时让前端重拉列表，
+	// 而网卡变化不改变实例状态。State 为 ATTACHED / DETACHED / FAILED。
+	EventInstanceNetwork = "instance.network"
 	EventAccountStatus   = "account.status"
 	EventSyncStarted     = "sync.started"
 	EventSyncFinished    = "sync.finished"

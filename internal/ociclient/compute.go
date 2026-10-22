@@ -518,7 +518,25 @@ func (c *Client) AttachVnic(ctx context.Context, region, instanceID string, deta
 	return &out, nil
 }
 
-// DetachVnic 移除附属网卡。主网卡（nicIndex 0）无法移除。
+// GetVnicAttachment 读取一条网卡挂载关系，用于等待挂载或分离落定。
+func (c *Client) GetVnicAttachment(ctx context.Context, region, attachmentID string) (*VnicAttachment, error) {
+	var out VnicAttachment
+	_, err := c.Do(ctx, Request{
+		Method:  http.MethodGet,
+		Service: ServiceCore,
+		Path:    "/vnicAttachments/" + url.PathEscape(attachmentID),
+		Region:  region,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DetachVnic 移除附属网卡。主网卡无法移除。
+//
+// 注意不能按 nicIndex 判断主网卡：VM 规格上所有 VNIC 的 nicIndex 都是 0，
+// 要看 GetVnic 返回的 isPrimary。
 func (c *Client) DetachVnic(ctx context.Context, region, attachmentID string) error {
 	_, err := c.Do(ctx, Request{
 		Method:  http.MethodDelete,

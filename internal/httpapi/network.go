@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/instancesvc"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
@@ -335,4 +336,96 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 		Target: inst.DisplayName, Detail: result.Address, IP: s.clientIP(r),
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+// handleAttachVnic 为实例添加附属网卡。网卡返回时处于 ATTACHING，
+// 落定由后台等待，完成后经 SSE 推送。
+func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
+	var req instancesvc.AttachVnicRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	inst, result, err := s.instances.AttachVnic(ctx, r.PathValue("id"), req)
+	if err != nil {
+		writeVnicError(w, err)
+		return
+	}
+
+	detail := "子网 " + req.SubnetID
+	if req.AssignPublicIP {
+		detail += "，分配公网 IPv4"
+	}
+	if req.AssignIPv6 {
+		detail += "，分配 IPv6"
+	}
+	user := userFrom(r.Context())
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "instance_attach_vnic", AccountID: inst.AccountID,
+		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleDetachVnic 分离一张附属网卡。网卡上的临时公网 IP 随之释放，是 L2 级操作。
+func (s *Server) handleDetachVnic(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: "分离后这张网卡上的临时公网 IP 会被释放，不可找回。如确认要执行，请附带 confirm=true。",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+
+	inst, vnic, err := s.instances.DetachVnic(ctx, r.PathValue("id"), r.PathValue("attachmentId"))
+	if err != nil {
+		writeVnicError(w, err)
+		return
+	}
+
+	name := vnic.DisplayName
+	if name == "" {
+		name = vnic.ID
+	}
+	detail := name + " · 私网 " + vnic.PrivateIP
+	if vnic.PublicIP != "" {
+		detail += " · 公网 " + vnic.PublicIP
+	}
+	user := userFrom(r.Context())
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "instance_detach_vnic", AccountID: inst.AccountID,
+		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
+	})
+	fields := map[string]string{"实例": inst.DisplayName, "网卡": name, "操作者": user.Username}
+	if vnic.PublicIP != "" {
+		fields["释放的公网 IP"] = vnic.PublicIP
+	}
+	s.notifier.Dispatch(r.Context(), notify.Message{
+		Event:  notify.EventDangerOperation,
+		Title:  "实例 " + inst.DisplayName + " 分离了一张附属网卡",
+		Body:   "网卡上的临时公网 IP 已释放。",
+		Fields: fields,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func writeVnicError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, instancesvc.ErrVnicLimit):
+		writeError(w, http.StatusBadRequest, "vnic_limit", err.Error())
+	case errors.Is(err, instancesvc.ErrPrimaryVnic):
+		writeError(w, http.StatusBadRequest, "primary_vnic", err.Error())
+	case errors.Is(err, instancesvc.ErrVnicNotFound):
+		writeError(w, http.StatusNotFound, "vnic_not_found", err.Error())
+	case errors.Is(err, instancesvc.ErrVnicInvalid):
+		writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
+	default:
+		writeInstanceError(w, err)
+	}
 }

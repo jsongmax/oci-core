@@ -318,7 +318,7 @@ func (s *Service) refreshNetwork(ctx context.Context, cached *store.Instance, cl
 		return
 	}
 
-	vnic, _ := splitVnics(ctx, client, cached.Region, atts)
+	vnic, secondary := splitVnics(ctx, client, cached.Region, atts)
 	if vnic == nil {
 		return
 	}
@@ -331,6 +331,8 @@ func (s *Service) refreshNetwork(ctx context.Context, cached *store.Instance, cl
 	fresh.PrivateIP = vnic.PrivateIP
 	fresh.VnicID = vnic.ID
 	fresh.SubnetID = vnic.SubnetID
+	fresh.IPv6 = strings.Join(vnic.Ipv6Addresses, ",")
+	fresh.SecondaryIPv4, fresh.SecondaryIPv6 = secondaryIPs(secondary)
 	if err := s.st.UpsertInstance(ctx, *fresh); err != nil {
 		return
 	}

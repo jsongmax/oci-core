@@ -412,15 +412,7 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 				privateIP: primary.PrivateIP,
 				ipv6:      strings.Join(primary.Ipv6Addresses, ","),
 			}
-			var v4, v6 []string
-			for _, v := range secondary {
-				if v.PublicIP != "" {
-					v4 = append(v4, v.PublicIP)
-				}
-				v6 = append(v6, v.Ipv6Addresses...)
-			}
-			d.secondaryIPv4 = strings.Join(v4, ",")
-			d.secondaryIPv6 = strings.Join(v6, ",")
+			d.secondaryIPv4, d.secondaryIPv6 = secondaryIPs(secondary)
 
 			mu.Lock()
 			out[instanceID] = d
@@ -429,6 +421,18 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 	}
 	wg.Wait()
 	return out
+}
+
+// secondaryIPs 汇总附属网卡上的公网 IPv4 与 IPv6，各自逗号分隔。
+func secondaryIPs(vnics []ociclient.Vnic) (v4, v6 string) {
+	var a, b []string
+	for _, v := range vnics {
+		if v.PublicIP != "" {
+			a = append(a, v.PublicIP)
+		}
+		b = append(b, v.Ipv6Addresses...)
+	}
+	return strings.Join(a, ","), strings.Join(b, ",")
 }
 
 // splitVnics 读取已挂载的网卡，按 isPrimary 分出主网卡与附属网卡。

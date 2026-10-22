@@ -432,3 +432,39 @@ func TestListEndpointsNeverReturnNull(t *testing.T) {
 		})
 	}
 }
+
+// 分离附属网卡会释放网卡上的临时公网 IP，不可找回。
+// 与更换公网 IP 同级：没有显式 confirm=true 就不碰 OCI。
+func TestDetachVnicRequiresConfirmation(t *testing.T) {
+	h := newHarness(t)
+	h.setupAndLogin()
+
+	resp := h.do("DELETE", "/api/instances/i-1/vnics/att-1", nil, true)
+	expectStatus(t, resp, http.StatusBadRequest)
+	if body := decode[errorBody](t, resp); body.Code != "confirm_required" {
+		t.Errorf("错误码 = %q，期望 confirm_required", body.Code)
+	}
+}
+
+// 添加网卡至少要指定子网。空子网在本地就该拦下，不该发到 OCI。
+func TestAttachVnicRequiresSubnet(t *testing.T) {
+	h := newHarness(t)
+	h.setupAndLogin()
+
+	acc, err := h.store.CreateAccount(t.Context(), storeTestAccount(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertInstance(t.Context(), store.Instance{
+		ID: "i-1", AccountID: acc.ID, Region: "ap-tokyo-1",
+		DisplayName: "web-01", LifecycleState: "RUNNING",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := h.post("/api/instances/i-1/vnics", map[string]any{"subnetId": "  "})
+	expectStatus(t, resp, http.StatusBadRequest)
+	if body := decode[errorBody](t, resp); body.Code != "invalid_input" {
+		t.Errorf("错误码 = %q，期望 invalid_input", body.Code)
+	}
+}

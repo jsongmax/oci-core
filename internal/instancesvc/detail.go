@@ -55,6 +55,8 @@ type Detail struct {
 	BootVolumeAttachmentID string            `json:"bootVolumeAttachmentId"`
 	BlockVolumes           []VolumeInfo      `json:"blockVolumes"`
 	Metadata               map[string]string `json:"metadata"`
+	// MaxVnics 是当前规格与配置允许的网卡数上限；0 表示读不到，前端不拦。
+	MaxVnics int `json:"maxVnics"`
 	// Warnings 记录部分数据拉取失败的原因。
 	// 详情页允许"局部降级"——网络信息取不到不该让整个抽屉打不开。
 	Warnings []string `json:"warnings,omitempty"`
@@ -101,6 +103,9 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		mu.Lock()
 		detail.Instance.LifecycleState = inst.LifecycleState
 		detail.Metadata = inst.Metadata
+		if inst.ShapeConfig != nil {
+			detail.MaxVnics = inst.ShapeConfig.MaxVnicAttachments
+		}
 		mu.Unlock()
 	}()
 
