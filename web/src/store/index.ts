@@ -67,6 +67,11 @@ const state = reactive({
    * 还露着原文。
    */
   revealEpoch: 0,
+  /**
+   * 最近一次网卡增减落定的实例。详情抽屉据此重拉网络信息——
+   * 换成新对象才能被 watch 到，所以每次都整体替换。
+   */
+  networkChanged: { id: '', at: 0 },
   // 分组偏好横跨实例、网络、存储三页，是"这个人习惯怎么看"，
   // 不该每次刷新都退回默认——和账号页的卡片/列表偏好同理。
   groupByAccount: localStorage.getItem('oci.groupByAccount') === '1',
@@ -451,6 +456,18 @@ function applyEvent(event: ServerEvent): void {
         inst.lastError = event.message
         toast({ tone: 'danger', title: `${inst.name} 操作失败`, body: event.message }, 9000)
       }
+      break
+    }
+
+    case 'instance.network': {
+      // 网卡挂上或分离后 IP 变了，列表里的 +N 要跟着变；读的是本地缓存，不贵。
+      void refreshInstances()
+      state.networkChanged = { id: event.instanceId ?? '', at: Date.now() }
+      const inst = state.instances.find(i => i.id === event.instanceId)
+      const name = inst?.name ?? '实例'
+      if (event.state === 'ATTACHED') toast({ tone: 'success', title: `${name} 的附属网卡已挂载` })
+      else if (event.state === 'DETACHED') toast({ tone: 'info', title: `${name} 的附属网卡已分离` })
+      else toast({ tone: 'danger', title: `${name} 的附属网卡挂载失败`, body: '请到 OCI 控制台查看工作请求的错误信息。' }, 9000)
       break
     }
 

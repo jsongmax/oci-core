@@ -242,6 +242,21 @@ export interface InstanceDetailDTO {
   bootVolumeAttachmentId: string
   blockVolumes: VolumeInfoDTO[] | null
   metadata: Record<string, string> | null
+  /** 当前规格与配置允许的网卡数上限；0 表示读不到 */
+  maxVnics?: number
+  warnings?: string[]
+}
+
+export interface AttachVnicRequest {
+  subnetId: string
+  displayName?: string
+  assignPublicIp: boolean
+  assignIpv6: boolean
+}
+
+export interface AttachVnicResultDTO {
+  attachmentId: string
+  state: string
   warnings?: string[]
 }
 

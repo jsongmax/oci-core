@@ -1,16 +1,17 @@
 <script setup lang="ts">
 /** §4.4.3 实例详情抽屉（720）：概览 / 网络 / 存储 / 监控 / 控制台 / 操作记录 */
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
 import { acctColor, byteScale, formatBytes, formatBitRate, formatBits, formatPercent } from '@/lib/format'
 import { relativeTime, instanceUptime } from '@/lib/adapt'
 import {
-  instances as instancesApi, insights, storage, errorText,
+  instances as instancesApi, insights, storage, network, errorText,
   type AuditEntryDTO, type InstanceDetailDTO, type MetricsDTO, type InstanceTrafficDTO
 } from '@/api'
 import type * as D from '@/api/types'
 import type { KvItem } from '@/types'
+import { mask } from '@/lib/mask'
 import AppDrawer from '@/components/AppDrawer.vue'
 import DrawerHeader from '@/components/DrawerHeader.vue'
 import DrawerTabs from '@/components/DrawerTabs.vue'
@@ -22,6 +23,7 @@ import CodeBlock from '@/components/CodeBlock.vue'
 import StateBadge from '@/components/StateBadge.vue'
 import BootVolumeEditor from '@/components/BootVolumeEditor.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
+import SwitchRow from '@/components/SwitchRow.vue'
 import type { MetricSeries } from '@/components/MetricChart.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 
@@ -98,6 +100,106 @@ function vnicIpItems(v: D.VnicInfoDTO): KvItem[] {
     { k: 'MAC', v: v.macAddress || '—', mono: true }
   ]
 }
+
+/* ---------- 附属网卡增删 ---------- */
+
+const vnicCount = computed(() => detail.value?.vnics?.length ?? 0)
+const maxVnics = computed(() => detail.value?.maxVnics ?? 0)
+/** 上限读不到（0）时不拦，交给 Oracle 判断 */
+const vnicFull = computed(() => maxVnics.value > 0 && vnicCount.value >= maxVnics.value)
+
+const addingVnic = ref(false)
+const attachingVnic = ref(false)
+const vnicSubnets = ref<D.SubnetDTO[]>([])
+const vnicSubnetsLoading = ref(false)
+const vnicForm = reactive({ subnetId: '', name: '', publicIp: true, ipv6: false })
+
+const vnicSubnet = computed(() => vnicSubnets.value.find(s => s.id === vnicForm.subnetId))
+const vnicSubnetGroups = computed(() => [{
+  label: '',
+  options: vnicSubnets.value.map(sn => ({
+    value: sn.id,
+    label: `${sn.displayName} · ${sn.cidrBlock}${sn.prohibitPublicIpOnVnic ? ' · 禁公网 IP' : ''}`
+  }))
+}])
+// 选中禁公网 IP 的子网时自动关掉开关，而不是等提交时被后端拒。
+watch(vnicSubnet, sn => { if (sn?.prohibitPublicIpOnVnic) vnicForm.publicIp = false })
+
+/**
+ * 打开添加表单并读取候选子网。
+ *
+ * 只列实例能用的子网：区域子网，或与实例同一可用域的 AD 子网。
+ * 默认选主网卡所在的子网——最常见的用法就是同网段多挂一个公网 IP。
+ */
+async function openAddVnic() {
+  const i = inst.value
+  if (!i) return
+  addingVnic.value = true
+  Object.assign(vnicForm, { subnetId: primaryVnic.value?.subnetId ?? '', name: '', publicIp: true, ipv6: false })
+  vnicSubnetsLoading.value = true
+  try {
+    const { subnets } = await network.subnets(i.accountId, i.region)
+    const ad = detail.value?.instance.availabilityDomain ?? ''
+    vnicSubnets.value = subnets.filter(sn =>
+      sn.lifecycleState === 'AVAILABLE' && (!sn.availabilityDomain || sn.availabilityDomain === ad))
+    if (!vnicSubnets.value.some(sn => sn.id === vnicForm.subnetId)) {
+      vnicForm.subnetId = vnicSubnets.value[0]?.id ?? ''
+    }
+  } catch (err) {
+    toastError('读取子网失败', err)
+  } finally {
+    vnicSubnetsLoading.value = false
+  }
+}
+
+async function submitVnic() {
+  const i = inst.value
+  if (!i || !vnicForm.subnetId) return
+  attachingVnic.value = true
+  try {
+    const res = await instancesApi.attachVnic(i.id, {
+      subnetId: vnicForm.subnetId,
+      displayName: vnicForm.name.trim() || undefined,
+      assignPublicIp: vnicForm.publicIp,
+      assignIpv6: vnicForm.ipv6
+    })
+    addingVnic.value = false
+    toast({
+      tone: 'accent', title: '正在挂载附属网卡',
+      body: ['通常十几秒到一分钟，完成后自动刷新。', ...(res.warnings ?? [])].join('\n')
+    }, 8000)
+  } catch (err) {
+    toastError('添加网卡失败', err)
+  } finally {
+    attachingVnic.value = false
+  }
+}
+
+/** 分离附属网卡。确认框里的 IP 按隐私模式打码——确认框也会被截图。 */
+function detachVnic(v: D.VnicInfoDTO) {
+  const i = inst.value
+  if (!i) return
+  const name = v.displayName || '未命名网卡'
+  const ip = v.publicIp && state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
+  ask({
+    level: 2,
+    title: `分离附属网卡 ${name}`,
+    body: (ip ? `这张网卡上的公网 IP ${ip} 会被释放，不可找回。` : '') +
+      '如果已在系统里配置过这张网卡，建议先在系统里停用它。',
+    okLabel: '分离',
+    onConfirm: async () => {
+      try {
+        await instancesApi.detachVnic(i.id, v.attachmentId)
+        toast({ tone: 'accent', title: '正在分离附属网卡', body: '完成后自动刷新。' })
+      } catch (err) {
+        toastError('分离网卡失败', err)
+      }
+    }
+  })
+}
+
+// 网卡增减在后台落定后，后端推 instance.network；只重拉当前打开的这台。
+watch(() => state.networkChanged, c => { if (c.id === props.id) void loadDetail() })
 
 /* ---------- IPv6 ---------- */
 
@@ -661,8 +763,46 @@ watch(metricHours, () => void loadMetrics())
             ]" />
           </SectionCard>
 
+          <SectionCard title="附属网卡"
+                       :note="maxVnics ? `已用 ${vnicCount} / ${maxVnics} 张（含主网卡）` : ''">
+            <template #action>
+              <button v-if="!addingVnic" class="btn btn--sm" :disabled="locked || vnicFull"
+                      :title="vnicFull ? '已达到该规格的网卡数上限' : ''" @click="openAddVnic()">添加网卡</button>
+            </template>
+            <div v-if="addingVnic" class="pad vnic-form">
+              <div class="field">
+                <label>子网</label>
+                <SelectMenu v-model="vnicForm.subnetId" :groups="vnicSubnetGroups"
+                            :placeholder="vnicSubnetsLoading ? '读取中…' : '选择子网'" aria-label="附属网卡的子网" />
+              </div>
+              <div class="field">
+                <label for="vnicname">名称（可选）</label>
+                <input id="vnicname" v-model="vnicForm.name" class="input mono" maxlength="255"
+                       placeholder="留空由 Oracle 生成" />
+              </div>
+              <SwitchRow v-model="vnicForm.publicIp" title="分配公网 IPv4"
+                         :sub="vnicSubnet?.prohibitPublicIpOnVnic ? '该子网禁止公网 IP，请换子网' : '临时 IP，分离网卡时一并释放'" />
+              <SwitchRow v-model="vnicForm.ipv6" title="分配 IPv6"
+                         sub="子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭" />
+              <div class="vnic-form__actions">
+                <button class="btn btn--sm btn--primary"
+                        :disabled="attachingVnic || !vnicForm.subnetId || (vnicForm.publicIp && !!vnicSubnet?.prohibitPublicIpOnVnic)"
+                        @click="submitVnic()">{{ attachingVnic ? '添加中…' : '添加' }}</button>
+                <button class="btn btn--sm" :disabled="attachingVnic" @click="addingVnic = false">取消</button>
+              </div>
+            </div>
+            <CheckList :items="[
+              { tone: 'info', text: '附属网卡会带来一个额外的私网 IP，可选再配公网 IPv4 / IPv6；原有的 IP 不受影响。' },
+              { tone: 'warn', text: '多数系统镜像不会自动启用新网卡，要在系统里配置后它才能收发流量（Oracle Linux 可用 oci-utils 的 oci-network-config）。' },
+              { tone: 'info', text: '更换公网 IP、开启 IPv6 仍只作用于主网卡。' }
+            ]" />
+          </SectionCard>
+
           <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
                        :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
+            <template #action>
+              <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
+            </template>
             <KeyValueList :items="vnicIpItems(v)" />
           </SectionCard>
 
@@ -911,6 +1051,8 @@ watch(metricHours, () => void loadMetrics())
 </template>
 
 <style scoped>
+.vnic-form { display: flex; flex-direction: column; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
+.vnic-form__actions { display: flex; gap: 8px; }
 .rule { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }
 .rule__bar { width: 3px; height: 22px; flex: 0 0 auto; border-radius: var(--radius-full); }
 .rule__desc { margin-left: auto; text-align: right; white-space: nowrap; }

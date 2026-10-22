@@ -156,6 +156,16 @@ export const instances = {
   enableIpv6: (id: string) =>
     http.post<D.EnableIpv6DTO>(`/api/instances/${encodeURIComponent(id)}/enable-ipv6`),
 
+  /** 添加附属网卡。返回时网卡还在 ATTACHING，落定后经 SSE 推 instance.network */
+  attachVnic: (id: string, body: D.AttachVnicRequest) =>
+    http.post<D.AttachVnicResultDTO>(`/api/instances/${encodeURIComponent(id)}/vnics`, body),
+
+  /** 分离附属网卡。网卡上的临时公网 IP 随之释放，后端要求 confirm=true */
+  detachVnic: (id: string, attachmentId: string) =>
+    http.del<{ ok: boolean }>(
+      `/api/instances/${encodeURIComponent(id)}/vnics/${encodeURIComponent(attachmentId)}`,
+      { query: { confirm: 'true' } }),
+
   metrics: (id: string, hours = 6, metrics?: string[]) =>
     http.get<D.MetricsDTO>(`/api/instances/${encodeURIComponent(id)}/metrics`, {
       query: { hours, metrics: metrics?.join(',') }
