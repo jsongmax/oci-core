@@ -172,6 +172,8 @@ X-OCI-Tools: 1
 | POST | `/api/instances/{ocid}/dismiss-error` | 清除该行的错误提示 |
 | POST | `/api/instances/{ocid}/change-ip?confirm=true` | 更换公网 IP |
 | POST | `/api/instances/{ocid}/enable-ipv6` | 启用 IPv6 |
+| POST | `/api/instances/{ocid}/vnics` | 添加附属网卡 |
+| DELETE | `/api/instances/{ocid}/vnics/{attachmentId}?confirm=true` | 分离附属网卡 |
 | GET | `/api/instances/{ocid}/metrics` | 监控数据 |
 | POST | `/api/instances/{ocid}/console` | 建立串行控制台连接 |
 | POST | `/api/instances/bulk` | 批量开关机 |
@@ -269,6 +271,7 @@ GET /api/events
 | `instance.updated` | 实例状态或网络信息变化 |
 | `instance.removed` | 实例已终止并从缓存移除 |
 | `instance.error` | 操作失败 |
+| `instance.network` | 附属网卡增减已落定，`state` 为 `ATTACHED` / `DETACHED` / `FAILED` |
 | `account.status` | 账号连通性变化 |
 | `sync.started` / `sync.finished` | 同步开始 / 结束 |
 
@@ -353,6 +356,20 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 **`POST /api/instances/{ocid}/change-ip?confirm=true`**
 
 不带 `confirm=true` 返回 `confirm_required` 与后果说明。保留 IP 会被拒绝（返回 `reserved_ip`）——删掉就永久释放了。
+
+**`POST /api/instances/{ocid}/vnics`**
+
+请求体 `{ "subnetId": "ocid1.subnet…", "displayName": "", "assignPublicIp": true, "assignIpv6": false }`。
+返回 `{ "attachmentId", "state": "ATTACHING", "warnings" }`，挂载在后台完成，落定后推 SSE `instance.network`。
+
+本地先拦下注定失败的请求：已达到规格的网卡数上限（`vnic_limit`）、子网属于另一个可用域、
+子网禁止公网 IP 却要分配公网 IPv4（均为 `invalid_input`）。`assignIpv6` 与创建实例走同一套子网开通逻辑。
+
+**`DELETE /api/instances/{ocid}/vnics/{attachmentId}?confirm=true`**
+
+需要两步验证复核（若已启用）。不带 `confirm=true` 返回 `confirm_required`。
+只接受这台实例名下、处于 `ATTACHED` 的挂载关系（否则 `vnic_not_found`），主网卡拒绝分离（`primary_vnic`）。
+网卡上的临时公网 IP 随之释放，不可找回。
 
 ---
 
