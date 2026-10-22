@@ -10,6 +10,7 @@ import {
   type AuditEntryDTO, type InstanceDetailDTO, type MetricsDTO, type InstanceTrafficDTO
 } from '@/api'
 import type * as D from '@/api/types'
+import type { KvItem } from '@/types'
 import AppDrawer from '@/components/AppDrawer.vue'
 import DrawerHeader from '@/components/DrawerHeader.vue'
 import DrawerTabs from '@/components/DrawerTabs.vue'
@@ -70,6 +71,33 @@ async function loadDetail() {
 const primaryVnic = computed(() =>
   detail.value?.vnics?.find(v => v.isPrimary) ?? detail.value?.vnics?.[0]
 )
+
+const secondaryVnics = computed(() =>
+  detail.value?.vnics?.filter(v => v !== primaryVnic.value) ?? [])
+
+/**
+ * IPv6 每个地址单占一行。原先拼成一串显示，既不能逐个复制，
+ * 也没法走 ip 打码——maskIP 只认单个地址。
+ */
+function ipv6Items(ipv6: string[] | null | undefined): KvItem[] {
+  if (!ipv6?.length) return [{ k: 'IPv6', v: '未启用', tone: 'var(--text-secondary)' }]
+  return ipv6.map((ip, n) => ({
+    k: ipv6.length > 1 ? `IPv6 #${n + 1}` : 'IPv6',
+    v: ip, mono: true, copyable: true, secret: 'ip' as const
+  }))
+}
+
+/** 附属网卡的地址。换 IP、开 IPv6 只对主网卡开放，这里只读。 */
+function vnicIpItems(v: D.VnicInfoDTO): KvItem[] {
+  return [
+    { k: '公网 IPv4', v: v.publicIp || '未分配', mono: true, copyable: !!v.publicIp, secret: 'ip' },
+    ...(v.publicIp ? [{ k: '类型', v: v.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' }] : []),
+    { k: '私网 IPv4', v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
+    ...ipv6Items(v.ipv6),
+    { k: '子网', v: v.subnetName || '—', mono: true },
+    { k: 'MAC', v: v.macAddress || '—', mono: true }
+  ]
+}
 
 /* ---------- IPv6 ---------- */
 
@@ -609,8 +637,7 @@ watch(metricHours, () => void loadMetrics())
                 mono: true, copyable: !!primaryVnic?.publicIp, secret: 'ip' },
               { k: '类型', v: primaryVnic?.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' },
               { k: '私网 IPv4', v: primaryVnic?.privateIp || '—', mono: true, copyable: true, secret: 'ip' },
-              { k: 'IPv6', v: primaryVnic?.ipv6?.join(', ') || '未启用',
-                mono: true, tone: 'var(--text-secondary)' }
+              ...ipv6Items(primaryVnic?.ipv6)
             ]" />
           </SectionCard>
 
@@ -634,12 +661,9 @@ watch(metricHours, () => void loadMetrics())
             ]" />
           </SectionCard>
 
-          <SectionCard v-if="(detail?.vnics?.length ?? 0) > 1" title="附属网卡">
-            <div v-for="v in detail?.vnics?.filter(x => !x.isPrimary) ?? []" :key="v.vnicId" class="rule">
-              <span class="rule__bar" :style="{ background: color }" />
-              <span class="mono t-xs">{{ v.displayName }} · {{ v.privateIp }}</span>
-              <span class="rule__desc mono t-2xs dim-3">nic {{ v.nicIndex }}</span>
-            </div>
+          <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
+                       :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
+            <KeyValueList :items="vnicIpItems(v)" />
           </SectionCard>
 
           <SectionCard title="公网 IP 操作">

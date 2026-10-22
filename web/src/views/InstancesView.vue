@@ -3,6 +3,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useStore, type StateFilter } from '@/store'
 import { acctColor, copy } from '@/lib/format'
+import { maskIP } from '@/lib/mask'
 import { baselineText, instanceUptime } from '@/lib/adapt'
 import { MAX_CONCURRENT_PULSES, isTransitional } from '@/lib/lifecycle'
 import type { Instance } from '@/types'
@@ -104,6 +105,31 @@ async function saveName(i: Instance) {
 const ipsRevealed = ref(false)
 // 隐私模式被重新开启（revealEpoch 递增）时一并收回，与 MaskedText 的单项展开同一规则。
 watch(() => state.revealEpoch, () => { ipsRevealed.value = false })
+
+/**
+ * IP 列第二行「+N」：除了已显示的主 IPv4 和第一个 IPv6 之外，还有几个地址。
+ * 附属网卡的公网 IPv4 / IPv6 也算在内——只数主网卡会让多网卡实例看起来只有一个 IP。
+ */
+function extraIpCount(i: Instance): number {
+  return Math.max(0, i.ipv6.length - 1) + i.secondaryIpv4.length + i.secondaryIpv6.length
+}
+
+/**
+ * 「+N」的悬停提示，按网卡分组列出全部地址。
+ * 原生 title 不归 MaskedText 管，隐私模式下得自己打码，否则悬停一下就把原文露出来了。
+ */
+function ipTitle(i: Instance): string {
+  const show = (ip: string) => (state.privacyMode && !ipsRevealed.value ? maskIP(ip) : ip)
+  const lines: string[] = []
+  const group = (label: string, ips: string[]) => {
+    if (!ips.length) return
+    lines.push(label, ...ips.map(ip => '  ' + show(ip)))
+  }
+  group('主网卡 IPv6', i.ipv6)
+  group('附属网卡 IPv4', i.secondaryIpv4)
+  group('附属网卡 IPv6', i.secondaryIpv6)
+  return lines.join('\n')
+}
 
 /** 复制公网 IP。整行是可点的，按钮必须 @click.stop 才不会顺手打开抽屉。 */
 function copyIp(ip: string) {
@@ -417,9 +443,9 @@ const bootTone = (i: Instance) =>
                 <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" :plain="ipsRevealed" /></span>
                 <!-- IPv6 动辄 39 个字符，列宽放不下全部：显示第一个，其余数量标在后面，
                      悬停看全部 -->
-                <span v-if="i.ipv6.length" class="ip__v6 t-2xs" :title="i.ipv6.join('\n')">
-                  <span class="ip__v6-addr"><MaskedText :value="i.ipv6[0]" kind="ip" :plain="ipsRevealed" /></span>
-                  <span v-if="i.ipv6.length > 1" class="ip__v6-more">+{{ i.ipv6.length - 1 }}</span>
+                <span v-if="i.ipv6.length || extraIpCount(i)" class="ip__v6 t-2xs" :title="ipTitle(i)">
+                  <span v-if="i.ipv6.length" class="ip__v6-addr"><MaskedText :value="i.ipv6[0]" kind="ip" :plain="ipsRevealed" /></span>
+                  <span v-if="extraIpCount(i)" class="ip__v6-more">+{{ extraIpCount(i) }}</span>
                 </span>
               </span>
               <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"

@@ -86,6 +86,10 @@ export interface InstanceDTO {
   privateIp: string
   /** 主网卡上的全部 IPv6，逗号分隔；未启用为空串 */
   ipv6: string
+  /** 附属网卡上的公网 IPv4，逗号分隔 */
+  secondaryIpv4?: string
+  /** 附属网卡上的全部 IPv6，逗号分隔 */
+  secondaryIpv6?: string
   vnicId: string
   subnetId: string
   bootVolumeId: string

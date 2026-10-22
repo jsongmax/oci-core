@@ -322,6 +322,8 @@ export function toInstance(dto: InstanceDTO): Instance {
     publicIp: dto.publicIp || '—',
     privateIp: dto.privateIp || '—',
     ipv6: dto.ipv6 ? dto.ipv6.split(',') : [],
+    secondaryIpv4: dto.secondaryIpv4 ? dto.secondaryIpv4.split(',') : [],
+    secondaryIpv6: dto.secondaryIpv6 ? dto.secondaryIpv6.split(',') : [],
     sshUser: sshUserFor(dto.imageOs),
     osFamily: osFamilyOf(dto.imageOs),
     bootGb: dto.bootVolumeGb,

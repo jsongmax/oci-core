@@ -71,6 +71,9 @@ export interface Instance {
   privateIp: string
   /** 主网卡上的全部 IPv6，未启用时为空数组 */
   ipv6: string[]
+  /** 附属网卡上的公网 IPv4 / IPv6。列表只在「+N」里计数，换 IP 等操作不涉及它们 */
+  secondaryIpv4: string[]
+  secondaryIpv6: string[]
   /** SSH 默认登录用户，按镜像系统推断 */
   sshUser: string
   /** 镜像系统的归类，决定扩容后给哪套命令 */
