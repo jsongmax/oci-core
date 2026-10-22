@@ -321,6 +321,8 @@ func (s *Service) syncAccountRegion(ctx context.Context, acc *store.Account, reg
 			row.PublicIP = n.publicIP
 			row.PrivateIP = n.privateIP
 			row.IPv6 = n.ipv6
+			row.SecondaryIPv4 = n.secondaryIPv4
+			row.SecondaryIPv6 = n.secondaryIPv6
 			row.VnicID = n.vnicID
 			row.SubnetID = n.subnetID
 		}
@@ -357,12 +359,16 @@ type netDetail struct {
 	privateIP string
 	// ipv6 是逗号分隔的全部地址；一张网卡可以有多个 IPv6。
 	ipv6 string
+	// 附属网卡上的公网 IPv4 与 IPv6，逗号分隔。
+	secondaryIPv4 string
+	secondaryIPv6 string
 }
 
-// collectNetworkInfo 取回每台实例主网卡上的 IP。
+// collectNetworkInfo 取回每台实例全部网卡上的 IP。
 //
 // 公网 IP 是实例列表里最关键的一列（用户要拿它 SSH），所以必须在同步时就取到。
 // IPv6 随 GetVnic 的 ipv6Addresses 一起返回，不额外发请求。
+// 附属网卡只有多网卡的实例才有，绝大多数实例仍是每台一次 GetVnic。
 func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Client,
 	acc *store.Account, region string, instances []ociclient.Instance) map[string]netDetail {
 
@@ -377,15 +383,9 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 		return out
 	}
 
-	// 一台实例可能挂多张网卡，只有 nicIndex 0 那张带公网 IP。
-	primary := make(map[string]ociclient.VnicAttachment, len(instances))
+	byInstance := make(map[string][]ociclient.VnicAttachment, len(instances))
 	for _, att := range attachments {
-		if att.LifecycleState != "ATTACHED" {
-			continue
-		}
-		if cur, ok := primary[att.InstanceID]; !ok || att.NicIndex < cur.NicIndex {
-			primary[att.InstanceID] = att
-		}
+		byInstance[att.InstanceID] = append(byInstance[att.InstanceID], att)
 	}
 
 	var (
@@ -394,31 +394,76 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 	)
 	sem := make(chan struct{}, syncConcurrency)
 
-	for instanceID, att := range primary {
+	for instanceID, atts := range byInstance {
 		wg.Add(1)
-		go func(instanceID string, att ociclient.VnicAttachment) {
+		go func(instanceID string, atts []ociclient.VnicAttachment) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			vnic, err := client.GetVnic(ctx, region, att.VnicID)
-			if err != nil {
-				slog.Debug("读取网卡失败", "vnic", att.VnicID, "err", err)
+			primary, secondary := splitVnics(ctx, client, region, atts)
+			if primary == nil {
 				return
 			}
-			mu.Lock()
-			out[instanceID] = netDetail{
-				vnicID:    vnic.ID,
-				subnetID:  vnic.SubnetID,
-				publicIP:  vnic.PublicIP,
-				privateIP: vnic.PrivateIP,
-				ipv6:      strings.Join(vnic.Ipv6Addresses, ","),
+			d := netDetail{
+				vnicID:    primary.ID,
+				subnetID:  primary.SubnetID,
+				publicIP:  primary.PublicIP,
+				privateIP: primary.PrivateIP,
+				ipv6:      strings.Join(primary.Ipv6Addresses, ","),
 			}
+			var v4, v6 []string
+			for _, v := range secondary {
+				if v.PublicIP != "" {
+					v4 = append(v4, v.PublicIP)
+				}
+				v6 = append(v6, v.Ipv6Addresses...)
+			}
+			d.secondaryIPv4 = strings.Join(v4, ",")
+			d.secondaryIPv6 = strings.Join(v6, ",")
+
+			mu.Lock()
+			out[instanceID] = d
 			mu.Unlock()
-		}(instanceID, att)
+		}(instanceID, atts)
 	}
 	wg.Wait()
 	return out
+}
+
+// splitVnics 读取已挂载的网卡，按 isPrimary 分出主网卡与附属网卡。
+//
+// 不能按 nicIndex 取最小值：VM 规格只有一块物理网卡，所有 VNIC 的 nicIndex
+// 都是 0，那样等于随机挑一张，附属网卡的 IP 会被当成主 IP 显示。
+// 读不到 isPrimary 时（理论上不会）退回第一张能读到的网卡。
+func splitVnics(ctx context.Context, client *ociclient.Client, region string,
+	atts []ociclient.VnicAttachment) (*ociclient.Vnic, []ociclient.Vnic) {
+
+	var all []ociclient.Vnic
+	for _, att := range atts {
+		if att.LifecycleState != "ATTACHED" || att.VnicID == "" {
+			continue
+		}
+		vnic, err := client.GetVnic(ctx, region, att.VnicID)
+		if err != nil {
+			slog.Debug("读取网卡失败", "vnic", att.VnicID, "err", err)
+			continue
+		}
+		all = append(all, *vnic)
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	idx := 0
+	for i, v := range all {
+		if v.IsPrimary {
+			idx = i
+			break
+		}
+	}
+	primary := all[idx]
+	secondary := append(all[:idx:idx], all[idx+1:]...)
+	return &primary, secondary
 }
 
 type bootDetail struct {

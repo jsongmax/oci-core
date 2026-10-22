@@ -35,7 +35,11 @@ type Instance struct {
 	PublicIP  string `json:"publicIp"`
 	PrivateIP string `json:"privateIp"`
 	// IPv6 是主网卡上的全部 IPv6，逗号分隔；未启用时为空串。
-	IPv6           string    `json:"ipv6"`
+	IPv6 string `json:"ipv6"`
+	// SecondaryIPv4 / SecondaryIPv6 是附属网卡上的公网 IPv4 与全部 IPv6，
+	// 逗号分隔。只供列表展示，换 IP、开 IPv6 等操作仍只针对主网卡。
+	SecondaryIPv4  string    `json:"secondaryIpv4"`
+	SecondaryIPv6  string    `json:"secondaryIpv6"`
 	VnicID         string    `json:"vnicId"`
 	SubnetID       string    `json:"subnetId"`
 	BootVolumeID   string    `json:"bootVolumeId"`
@@ -67,7 +71,7 @@ type Instance struct {
 
 const instanceColumns = `i.id, i.account_id, i.region, i.compartment_id, i.display_name,
 	i.availability_domain, i.fault_domain, i.shape, i.ocpus, i.memory_gb, i.baseline_ocpu, i.lifecycle_state,
-	i.image_id, i.image_os, i.public_ip, i.private_ip, i.ipv6, i.vnic_id, i.subnet_id,
+	i.image_id, i.image_os, i.public_ip, i.private_ip, i.ipv6, i.secondary_ipv4, i.secondary_ipv6, i.vnic_id, i.subnet_id,
 	i.boot_volume_id, i.boot_volume_gb, i.boot_volume_vpus,
 	i.time_created, i.running_since, i.synced_at, i.last_error, i.note,
 	a.alias, a.code, a.color_index`
@@ -80,9 +84,9 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO instances (id, account_id, region, compartment_id, display_name,
 			availability_domain, fault_domain, shape, ocpus, memory_gb, baseline_ocpu, lifecycle_state,
-			image_id, image_os, public_ip, private_ip, ipv6, vnic_id, subnet_id,
+			image_id, image_os, public_ip, private_ip, ipv6, secondary_ipv4, secondary_ipv6, vnic_id, subnet_id,
 			boot_volume_id, boot_volume_gb, boot_volume_vpus, time_created, synced_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			account_id=excluded.account_id, region=excluded.region,
 			compartment_id=excluded.compartment_id, display_name=excluded.display_name,
@@ -93,6 +97,7 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 			-- 只有同步流程会查镜像；生命周期轮询等其它写入不带它，不能拿空值盖掉。
 			image_os = CASE WHEN excluded.image_os <> '' THEN excluded.image_os ELSE instances.image_os END,
 			public_ip=excluded.public_ip, private_ip=excluded.private_ip, ipv6=excluded.ipv6,
+			secondary_ipv4=excluded.secondary_ipv4, secondary_ipv6=excluded.secondary_ipv6,
 			vnic_id=excluded.vnic_id, subnet_id=excluded.subnet_id,
 			boot_volume_id=excluded.boot_volume_id, boot_volume_gb=excluded.boot_volume_gb,
 			boot_volume_vpus=excluded.boot_volume_vpus,
@@ -108,7 +113,7 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 			END`,
 		in.ID, in.AccountID, in.Region, in.CompartmentID, in.DisplayName,
 		in.AvailabilityDomain, in.FaultDomain, in.Shape, in.Ocpus, in.MemoryGB, in.BaselineOcpu, in.LifecycleState,
-		in.ImageID, in.ImageOS, in.PublicIP, in.PrivateIP, in.IPv6, in.VnicID, in.SubnetID,
+		in.ImageID, in.ImageOS, in.PublicIP, in.PrivateIP, in.IPv6, in.SecondaryIPv4, in.SecondaryIPv6, in.VnicID, in.SubnetID,
 		in.BootVolumeID, in.BootVolumeGB, in.BootVolumeVpus,
 		in.TimeCreated.Unix(), nowUnix())
 	if err != nil {
@@ -333,6 +338,7 @@ func scanInstance(sc rowScanner) (*Instance, error) {
 		&inst.ID, &inst.AccountID, &inst.Region, &inst.CompartmentID, &inst.DisplayName,
 		&inst.AvailabilityDomain, &inst.FaultDomain, &inst.Shape, &inst.Ocpus, &inst.MemoryGB,
 		&inst.BaselineOcpu, &inst.LifecycleState, &inst.ImageID, &inst.ImageOS, &inst.PublicIP, &inst.PrivateIP, &inst.IPv6,
+		&inst.SecondaryIPv4, &inst.SecondaryIPv6,
 		&inst.VnicID, &inst.SubnetID, &inst.BootVolumeID, &inst.BootVolumeGB, &inst.BootVolumeVpus,
 		&created, &running, &synced, &inst.LastError, &inst.Note,
 		&inst.AccountAlias, &inst.AccountCode, &inst.AccountColorIndex,

@@ -318,15 +318,8 @@ func (s *Service) refreshNetwork(ctx context.Context, cached *store.Instance, cl
 		return
 	}
 
-	primary := atts[0]
-	for _, att := range atts {
-		if att.LifecycleState == "ATTACHED" && att.NicIndex < primary.NicIndex {
-			primary = att
-		}
-	}
-
-	vnic, err := client.GetVnic(ctx, cached.Region, primary.VnicID)
-	if err != nil {
+	vnic, _ := splitVnics(ctx, client, cached.Region, atts)
+	if vnic == nil {
 		return
 	}
 

@@ -121,6 +121,8 @@ var migrations = []string{
 	`ALTER TABLE accounts ADD COLUMN proxy_id TEXT`,
 	`ALTER TABLE instances ADD COLUMN image_os TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE instances ADD COLUMN baseline_ocpu TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE instances ADD COLUMN secondary_ipv4 TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE instances ADD COLUMN secondary_ipv6 TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {
