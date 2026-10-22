@@ -32,7 +32,7 @@ const MetricChart = defineAsyncComponent(() => import('@/components/MetricChart.
 
 const props = defineProps<{ id: string; tab?: string }>()
 const {
-  state, accountById, closeDrawer, ask, toast, toastError,
+  state, accountById, closeDrawer, ask, toast, toastError, markIpChanged,
   start, stop, restart, terminate
 } = useStore()
 
@@ -89,16 +89,50 @@ function ipv6Items(ipv6: string[] | null | undefined): KvItem[] {
   }))
 }
 
-/** 附属网卡的地址。换 IP、开 IPv6 只对主网卡开放，这里只读。 */
-function vnicIpItems(v: D.VnicInfoDTO): KvItem[] {
+/** 一张网卡的地址与所在网络。主网卡与附属网卡共用，保持两边的行一致。 */
+function vnicItems(v: D.VnicInfoDTO): KvItem[] {
   return [
     { k: '公网 IPv4', v: v.publicIp || '未分配', mono: true, copyable: !!v.publicIp, secret: 'ip' },
     ...(v.publicIp ? [{ k: '类型', v: v.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' }] : []),
     { k: '私网 IPv4', v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
     ...ipv6Items(v.ipv6),
+    { k: 'VCN', v: v.vcnName || '—', mono: true },
     { k: '子网', v: v.subnetName || '—', mono: true },
     { k: 'MAC', v: v.macAddress || '—', mono: true }
   ]
+}
+
+/* ---------- 更换主网卡公网 IP ---------- */
+
+const changingIp = ref(false)
+
+/**
+ * 与行内 ⋯ 菜单、网络页走同一个接口；放在这里是因为用户看着 IP 时最自然想换的就是它。
+ * 确认框里的原 IP 按隐私模式打码——确认框同样会被截图。
+ */
+function changePrimaryIp() {
+  const i = inst.value
+  const v = primaryVnic.value
+  if (!i || !v?.publicIp) return
+  const ip = state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
+  ask({
+    level: 2,
+    title: `更换 ${i.name} 的公网 IP`,
+    body: `更换后原 IP ${ip} 不可找回，当前 SSH 连接将中断，DNS 记录需要手动更新。附属网卡的 IP 不受影响。`,
+    okLabel: '更换 IP',
+    onConfirm: async () => {
+      changingIp.value = true
+      try {
+        const result = await instancesApi.changeIp(i.id)
+        markIpChanged(i, result.oldIp, result.newIp)
+        await loadDetail()
+      } catch (err) {
+        toastError('更换 IP 失败', err)
+      } finally {
+        changingIp.value = false
+      }
+    }
+  })
 }
 
 /* ---------- 附属网卡增删 ---------- */
@@ -733,37 +767,35 @@ watch(metricHours, () => void loadMetrics())
       <template v-else-if="active === '网络'">
         <SkeletonRows v-if="detailLoading" :rows="4" />
         <template v-else>
-          <SectionCard title="IP 地址">
-            <KeyValueList :items="[
-              { k: '公网 IPv4', v: primaryVnic?.publicIp || '未分配',
-                mono: true, copyable: !!primaryVnic?.publicIp, secret: 'ip' },
-              { k: '类型', v: primaryVnic?.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' },
-              { k: '私网 IPv4', v: primaryVnic?.privateIp || '—', mono: true, copyable: true, secret: 'ip' },
-              ...ipv6Items(primaryVnic?.ipv6)
-            ]" />
-          </SectionCard>
-
-          <SectionCard title="VCN 与子网">
-            <KeyValueList :items="[
-              { k: 'VNIC', v: primaryVnic?.displayName || '—', mono: true },
-              { k: 'VCN', v: primaryVnic?.vcnName || '—', mono: true },
-              { k: '子网', v: primaryVnic?.subnetName || '—', mono: true },
-              { k: 'MAC', v: primaryVnic?.macAddress || '—', mono: true }
-            ]" />
-          </SectionCard>
-
-          <SectionCard v-if="primaryVnic && !primaryVnic.ipv6?.length" title="IPv6">
+          <!-- 网卡放在一起：主网卡在前、附属网卡随后，增删网卡的入口放最下面。
+               主网卡的两项操作（换 IP、开 IPv6）直接挂在卡片头上，不再让人去行内菜单找。 -->
+          <SectionCard v-if="primaryVnic" :title="`主网卡 · ${primaryVnic.displayName || '未命名'}`"
+                       :note="`nic ${primaryVnic.nicIndex}`">
             <template #action>
-              <button class="btn btn--sm" :disabled="enablingIpv6 || locked" @click="enableIpv6()">
-                {{ enablingIpv6 ? '开启中…' : '开启 IPv6' }}
-              </button>
+              <span class="card-actions">
+                <button v-if="!primaryVnic.ipv6?.length" class="btn btn--sm"
+                        :disabled="enablingIpv6 || locked" @click="enableIpv6()">
+                  {{ enablingIpv6 ? '开启中…' : '开启 IPv6' }}
+                </button>
+                <button v-if="primaryVnic.publicIp" class="btn btn--sm btn--warning"
+                        :disabled="changingIp || locked || primaryVnic.publicIpType === 'RESERVED'"
+                        :title="primaryVnic.publicIpType === 'RESERVED'
+                          ? '保留 IP 不提供更换：释放后就永久失去这个地址' : '释放当前临时 IP 并申请一个新的'"
+                        @click="changePrimaryIp()">{{ changingIp ? '更换中…' : '更换公网 IP' }}</button>
+              </span>
             </template>
-            <CheckList :items="[
-              { tone: 'info', text: '为主网卡分配一个 IPv6 地址。子网或 VCN 尚未开通时会一并开通，VCN 开通后无法关闭。' }
-            ]" />
+            <KeyValueList :items="vnicItems(primaryVnic)" />
           </SectionCard>
 
-          <SectionCard title="附属网卡"
+          <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
+                       :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
+            <template #action>
+              <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
+            </template>
+            <KeyValueList :items="vnicItems(v)" />
+          </SectionCard>
+
+          <SectionCard title="添加附属网卡"
                        :note="maxVnics ? `已用 ${vnicCount} / ${maxVnics} 张（含主网卡）` : ''">
             <template #action>
               <button v-if="!addingVnic" class="btn btn--sm" :disabled="locked || vnicFull"
@@ -794,22 +826,7 @@ watch(metricHours, () => void loadMetrics())
             <CheckList :items="[
               { tone: 'info', text: '附属网卡会带来一个额外的私网 IP，可选再配公网 IPv4 / IPv6；原有的 IP 不受影响。' },
               { tone: 'warn', text: '多数系统镜像不会自动启用新网卡，要在系统里配置后它才能收发流量（Oracle Linux 可用 oci-utils 的 oci-network-config）。' },
-              { tone: 'info', text: '更换公网 IP、开启 IPv6 仍只作用于主网卡。' }
-            ]" />
-          </SectionCard>
-
-          <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
-                       :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
-            <template #action>
-              <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
-            </template>
-            <KeyValueList :items="vnicIpItems(v)" />
-          </SectionCard>
-
-          <SectionCard title="公网 IP 操作">
-            <CheckList :items="[
-              { tone: 'warn', text: '更换公网 IP 会中断当前 SSH 连接，原 IP 不可找回。入口在行内 ⋯ 菜单与网络页，需二次确认。' },
-              { tone: 'info', text: '更换的做法是释放当前的临时 IP、再申请一个新的。保留 IP 不能这样换：一旦释放就永久失去这个地址，所以对保留 IP 不提供更换。' }
+              { tone: 'info', text: '更换公网 IP、开启 IPv6 只作用于主网卡。' }
             ]" />
           </SectionCard>
         </template>
@@ -1051,6 +1068,7 @@ watch(metricHours, () => void loadMetrics())
 </template>
 
 <style scoped>
+.card-actions { display: flex; gap: 6px; }
 .vnic-form { display: flex; flex-direction: column; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
 .vnic-form__actions { display: flex; gap: 8px; }
 .rule { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }
