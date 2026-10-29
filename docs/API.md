@@ -97,6 +97,7 @@ X-OCI-Tools: 1
 | DELETE | `/api/accounts/{id}?confirm={alias}` | 删除账号，**需回传别名** |
 | POST | `/api/accounts/{id}/check` | 重新校验连通性 |
 | GET | `/api/accounts/{id}/regions` | 该账号已订阅的区域 |
+| GET | `/api/accounts/{id}/resources` | 资源盘点：各区域的卷、公网 IP、控制台连接、VCN 与额度用量 |
 | POST | `/api/accounts/parse-config` | 解析粘贴的 OCI 配置 |
 | POST | `/api/accounts/check-draft` | 保存前测试凭据 |
 
@@ -395,6 +396,15 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 `/api/network/rule-templates` 的每条模板都带 `direction`（`ingress` / `egress`），
 调用方据此决定把规则追加到哪个数组。模板的 `port` 为 `0` 表示不限端口，
 此时**不要**写成 `0-0` 的端口区间——那会生成一条只对端口 0 生效的规则。
+
+**`GET /api/accounts/{id}/resources`** — `?region=` 只看一个区域（默认全部已订阅区域），`?refresh=true` 绕过 2 分钟缓存
+
+只读。返回 `instances`（来自实例缓存）、`volumes`（引导卷与块存储，`attachedTo` 为空表示未挂载；
+只认 `ATTACHED` / `ATTACHING` 的挂载关系，分离过的历史关系不算）、`publicIps`（临时与保留，
+`assigned` 表示是否绑定，`instance` 按地址对照实例缓存得出）、`consoleConnections`、
+`vcns`（`internetGateway` 为 `null` 表示没有互联网网关）、`usage`（按资源清单算出的用量）、
+`freeTier`（永久免费参考额度与核对日期）、`quota`（Oracle 真实限额，仅主区域）。
+某个区域某类资源查询失败时记入 `errors`，其余照常返回。
 
 **`POST /api/instances/{ocid}/change-ip?confirm=true`**
 
