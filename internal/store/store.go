@@ -333,6 +333,31 @@ CREATE TABLE IF NOT EXISTS capacity_watches (
 );
 CREATE INDEX IF NOT EXISTS idx_capacity_enabled ON capacity_watches(enabled, last_checked_at);
 
+-- 后台任务（创建实例、换 IP、改配置等长耗时操作）。
+--
+-- 落库是为了刷新页面、换设备打开时还能看到进度与结果；
+-- 进程重启时未结束的行会被标成 interrupted，见 InterruptUnfinishedJobs。
+CREATE TABLE IF NOT EXISTS jobs (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    -- 不加外键：账号删掉之后任务记录仍然有回看价值。
+    account_id  TEXT NOT NULL DEFAULT '',
+    instance_id TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL,
+    progress    INTEGER NOT NULL DEFAULT 0,
+    -- 步骤记录的 JSON 数组。
+    steps       TEXT NOT NULL DEFAULT '[]',
+    summary     TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    result      TEXT,
+    created_at  INTEGER NOT NULL,
+    started_at  INTEGER,
+    finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+
 -- 代理池。
 --
 -- 代理是一等实体而不是账号的一个字段：要能独立查看存活状态、独立管理，

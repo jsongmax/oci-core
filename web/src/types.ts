@@ -105,6 +105,8 @@ export interface ToastPayload {
   title: string
   body?: string
   command?: string
+  /** 附带一个跳转链接，如「查看任务」 */
+  link?: { label: string; to: string }
 }
 
 export interface ConfirmL2 {

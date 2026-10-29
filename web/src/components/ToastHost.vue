@@ -35,6 +35,9 @@ async function onCopy() {
         <span class="mono">{{ state.toast.command }}</span>
         <span class="toast__cmd-action">{{ copied ? '已复制' : '复制' }}</span>
       </button>
+      <RouterLink v-if="state.toast.link" :to="state.toast.link.to" class="toast__link" @click="dismissToast()">
+        {{ state.toast.link.label }} →
+      </RouterLink>
     </div>
   </Transition>
 </template>
@@ -78,4 +81,6 @@ async function onCopy() {
 .toast__cmd:hover { border-color: var(--border-strong); }
 .toast__cmd > span:first-child { flex: 1 1 auto; font-size: 11px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast__cmd-action { font-size: 11px; color: var(--accent); }
+.toast__link { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.toast__link:hover { text-decoration: underline; }
 </style>

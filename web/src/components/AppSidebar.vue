@@ -5,7 +5,7 @@ import { useStore } from '@/store'
 import BrandMark from '@/components/BrandMark.vue'
 
 const route = useRoute()
-const { state, visibleInstances } = useStore()
+const { state, visibleInstances, activeJobCount } = useStore()
 
 const items = computed(() => [
   { to: '/overview', icon: '▦', label: '总览' },
@@ -13,6 +13,8 @@ const items = computed(() => [
   { to: '/instances', icon: '▤', label: '实例', badge: visibleInstances.value.filter(i => i.state !== 'TERMINATED').length },
   { to: '/network', icon: '⌗', label: '网络' },
   { to: '/storage', icon: '◱', label: '存储' },
+  // 徽标只数进行中的：已结束的任务不需要注意力。
+  { to: '/jobs', icon: '◷', label: '任务', badge: activeJobCount.value, live: activeJobCount.value > 0 },
   { to: '/capacity', icon: '◇', label: '容量' },
   { to: '/billing', icon: '¤', label: '账单' },
   { to: '/hunt', icon: '◈', label: '守候' },
@@ -37,7 +39,7 @@ const activeIndex = computed(() => Math.max(0, items.value.findIndex(i => route.
       <RouterLink v-for="item in items" :key="item.to" :to="item.to" class="side__item">
         <span class="side__icon">{{ item.icon }}</span>
         <span class="side__label">{{ item.label }}</span>
-        <span v-if="item.badge" class="side__badge mono">{{ item.badge }}</span>
+        <span v-if="item.badge" class="side__badge mono" :class="{ 'is-live': item.live }">{{ item.badge }}</span>
       </RouterLink>
     </div>
 
@@ -92,6 +94,7 @@ const activeIndex = computed(() => Math.max(0, items.value.findIndex(i => route.
   border-radius: var(--radius-full); background: var(--bg-inset); border: 1px solid var(--border-subtle);
   color: var(--text-secondary); font-size: 11px; font-weight: 500; transition: opacity var(--dur-fast);
 }
+.side__badge.is-live { border-color: var(--accent); color: var(--accent); }
 .side__foot {
   padding: 10px 8px; border-top: 1px solid var(--border-subtle);
   display: flex; flex-direction: column; gap: 2px;

@@ -18,7 +18,7 @@ const props = defineProps<{
   bootVolumeId?: string
 }>()
 
-const { ask, toast, toastError, refreshInstances } = useStore()
+const { ask, toast, toastError, trackJob } = useStore()
 
 const size = ref(props.instance.bootGb)
 const vpu = ref(props.instance.vpu)
@@ -233,22 +233,28 @@ function applyVolume() {
     onConfirm: async () => {
       applyingVolume.value = true
       try {
-        const { notice } = await storage.updateBootVolume(
+        const { job } = await storage.updateBootVolume(
           props.bootVolumeId!, props.instance.accountId, props.instance.region,
           {
             sizeInGbs: size.value !== props.instance.bootGb ? size.value : undefined,
             vpusPerGb: vpu.value !== props.instance.vpu ? vpu.value : undefined
           }
         )
-        await refreshInstances()
-        // 扩容了就一直留着：命令要复制到实例里去跑，10 秒根本来不及。
+        // 提交时就把命令算好：任务结束时这个组件可能已经卸载了。
+        const name = props.instance.name
         const hint = grew ? growfsHint(props.instance.osFamily) : null
-        toast({
-          tone: 'success',
-          title: `${props.instance.name} 的引导卷已更新`,
-          body: [notice, hint?.note].filter(Boolean).join('\n') || undefined,
-          command: hint?.command
-        }, grew ? 0 : 10000)
+        trackJob(job, {
+          onSuccess: done => {
+            const notice = (done.result as { notice?: string } | undefined)?.notice
+            // 扩容了就一直留着：命令要复制到实例里去跑，10 秒根本来不及。
+            toast({
+              tone: 'success',
+              title: `${name} 的引导卷已更新`,
+              body: [notice, hint?.note].filter(Boolean).join('\n') || undefined,
+              command: hint?.command
+            }, grew ? 0 : 10000)
+          }
+        })
       } catch (err) {
         toastError('修改引导卷失败', err)
         size.value = props.instance.bootGb
@@ -275,10 +281,10 @@ function applyShape() {
         const { instances } = await import('@/api')
         // 只在改了突发设置时才带上基线；改回不突发要显式传 BASELINE_1_1，
         // 留空 Oracle 会保持原样。
-        await instances.reshape(props.instance.id, ocpu.value, mem.value,
+        // 运行中的实例改完要等 Oracle 重启一轮，任务会一直跟到落定。
+        const { job } = await instances.reshape(props.instance.id, ocpu.value, mem.value,
           baselineChanged.value ? (baseline.value || 'BASELINE_1_1') : undefined)
-        await refreshInstances()
-        toast({ tone: 'success', title: `${props.instance.name} 配置已更新` })
+        trackJob(job)
       } catch (err) {
         toastError('修改配置失败', err)
         ocpu.value = props.instance.ocpu

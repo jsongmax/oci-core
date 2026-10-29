@@ -18,6 +18,8 @@ const (
 	EventAccountStatus   = "account.status"
 	EventSyncStarted     = "sync.started"
 	EventSyncFinished    = "sync.finished"
+	// EventJobUpdated 表示一条后台任务有了新进度或已结束，Data 是任务全量快照。
+	EventJobUpdated = "job.updated"
 )
 
 // Event 是一条推给前端的实时事件。

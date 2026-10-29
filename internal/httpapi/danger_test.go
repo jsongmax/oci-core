@@ -179,10 +179,10 @@ func TestDangerPolicyRequiresFreshTOTP(t *testing.T) {
 	expectStatus(t, resp, http.StatusOK)
 	resp.Body.Close()
 
-	// 批量开机不算危险，不要求验证码。
+	// 批量开机不算危险，不要求验证码。批量操作在后台任务里执行，受理即返回 202。
 	resp = h.doWithCode("POST", "/api/instances/bulk",
 		`{"instanceIds":["nonexistent-instance"],"action":"START"}`, "")
-	expectStatus(t, resp, http.StatusOK)
+	expectStatus(t, resp, http.StatusAccepted)
 	resp.Body.Close()
 
 	resp = h.doWithCode("POST", "/api/instances/bulk", forcedBulkStop, "")
@@ -204,12 +204,12 @@ func TestDangerPolicyRequiresFreshTOTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp = h.doWithCode("POST", "/api/instances/bulk", forcedBulkStop, code)
-	expectStatus(t, resp, http.StatusOK)
+	expectStatus(t, resp, http.StatusAccepted)
 	resp.Body.Close()
 
 	// 复核通过后的有效期内，同一会话不再重复询问。
 	resp = h.doWithCode("POST", "/api/instances/bulk", forcedBulkStop, "")
-	expectStatus(t, resp, http.StatusOK)
+	expectStatus(t, resp, http.StatusAccepted)
 	resp.Body.Close()
 }
 

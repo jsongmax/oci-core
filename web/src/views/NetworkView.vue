@@ -19,7 +19,7 @@ import SelectMenu, { type SelectGroup } from '@/components/SelectMenu.vue'
 import AccountGroupRow from '@/components/AccountGroupRow.vue'
 import { groupByAccount } from '@/lib/grouping'
 
-const { state, accountById, ask, toast, toastError, visibleInstances, markIpChanged } = useStore()
+const { state, accountById, ask, toast, toastError, visibleInstances, trackJob } = useStore()
 const TABS = ['VCN', '子网', '安全规则', '公网 IP', 'IPv6']
 const active = ref('VCN')
 
@@ -523,8 +523,8 @@ function changeIp(id: string) {
     okLabel: '更换 IP',
     onConfirm: async () => {
       try {
-        const result = await (await import('@/api')).instances.changeIp(id)
-        markIpChanged(inst, result.oldIp, result.newIp)
+        const { job } = await (await import('@/api')).instances.changeIp(id)
+        trackJob(job)
       } catch (err) {
         toastError('更换 IP 失败', err)
       }

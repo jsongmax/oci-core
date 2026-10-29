@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ocicore/internal/instancesvc"
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -48,28 +49,50 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// handleSyncInstances 触发一次全量（或单账号）同步。同步要挨个区域去问
+// Oracle，可能几十秒，放到后台任务里跑，结果在任务列表里看。
 func (s *Server) handleSyncInstances(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
 
-	// 同步可能耗时数十秒，用独立的 context 而不是请求的——
-	// 用户关掉页面不应该让一轮已经开始的同步半途而废。
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
-	defer cancel()
-
-	var (
-		report *instancesvc.SyncReport
-		err    error
-	)
+	title := "同步全部实例"
 	if accountID != "" {
-		report, err = s.instances.SyncAccount(ctx, accountID)
-	} else {
-		report, err = s.instances.SyncAll(ctx)
+		acc, err := s.st.GetAccount(r.Context(), accountID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		title = "同步实例 · " + acc.Alias
 	}
-	if err != nil {
-		writeInstanceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobSync, Title: title, AccountID: accountID, Timeout: 6 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("逐个账号与区域拉取实例列表")
+		var (
+			report *instancesvc.SyncReport
+			err    error
+		)
+		if accountID != "" {
+			report, err = s.instances.SyncAccount(ctx, accountID)
+		} else {
+			report, err = s.instances.SyncAll(ctx)
+		}
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		for _, e := range report.Errors {
+			p.Stepf("⚠ %s · %s：%s", e.AccountAlias, e.Region, orText(e.OciCode, e.Message))
+		}
+		summary := fmt.Sprintf("%d 台实例 · %d 个区域 · %.1fs",
+			report.Instances, report.Regions, float64(report.DurationMs)/1000)
+		if report.Terminated > 0 {
+			summary += fmt.Sprintf("（另有 %d 台已终止）", report.Terminated)
+		}
+		if n := len(report.Errors); n > 0 {
+			summary += fmt.Sprintf("，%d 个区域失败", n)
+		}
+		return jobsvc.Outcome{Summary: summary, Result: report}, nil
+	})
 }
 
 func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
@@ -165,28 +188,67 @@ type reshapeRequest struct {
 	BaselineOcpuUtilization string  `json:"baselineOcpuUtilization"`
 }
 
+// handleReshapeInstance 修改实例的 OCPU 与内存。
+//
+// 运行中的实例改配置时 Oracle 会自己重启一次，整个过程要一两分钟。
+// 任务会一直等到重启落定，进度条才走完。
 func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 	var req reshapeRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	inst, err := s.instances.Reshape(r.Context(), r.PathValue("id"), instancesvc.ReshapeRequest{
-		Ocpus:        req.Ocpus,
-		MemoryInGBs:  req.MemoryInGBs,
-		BaselineOcpu: req.BaselineOcpuUtilization,
-	})
+	if req.Ocpus <= 0 || req.MemoryInGBs <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_input", "OCPU 与内存都必须大于 0")
+		return
+	}
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeInstanceError(w, err)
 		return
 	}
+	if ociclient.IsTransitionalState(inst.LifecycleState) {
+		writeInstanceError(w, instancesvc.ErrInstanceBusy)
+		return
+	}
+	who := s.actorOf(r)
+	detail := fmt.Sprintf("%g OCPU / %g GB", req.Ocpus, req.MemoryInGBs)
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_reshape",
-		AccountID: inst.AccountID, Target: inst.DisplayName, IP: s.clientIP(r),
-		Detail: fmt.Sprintf("%g OCPU / %g GB", req.Ocpus, req.MemoryInGBs),
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobReshape, Title: "更改配置 · " + inst.DisplayName + " → " + detail,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 15 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		wasRunning := inst.LifecycleState == ociclient.LifecycleRunning
+		p.Step("校验规格范围并提交新配置")
+		updated, err := s.instances.Reshape(ctx, inst.ID, instancesvc.ReshapeRequest{
+			Ocpus:        req.Ocpus,
+			MemoryInGBs:  req.MemoryInGBs,
+			BaselineOcpu: req.BaselineOcpuUtilization,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_reshape", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: detail,
+		})
+		p.Set(30)
+
+		// 关着的机器改完就生效；运行中的要等 Oracle 重启一轮。
+		var grace time.Duration
+		if wasRunning {
+			p.Step("新配置已提交，等待 Oracle 重启实例以应用")
+			grace = 2 * time.Minute
+		}
+		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 30, 99, grace)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		if final == nil {
+			return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+		}
+		summary := fmt.Sprintf("已改为 %g OCPU / %g GB，当前 %s", updated.Ocpus, updated.MemoryGB, final.LifecycleState)
+		return jobsvc.Outcome{Summary: summary}, nil
 	})
-	writeJSON(w, http.StatusOK, inst)
 }
 
 // handleTerminateInstance 终止实例。这是 L3 级危险操作。
@@ -219,33 +281,46 @@ func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request)
 	}
 
 	preserveBootVolume := r.URL.Query().Get("preserveBootVolume") == "true"
-	if err := s.instances.Terminate(r.Context(), instanceID, preserveBootVolume); err != nil {
-		writeInstanceError(w, err)
-		return
-	}
-
-	user := userFrom(r.Context())
 	detail := "引导卷一并删除"
 	if preserveBootVolume {
 		detail = "保留引导卷"
 	}
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_terminate",
-		AccountID: inst.AccountID, Target: inst.DisplayName,
-		Detail: detail, IP: s.clientIP(r),
+	who := s.actorOf(r)
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobTerminate, Title: "终止实例 " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 20 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("提交终止请求（" + detail + "）")
+		if err := s.instances.Terminate(ctx, inst.ID, preserveBootVolume); err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_terminate", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: detail,
+		})
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event: notify.EventDangerOperation,
+			Title: "实例 " + inst.DisplayName + " 已终止",
+			Fields: map[string]string{
+				"实例":  inst.DisplayName,
+				"区域":  inst.Region,
+				"引导卷": detail,
+				"操作者": who.username,
+				"来源":  who.ip,
+			},
+		})
+		p.Step("等待 Oracle 回收实例")
+		p.Set(20)
+		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 20, 99, 0)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		if final != nil && final.LifecycleState != ociclient.LifecycleTerminated {
+			return jobsvc.Outcome{}, errors.New("实例没有进入已终止状态，当前 " + final.LifecycleState)
+		}
+		return jobsvc.Outcome{Summary: "实例已终止，" + detail}, nil
 	})
-	s.notifier.Dispatch(r.Context(), notify.Message{
-		Event: notify.EventDangerOperation,
-		Title: "实例 " + inst.DisplayName + " 已终止",
-		Fields: map[string]string{
-			"实例":  inst.DisplayName,
-			"区域":  inst.Region,
-			"引导卷": detail,
-			"操作者": user.Username,
-			"来源":  s.clientIP(r),
-		},
-	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleDismissInstanceError 清除某行的错误提示。用户看过之后主动关掉。

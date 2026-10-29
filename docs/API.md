@@ -224,7 +224,7 @@ X-OCI-Tools: 1
 
 **`POST /api/instances/{ocid}/reshape`** — `{ "ocpus": 2, "memoryInGbs": 12, "baselineOcpuUtilization": "" }`
 
-不要求先关机：运行中的实例由 Oracle 重启一次来应用变更；处于过渡态时返回 400。OCPU/内存搭配与突发基线按规格元数据实时校验（A1.Flex 每 OCPU 最多 6 GB）。`baselineOcpuUtilization` 留空表示不改突发设置，改回独占传 `BASELINE_1_1`。
+不要求先关机：运行中的实例由 Oracle 重启一次来应用变更；处于过渡态时返回 409 `instance_busy`。通过后返回 202 与任务（`instance.reshape`），运行中的实例会一直等到重启落定。OCPU/内存搭配与突发基线按规格元数据实时校验（A1.Flex 每 OCPU 最多 6 GB）。`baselineOcpuUtilization` 留空表示不改突发设置，改回独占传 `BASELINE_1_1`。
 
 **`GET /api/instances/{ocid}/metrics`** — `?hours=6&metrics=CpuUtilization,NetworksBytesIn`
 
@@ -249,12 +249,59 @@ Oracle 用提交的公钥鉴权，**本工具不代管任何 SSH 私钥**。同�
 
 **`POST /api/instances/bulk`** — `{ "instanceIds": [...], "action": "SOFTSTOP", "force": false }`
 
-单次最多 20 台，并发度 3（同租户并发太高容易触发限流）。**不支持批量终止**——那是 L3 操作，必须逐台输名确认。受 `allowBulkActions` 策略控制。
+单次最多 20 台，并发度 3（同租户并发太高容易触发限流）。**不支持批量终止**——那是 L3 操作，必须逐台输名确认。受 `allowBulkActions` 策略控制。返回 202 与任务（`instance.bulk`），任务会等每台都落定，`result` 为：
 
 ```json
 { "results": [{ "instanceId": "…", "name": "web-01", "ok": true }],
   "succeeded": 3, "failed": 1 }
 ```
+
+---
+
+## 后台任务
+
+长耗时操作不再让请求一直挂着：参数、确认串与危险操作复核仍在请求里同步校验（失败照常返回 4xx），
+校验通过后返回 **202** 与任务快照，真正的工作在后台执行，关掉页面也会跑完。
+
+```json
+{ "job": { "id": "3f907cd6fb85a473", "kind": "instance.change_ip", "title": "更换公网 IP · web-01",
+           "accountId": "…", "instanceId": "ocid1…", "status": "queued", "progress": 0, "steps": [],
+           "createdAt": "…" } }
+```
+
+走后台任务的接口：
+
+| kind | 接口 |
+|---|---|
+| `instance.launch` | `POST /api/launch`（等到实例 RUNNING 才算完成） |
+| `instance.change_ip` | `POST /api/instances/{ocid}/change-ip` |
+| `instance.reshape` | `POST /api/instances/{ocid}/reshape`（运行中的实例会等 Oracle 重启落定） |
+| `instance.terminate` | `DELETE /api/instances/{ocid}` |
+| `instance.enable_ipv6` | `POST /api/instances/{ocid}/enable-ipv6` |
+| `instance.attach_vnic` / `instance.detach_vnic` | `POST /api/instances/{ocid}/vnics`、`DELETE …/vnics/{attachmentId}` |
+| `instance.bulk` | `POST /api/instances/bulk` |
+| `instance.sync` | `POST /api/instances/sync` |
+| `network.ensure` | `POST /api/network/ensure` |
+| `storage.boot_volume` / `storage.volume` | `PATCH /api/storage/boot-volumes/{id}`、`PATCH /api/storage/volumes/{id}` |
+
+`status` 取值：`queued` / `running` / `succeeded` / `failed` / `canceled` / `interrupted`。
+`progress` 为 0–100，只增不减。`steps` 是逐步的进度说明，`summary` 是成功后的一句结论，
+`error` 是失败原因（OCI 错误保留错误码），`result` 是结构化结果，形状随 `kind` 而定
+（如换 IP 为 `{ "oldIp", "newIp" }`，同步为同步报告）。
+
+同时最多执行 4 个任务，多出来的排队；同一台实例上的任务按提交顺序串行执行。
+进程重启时未结束的任务会被标为 `interrupted`——请求可能已经发到 Oracle，需去对应页面确认实际状态。
+已结束的任务保留最近 300 条。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/jobs` | 最近的任务，最新在前；`?status=active` 只返回未结束的 |
+| GET | `/api/jobs/{id}` | 单个任务 |
+| POST | `/api/jobs/{id}/cancel` | 取消，**只能取消排队中的**，已开始执行的返回 409 `job_running` |
+| DELETE | `/api/jobs/{id}` | 移除一条已结束的任务，未结束返回 409 `job_running` |
+| POST | `/api/jobs/clear` | 清空全部已结束的任务 |
+
+进度经 SSE 的 `job.updated` 推送，`data` 字段是任务的全量快照。
 
 ---
 
@@ -274,6 +321,7 @@ GET /api/events
 | `instance.network` | 附属网卡增减已落定，`state` 为 `ATTACHED` / `DETACHED` / `FAILED` |
 | `account.status` | 账号连通性变化 |
 | `sync.started` / `sync.finished` | 同步开始 / 结束 |
+| `job.updated` | 后台任务有新进度或已结束，`data` 为任务快照，见「后台任务」 |
 
 ```
 event: instance.updated
@@ -311,19 +359,14 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 `availabilityDomain` 留空自动选第一个。`subnetId` 留空且 `autoCreateNetwork: true` 时自动创建 VCN + 网关 + 路由 + 子网。`cloudInit` 提交原文，服务端负责 base64 编码。
 
-创建前会做配额预检（只对 A1，账号配额只读了 ARM 那一项），不足时返回 400 `quota_exceeded`。`baselineOcpuUtilization` 为空表示不突发；填了规格不支持的基线返回 400 `invalid_shape_config`。容量守候的 `POST /api/hunt` 接受同名字段。
+请求里只校验必填项（缺失返回 400 `missing_fields` / `missing_subnet`）与账号凭据，其余步骤都在后台任务 `instance.launch` 里执行，下面说的失败都体现为任务失败、`error` 里给出原因。
 
-`enableIpv6: true` 时，无论子网是手选、复用还是新建，都会先确认它能分配 IPv6：子网没有 IPv6 前缀就开通（VCN 没有前缀先申请 Oracle 分配的 /56，再从中切一段未占用的 /64 给子网；VCN 开通 IPv6 后无法关闭）。开通失败返回 502 `ipv6_unavailable`，实例不会创建。另外会照搬 IPv4 的现有配置补 `::/0` 路由与 `::/0` 出站规则：只有 IPv4 默认路由走互联网网关、且放行全部 IPv4 出站时才补；收紧过的不动，未完成的事项附在 `notice` 里。入站规则一律不自动添加。`POST /api/network/ensure?ipv6=true` 与 `POST /api/instances/{ocid}/enable-ipv6` 走同一套开通逻辑。
+创建前会做配额预检（只对 A1，账号配额只读了 ARM 那一项），不足时任务失败。`baselineOcpuUtilization` 为空表示不突发；填了规格不支持的基线任务失败。容量守候的 `POST /api/hunt` 接受同名字段。
 
-响应 201：
+`enableIpv6: true` 时，无论子网是手选、复用还是新建，都会先确认它能分配 IPv6：子网没有 IPv6 前缀就开通（VCN 没有前缀先申请 Oracle 分配的 /56，再从中切一段未占用的 /64 给子网；VCN 开通 IPv6 后无法关闭）。开通失败则任务失败，实例不会创建。另外会照搬 IPv4 的现有配置补 `::/0` 路由与 `::/0` 出站规则：只有 IPv4 默认路由走互联网网关、且放行全部 IPv4 出站时才补；收紧过的不动，未完成的事项附在 `notice` 里。入站规则一律不自动添加。`POST /api/network/ensure?ipv6=true` 与 `POST /api/instances/{ocid}/enable-ipv6` 走同一套开通逻辑。
 
-```json
-{ "instance": { …LifecycleState 为 PROVISIONING… },
-  "steps": ["已创建 VCN OCI Core-vcn (10.0.0.0/16)", "已配置默认路由 0.0.0.0/0", "…"],
-  "notice": "实例正在创建，通常需要 1–3 分钟。公网 IP 会在就绪后出现。" }
-```
-
-就绪由 SSE 的 `instance.updated`（`state: RUNNING`）推送。
+响应 202 与任务快照。提交创建后任务会补上 `instanceId`，列表里的新行由 SSE 的 `instance.updated` 带入；
+任务一直等到实例 `RUNNING` 才成功，`result` 为 `{ "instanceId", "publicIp" }`。
 
 ---
 
@@ -355,20 +398,20 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 
 **`POST /api/instances/{ocid}/change-ip?confirm=true`**
 
-不带 `confirm=true` 返回 `confirm_required` 与后果说明。保留 IP 会被拒绝（返回 `reserved_ip`）——删掉就永久释放了。
+不带 `confirm=true` 返回 `confirm_required` 与后果说明。通过后返回 202 与任务（`instance.change_ip`），`result` 为 `{ "oldIp", "newIp" }`。保留 IP 会被拒绝（任务失败）——删掉就永久释放了。
 
 **`POST /api/instances/{ocid}/vnics`**
 
 请求体 `{ "subnetId": "ocid1.subnet…", "displayName": "", "assignPublicIp": true, "assignIpv6": false }`。
-返回 `{ "attachmentId", "state": "ATTACHING", "warnings" }`，挂载在后台完成，落定后推 SSE `instance.network`。
+返回 202 与任务（`instance.attach_vnic`），任务一直等到网卡落定；落定时同样推 SSE `instance.network`。
 
-本地先拦下注定失败的请求：已达到规格的网卡数上限（`vnic_limit`）、子网属于另一个可用域、
-子网禁止公网 IP 却要分配公网 IPv4（均为 `invalid_input`）。`assignIpv6` 与创建实例走同一套子网开通逻辑。
+提交 Oracle 之前先拦下注定失败的请求（任务失败并说明原因）：已达到规格的网卡数上限、子网属于另一个可用域、
+子网禁止公网 IP 却要分配公网 IPv4。`assignIpv6` 与创建实例走同一套子网开通逻辑。
 
 **`DELETE /api/instances/{ocid}/vnics/{attachmentId}?confirm=true`**
 
 需要两步验证复核（若已启用）。不带 `confirm=true` 返回 `confirm_required`。
-只接受这台实例名下、处于 `ATTACHED` 的挂载关系（否则 `vnic_not_found`），主网卡拒绝分离（`primary_vnic`）。
+返回 202 与任务（`instance.detach_vnic`）。只接受这台实例名下、处于 `ATTACHED` 的挂载关系，主网卡拒绝分离（均为任务失败）。
 网卡上的临时公网 IP 随之释放，不可找回。
 
 ---

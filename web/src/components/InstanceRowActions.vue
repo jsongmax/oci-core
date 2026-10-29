@@ -9,7 +9,7 @@ import ActionIcon from '@/components/ActionIcon.vue'
 
 const props = defineProps<{ instance: Instance }>()
 const {
-  state, options, ask, toast, toastError, openDrawer, markIpChanged,
+  state, options, ask, toast, toastError, openDrawer, trackJob,
   start, stop, restart, terminate
 } = useStore()
 
@@ -118,8 +118,10 @@ function changeIp() {
     onConfirm: async () => {
       try {
         const { instances } = await import('@/api')
-        const result = await instances.changeIp(i.id)
-        markIpChanged(i, result.oldIp, result.newIp)
+        // 换 IP 要删旧地址、等释放、申请新地址，在后台任务里跑；
+        // 新 IP 由任务收尾时的提示给出。
+        const { job } = await instances.changeIp(i.id)
+        trackJob(job)
       } catch (err) {
         toastError('更换 IP 失败', err)
       }

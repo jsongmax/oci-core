@@ -111,8 +111,9 @@ export const instances = {
 
   detail: (id: string) => http.get<D.InstanceDetailDTO>(`/api/instances/${encodeURIComponent(id)}`),
 
+  /** 同步在后台任务里跑，结果（D.SyncReportDTO）在任务的 result 里 */
   sync: (accountId?: string) =>
-    http.post<D.SyncReportDTO>('/api/instances/sync', undefined, { query: { accountId } }),
+    http.post<D.JobAcceptedDTO>('/api/instances/sync', undefined, { query: { accountId } }),
 
   /**
    * 返回的 lifecycleState 一定是过渡态（STARTING/STOPPING），不是终态。
@@ -133,12 +134,12 @@ export const instances = {
 
   /** baseline 留空表示不改突发设置；改回独占传 BASELINE_1_1。 */
   reshape: (id: string, ocpus: number, memoryInGbs: number, baselineOcpuUtilization?: string) =>
-    http.post<D.InstanceDTO>(`/api/instances/${encodeURIComponent(id)}/reshape`,
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/reshape`,
       { ocpus, memoryInGbs, baselineOcpuUtilization }),
 
   /** 终止需回传实例名。preserveBootVolume 决定引导卷是否保留。 */
   terminate: (id: string, confirmName: string, preserveBootVolume = false) =>
-    http.del<{ ok: boolean }>(`/api/instances/${encodeURIComponent(id)}`, {
+    http.del<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}`, {
       query: {
         confirm: confirmName,
         preserveBootVolume: preserveBootVolume ? 'true' : undefined
@@ -148,21 +149,22 @@ export const instances = {
   dismissError: (id: string) =>
     http.post<{ ok: boolean }>(`/api/instances/${encodeURIComponent(id)}/dismiss-error`),
 
+  /** 后台任务，结果（D.ChangeIpDTO）在任务的 result 里 */
   changeIp: (id: string) =>
-    http.post<D.ChangeIpDTO>(`/api/instances/${encodeURIComponent(id)}/change-ip`, undefined, {
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/change-ip`, undefined, {
       query: { confirm: 'true' }
     }),
 
   enableIpv6: (id: string) =>
-    http.post<D.EnableIpv6DTO>(`/api/instances/${encodeURIComponent(id)}/enable-ipv6`),
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/enable-ipv6`),
 
-  /** 添加附属网卡。返回时网卡还在 ATTACHING，落定后经 SSE 推 instance.network */
+  /** 添加附属网卡。后台任务会一直等到网卡落定，期间仍会推 instance.network */
   attachVnic: (id: string, body: D.AttachVnicRequest) =>
-    http.post<D.AttachVnicResultDTO>(`/api/instances/${encodeURIComponent(id)}/vnics`, body),
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/vnics`, body),
 
   /** 分离附属网卡。网卡上的临时公网 IP 随之释放，后端要求 confirm=true */
   detachVnic: (id: string, attachmentId: string) =>
-    http.del<{ ok: boolean }>(
+    http.del<D.JobAcceptedDTO>(
       `/api/instances/${encodeURIComponent(id)}/vnics/${encodeURIComponent(attachmentId)}`,
       { query: { confirm: 'true' } }),
 
@@ -184,9 +186,7 @@ export const instances = {
     ),
 
   bulk: (ids: string[], action: InstanceAction, force = false) =>
-    http.post<{ results: { instanceId: string; ok: boolean; error?: string }[] }>(
-      '/api/instances/bulk', { instanceIds: ids, action, force }
-    )
+    http.post<D.JobAcceptedDTO>('/api/instances/bulk', { instanceIds: ids, action, force })
 }
 
 /* ---------- 创建实例 ---------- */
@@ -229,7 +229,8 @@ export const launch = {
       query: { accountId, region, shape, os }
     }),
 
-  create: (input: LaunchInput) => http.post<D.LaunchResultDTO>('/api/launch', input)
+  /** 创建在后台任务里跑，任务会一直等到实例 RUNNING */
+  create: (input: LaunchInput) => http.post<D.JobAcceptedDTO>('/api/launch', input)
 }
 
 /* ---------- 网络 ---------- */
@@ -265,7 +266,7 @@ export const network = {
     }),
 
   ensure: (accountId: string, region?: string, ipv6 = false) =>
-    http.post<D.EnsureNetworkDTO>('/api/network/ensure', undefined, {
+    http.post<D.JobAcceptedDTO>('/api/network/ensure', undefined, {
       query: { accountId, region, ipv6: ipv6 ? 'true' : undefined }
     })
 }
@@ -281,7 +282,7 @@ export const storage = {
   updateBootVolume: (
     id: string, accountId: string, region: string,
     patch: { displayName?: string; sizeInGbs?: number; vpusPerGb?: number }
-  ) => http.patch<{ bootVolume: D.BootVolumeDTO; notice: string }>(
+  ) => http.patch<D.JobAcceptedDTO>(
     `/api/storage/boot-volumes/${id}`, patch, { query: { accountId, region } }
   ),
 
@@ -291,7 +292,7 @@ export const storage = {
   updateVolume: (
     id: string, accountId: string, region: string,
     patch: { displayName?: string; sizeInGbs?: number; vpusPerGb?: number }
-  ) => http.patch<{ volume: D.BootVolumeDTO; notice: string }>(
+  ) => http.patch<D.JobAcceptedDTO>(
     `/api/storage/volumes/${id}`, patch, { query: { accountId, region } }
   ),
 
@@ -319,6 +320,26 @@ export const storage = {
     http.post<{ ok: boolean; notice: string }>('/api/storage/volume-attachments/detach', undefined, {
       query: { accountId, region, attachmentId }
     })
+}
+
+/* ---------- 后台任务 ---------- */
+
+/**
+ * 长耗时操作（创建实例、换 IP、改配置……）提交后立刻返回任务，
+ * 进度经 SSE 的 job.updated 推送，这里只用于首屏加载与管理。
+ */
+export const jobs = {
+  list: (activeOnly = false) =>
+    http.get<{ jobs: D.JobDTO[] }>('/api/jobs', { query: { status: activeOnly ? 'active' : undefined } }),
+
+  get: (id: string) => http.get<D.JobDTO>(`/api/jobs/${encodeURIComponent(id)}`),
+
+  /** 只能取消排队中的任务；已开始执行的会返回 409 */
+  cancel: (id: string) => http.post<{ ok: boolean }>(`/api/jobs/${encodeURIComponent(id)}/cancel`),
+
+  remove: (id: string) => http.del<{ ok: boolean }>(`/api/jobs/${encodeURIComponent(id)}`),
+
+  clearFinished: () => http.post<{ deleted: number }>('/api/jobs/clear')
 }
 
 /* ---------- 容量守候（抢机） ---------- */

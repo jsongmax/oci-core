@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"ocicore/internal/instancesvc"
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -74,30 +77,41 @@ func (s *Server) handleUpdateBootVolume(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	updated, err := client.UpdateBootVolume(r.Context(), region, volumeID, ociclient.UpdateBootVolumeRequest{
-		DisplayName: req.DisplayName,
-		SizeInGBs:   req.SizeInGBs,
-		VpusPerGB:   req.VpusPerGB,
-	})
-	if err != nil {
-		writeOCIError(w, err)
-		return
-	}
+	accountID := r.URL.Query().Get("accountId")
+	who := s.actorOf(r)
+	name := orText(current.DisplayName, volumeID)
 
-	s.syncBootVolumeCache(r, updated)
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobBootVolume, Title: "修改引导卷 · " + name, AccountID: accountID,
+		Timeout: 5 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("提交修改")
+		updated, err := client.UpdateBootVolume(ctx, region, volumeID, ociclient.UpdateBootVolumeRequest{
+			DisplayName: req.DisplayName,
+			SizeInGBs:   req.SizeInGBs,
+			VpusPerGB:   req.VpusPerGB,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "boot_volume_update",
-		AccountID: r.URL.Query().Get("accountId"), Target: updated.DisplayName,
-		Detail: describeVolumeChange(current.SizeInGBs, current.VpusPerGB, updated.SizeInGBs, updated.VpusPerGB),
-		IP:     s.clientIP(r),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"bootVolume": updated,
+		s.syncBootVolumeCache(ctx, updated)
+
+		change := describeVolumeChange(current.SizeInGBs, current.VpusPerGB, updated.SizeInGBs, updated.VpusPerGB)
+		s.audit(who, store.AuditEntry{
+			Action: "boot_volume_update", AccountID: accountID,
+			Target: updated.DisplayName, Detail: change,
+		})
 		// 扩容后系统盘里的分区不会自动跟着变大，必须提醒用户去实例内部处理，
 		// 否则会以为"扩了但没生效"。
-		"notice": noticeForResize(current.SizeInGBs, updated.SizeInGBs),
+		notice := noticeForResize(current.SizeInGBs, updated.SizeInGBs)
+		if notice != "" {
+			p.Step(notice)
+		}
+		return jobsvc.Outcome{
+			Summary: change,
+			Result:  map[string]any{"bootVolume": updated, "notice": notice},
+		}, nil
 	})
 }
 
@@ -136,34 +150,51 @@ func (s *Server) handleUpdateVolume(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := client.UpdateVolume(r.Context(), region, volumeID, ociclient.UpdateVolumeRequest{
-		DisplayName: req.DisplayName,
-		SizeInGBs:   req.SizeInGBs,
-		VpusPerGB:   req.VpusPerGB,
-	})
-	if err != nil {
-		writeOCIError(w, err)
-		return
-	}
-
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "volume_update",
-		AccountID: r.URL.Query().Get("accountId"), Target: updated.DisplayName,
-		IP: s.clientIP(r),
-	})
-
-	var notice string
+	accountID := r.URL.Query().Get("accountId")
+	who := s.actorOf(r)
+	name := volumeID
 	if current != nil {
-		notice = noticeForResize(current.SizeInGBs, updated.SizeInGBs)
+		name = orText(current.DisplayName, volumeID)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"volume": updated, "notice": notice})
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobVolumeUpdate, Title: "修改块存储卷 · " + name, AccountID: accountID,
+		Timeout: 5 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("提交修改")
+		updated, err := client.UpdateVolume(ctx, region, volumeID, ociclient.UpdateVolumeRequest{
+			DisplayName: req.DisplayName,
+			SizeInGBs:   req.SizeInGBs,
+			VpusPerGB:   req.VpusPerGB,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+
+		s.audit(who, store.AuditEntry{
+			Action: "volume_update", AccountID: accountID, Target: updated.DisplayName,
+		})
+
+		summary := "已保存"
+		var notice string
+		if current != nil {
+			notice = noticeForResize(current.SizeInGBs, updated.SizeInGBs)
+			summary = describeVolumeChange(current.SizeInGBs, current.VpusPerGB, updated.SizeInGBs, updated.VpusPerGB)
+		}
+		if notice != "" {
+			p.Step(notice)
+		}
+		return jobsvc.Outcome{
+			Summary: summary,
+			Result:  map[string]any{"volume": updated, "notice": notice},
+		}, nil
+	})
 }
 
 // syncBootVolumeCache 把引导卷的新容量写回实例缓存，
 // 让列表里的引导卷列立刻更新，不用等下一轮同步。
-func (s *Server) syncBootVolumeCache(r *http.Request, bv *ociclient.BootVolume) {
-	instances, err := s.st.ListInstances(r.Context(), store.InstanceFilter{})
+func (s *Server) syncBootVolumeCache(ctx context.Context, bv *ociclient.BootVolume) {
+	instances, err := s.st.ListInstances(ctx, store.InstanceFilter{})
 	if err != nil {
 		return
 	}
@@ -173,7 +204,7 @@ func (s *Server) syncBootVolumeCache(r *http.Request, bv *ociclient.BootVolume) 
 		}
 		instances[i].BootVolumeGB = bv.SizeInGBs
 		instances[i].BootVolumeVpus = bv.VpusPerGB
-		if err := s.st.UpsertInstance(r.Context(), instances[i]); err == nil {
+		if err := s.st.UpsertInstance(ctx, instances[i]); err == nil {
 			s.instances.Bus().Publish(instanceUpdatedEvent(&instances[i]))
 		}
 		return

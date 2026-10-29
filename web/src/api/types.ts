@@ -413,10 +413,37 @@ export interface LaunchPresetDTO {
   freeTier: boolean
 }
 
-export interface LaunchResultDTO {
-  instance: InstanceDTO
-  steps: string[] | null
-  notice?: string
+/** 后台任务状态。interrupted 是服务重启时还没跑完的任务，实际结果需要去对应页面确认 */
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
+
+export interface JobStepDTO {
+  at: string
+  text: string
+}
+
+export interface JobDTO {
+  id: string
+  /** instance.launch / instance.change_ip / instance.reshape / … 见后端 httpapi/jobs.go */
+  kind: string
+  title: string
+  accountId?: string
+  instanceId?: string
+  status: JobStatus
+  /** 0–100，只增不减；100 只在成功时出现 */
+  progress: number
+  steps: JobStepDTO[]
+  summary?: string
+  error?: string
+  /** 结构化结果，形状随 kind 而定（如换 IP 是 ChangeIpDTO） */
+  result?: unknown
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}
+
+/** 长耗时操作受理后的响应（HTTP 202） */
+export interface JobAcceptedDTO {
+  job: JobDTO
 }
 
 export interface VcnDTO {

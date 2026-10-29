@@ -32,9 +32,14 @@ const MetricChart = defineAsyncComponent(() => import('@/components/MetricChart.
 
 const props = defineProps<{ id: string; tab?: string }>()
 const {
-  state, accountById, closeDrawer, ask, toast, toastError, markIpChanged,
+  state, accountById, closeDrawer, ask, toast, toastError, trackJob, activeJobsFor,
   start, stop, restart, terminate
 } = useStore()
+
+/** 这台实例上正在后台跑的任务（换 IP、改配置……）。 */
+const runningJobs = computed(() => activeJobsFor(props.id))
+// 任务结束后详情（网卡、IP、配置）可能变了，重拉一次。
+watch(() => runningJobs.value.length, (n, old) => { if (n < old) void loadDetail() })
 
 const TABS = ['概览', '网络', '存储', '监控', '控制台', '操作记录']
 const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : '概览')
@@ -123,9 +128,8 @@ function changePrimaryIp() {
     onConfirm: async () => {
       changingIp.value = true
       try {
-        const result = await instancesApi.changeIp(i.id)
-        markIpChanged(i, result.oldIp, result.newIp)
-        await loadDetail()
+        const { job } = await instancesApi.changeIp(i.id)
+        trackJob(job)
       } catch (err) {
         toastError('更换 IP 失败', err)
       } finally {
@@ -191,17 +195,15 @@ async function submitVnic() {
   if (!i || !vnicForm.subnetId) return
   attachingVnic.value = true
   try {
-    const res = await instancesApi.attachVnic(i.id, {
+    const { job } = await instancesApi.attachVnic(i.id, {
       subnetId: vnicForm.subnetId,
       displayName: vnicForm.name.trim() || undefined,
       assignPublicIp: vnicForm.publicIp,
       assignIpv6: vnicForm.ipv6
     })
     addingVnic.value = false
-    toast({
-      tone: 'accent', title: '正在挂载附属网卡',
-      body: ['通常十几秒到一分钟，完成后自动刷新。', ...(res.warnings ?? [])].join('\n')
-    }, 8000)
+    // 通常十几秒到一分钟；落定后 instance.network 会让这里自动刷新。
+    trackJob(job)
   } catch (err) {
     toastError('添加网卡失败', err)
   } finally {
@@ -223,8 +225,8 @@ function detachVnic(v: D.VnicInfoDTO) {
     okLabel: '分离',
     onConfirm: async () => {
       try {
-        await instancesApi.detachVnic(i.id, v.attachmentId)
-        toast({ tone: 'accent', title: '正在分离附属网卡', body: '完成后自动刷新。' })
+        const { job } = await instancesApi.detachVnic(i.id, v.attachmentId)
+        trackJob(job)
       } catch (err) {
         toastError('分离网卡失败', err)
       }
@@ -254,13 +256,20 @@ function enableIpv6() {
     onConfirm: async () => {
       enablingIpv6.value = true
       try {
-        const result = await instancesApi.enableIpv6(i.id)
-        i.ipv6 = [result.address]
-        toast({
-          tone: 'success', title: `${i.name} 已分配 IPv6`,
-          body: [result.address, ...(result.steps ?? [])].join('\n')
-        }, 0)
-        await loadDetail()
+        const { job } = await instancesApi.enableIpv6(i.id)
+        const id = i.id
+        const name = i.name
+        trackJob(job, {
+          onSuccess: done => {
+            const result = done.result as D.EnableIpv6DTO | undefined
+            toast({
+              tone: 'success', title: `${name} 已分配 IPv6`,
+              body: [result?.address, ...(result?.steps ?? [])].filter(Boolean).join('\n')
+            }, 0)
+            // 抽屉可能已经关了或换了一台，只在还开着这台时重拉。
+            if (props.id === id) void loadDetail()
+          }
+        })
       } catch (err) {
         toastError('开启 IPv6 失败', err)
       } finally {
@@ -731,6 +740,11 @@ watch(metricHours, () => void loadMetrics())
     <DrawerTabs :tabs="TABS" v-model:active="active" />
 
     <DrawerBody>
+      <RouterLink v-for="j in runningJobs" :key="j.id" to="/jobs" class="job-banner" @click="closeDrawer()">
+        <span class="job-banner__spin" />
+        <span class="job-banner__text">{{ j.status === 'queued' ? '排队中' : '后台进行中' }}：{{ j.title }}</span>
+        <span class="mono job-banner__pct">{{ j.progress }}%</span>
+      </RouterLink>
       <p v-if="inst.lastError" class="err">{{ inst.lastError }}</p>
       <p v-if="detailError" class="err">{{ detailError }}</p>
       <p v-for="w in detail?.warnings ?? []" :key="w" class="warn">{{ w }}</p>
@@ -1141,4 +1155,17 @@ watch(metricHours, () => void loadMetrics())
   border-top: 1px solid var(--border-subtle);
 }
 
+.job-banner {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 9px 12px;
+  border-radius: var(--radius-md); border: 1px solid var(--accent);
+  background: var(--bg-inset); color: var(--text-primary); font-size: 12px; text-decoration: none;
+}
+.job-banner:hover { background: var(--bg-hover); }
+.job-banner__spin {
+  width: 10px; height: 10px; flex: 0 0 auto; border-radius: var(--radius-full);
+  border: 2px solid var(--accent); border-right-color: transparent; animation: job-spin 0.9s linear infinite;
+}
+.job-banner__text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-banner__pct { color: var(--text-secondary); }
+@keyframes job-spin { to { transform: rotate(360deg); } }
 </style>

@@ -14,6 +14,7 @@ export type ServerEventType =
   | 'account.status'
   | 'sync.started'
   | 'sync.finished'
+  | 'job.updated'
 
 export interface ServerEvent {
   type: ServerEventType
@@ -34,7 +35,7 @@ export interface EventHandlers {
 
 const ALL_TYPES: ServerEventType[] = [
   'instance.updated', 'instance.removed', 'instance.error', 'instance.network',
-  'account.status', 'sync.started', 'sync.finished'
+  'account.status', 'sync.started', 'sync.finished', 'job.updated'
 ]
 
 /**

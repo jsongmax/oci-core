@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ocicore/internal/instancesvc"
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
@@ -187,48 +188,65 @@ func (s *Server) handleListPublicIPs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"publicIps": ips})
 }
 
-// handleEnsureNetwork 在目标区域准备好一个可用的公网子网。
+// handleEnsureNetwork 在目标区域准备好一个可用的公网子网。建网要连着建
+// VCN、子网、网关和路由，可能要一两分钟，放到后台任务里跑。
 func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 	client, acc, region, ok := s.resolveTarget(w, r)
 	if !ok {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-	defer cancel()
-
 	enableIPv6 := r.URL.Query().Get("ipv6") == "true"
-	result, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
-		Region:        region,
-		CompartmentID: acc.CompartmentOCID,
-		EnableIPv6:    enableIPv6,
-	})
-	if err != nil {
-		writeOCIError(w, err)
-		return
-	}
+	who := s.actorOf(r)
+	title := "准备网络 · " + region
 	if enableIPv6 {
-		prep, err := netsvc.PrepareIPv6(ctx, client, region, result.SubnetID)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "ipv6_unavailable",
-				"子网已就绪，但没能开通 IPv6："+ipv6ErrText(err))
-			return
-		}
-		result.Steps = append(result.Steps, prep.Steps...)
-		for _, warn := range prep.Warnings {
-			result.Steps = append(result.Steps, "⚠ "+warn)
-		}
+		title += "（含 IPv6）"
 	}
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "network_ensure", AccountID: acc.ID,
-		Target: region, Detail: strings.Join(result.Steps, "；"), IP: s.clientIP(r),
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobEnsureNet, Title: title, AccountID: acc.ID, Timeout: 5 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("检查 VCN / 子网 / 网关 / 路由")
+		result, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
+			Region:        region,
+			CompartmentID: acc.CompartmentOCID,
+			EnableIPv6:    enableIPv6,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		for _, step := range result.Steps {
+			p.Step(step)
+		}
+		p.Set(70)
+
+		if enableIPv6 {
+			prep, err := netsvc.PrepareIPv6(ctx, client, region, result.SubnetID)
+			if err != nil {
+				return jobsvc.Outcome{Result: result}, errors.New("子网已就绪，但没能开通 IPv6：" + ipv6ErrText(err))
+			}
+			result.Steps = append(result.Steps, prep.Steps...)
+			for _, step := range prep.Steps {
+				p.Step(step)
+			}
+			for _, warn := range prep.Warnings {
+				result.Steps = append(result.Steps, "⚠ "+warn)
+				p.Step("⚠ " + warn)
+			}
+		}
+
+		s.audit(who, store.AuditEntry{
+			Action: "network_ensure", AccountID: acc.ID,
+			Target: region, Detail: strings.Join(result.Steps, "；"),
+		})
+		return jobsvc.Outcome{Summary: "子网 " + result.SubnetName + " 已就绪", Result: result}, nil
 	})
-	writeJSON(w, http.StatusOK, result)
 }
 
 // handleChangePublicIP 更换实例的公网 IP。这是 L2 级操作。
+//
+// 确认与凭据在请求里校验，换 IP 本身（删旧地址、等释放、申请新地址）
+// 交给后台任务。
 func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 	instanceID := r.PathValue("id")
 
@@ -258,46 +276,60 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "credentials", err.Error())
 		return
 	}
+	who := s.actorOf(r)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-
-	result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, inst.VnicID, acc.CompartmentOCID)
-	if err != nil {
-		if errors.Is(err, netsvc.ErrReservedIP) {
-			writeError(w, http.StatusBadRequest, "reserved_ip", err.Error())
-			return
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobChangeIP, Title: "更换公网 IP · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		if inst.PublicIP != "" {
+			p.Step("释放原公网 IP " + inst.PublicIP + " 并申请新地址")
+		} else {
+			p.Step("申请新的公网 IP")
 		}
-		writeOCIError(w, err)
-		return
-	}
+		p.Set(20)
 
-	// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。
-	inst.PublicIP = result.NewIP
-	if err := s.st.UpsertInstance(r.Context(), *inst); err == nil {
-		s.instances.Bus().Publish(instanceUpdatedEvent(inst))
-	}
+		result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, inst.VnicID, acc.CompartmentOCID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		p.Step("新地址 " + result.NewIP + " 已分配")
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_change_ip", AccountID: inst.AccountID,
-		Target: inst.DisplayName, Detail: result.OldIP + " → " + result.NewIP, IP: s.clientIP(r),
+		// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。重新读一次：
+		// 任务排队期间这一行可能已被同步改过，不能拿请求时的旧快照覆盖。
+		if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+			fresh.PublicIP = result.NewIP
+			if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+				s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+			}
+		}
+
+		s.audit(who, store.AuditEntry{
+			Action: "instance_change_ip", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: result.OldIP + " → " + result.NewIP,
+		})
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event: notify.EventDangerOperation,
+			Title: "实例 " + inst.DisplayName + " 的公网 IP 已更换",
+			Body:  "原有 SSH 连接已中断，请使用新地址重新连接。",
+			Fields: map[string]string{
+				"实例":   inst.DisplayName,
+				"原 IP": result.OldIP,
+				"新 IP": result.NewIP,
+				"操作者":  who.username,
+			},
+		})
+
+		summary := "新 IP " + result.NewIP
+		if result.OldIP != "" {
+			summary = result.OldIP + " → " + result.NewIP
+		}
+		return jobsvc.Outcome{Summary: summary, Result: result}, nil
 	})
-	s.notifier.Dispatch(r.Context(), notify.Message{
-		Event: notify.EventDangerOperation,
-		Title: "实例 " + inst.DisplayName + " 的公网 IP 已更换",
-		Body:  "原有 SSH 连接已中断，请使用新地址重新连接。",
-		Fields: map[string]string{
-			"实例":   inst.DisplayName,
-			"原 IP": result.OldIP,
-			"新 IP": result.NewIP,
-			"操作者":  user.Username,
-		},
-	})
-	writeJSON(w, http.StatusOK, result)
 }
 
-// handleEnableIPv6 为实例分配 IPv6 地址。
+// handleEnableIPv6 为实例分配 IPv6 地址。要依次给 VCN、子网开前缀再分配地址，
+// 放到后台任务里跑。
 func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -315,59 +347,118 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "credentials", err.Error())
 		return
 	}
+	who := s.actorOf(r)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobEnableIPv6, Title: "启用 IPv6 · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("为 VCN、子网开通 IPv6 前缀并给网卡分配地址")
+		result, err := netsvc.EnableIPv6(ctx, client, inst.Region, inst.VnicID, inst.SubnetID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		for _, step := range result.Steps {
+			p.Step(step)
+		}
 
-	result, err := netsvc.EnableIPv6(ctx, client, inst.Region, inst.VnicID, inst.SubnetID)
-	if err != nil {
-		writeOCIError(w, err)
-		return
-	}
+		if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+			fresh.IPv6 = result.Address
+			if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+				s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+			}
+		}
 
-	inst.IPv6 = result.Address
-	if err := s.st.UpsertInstance(r.Context(), *inst); err == nil {
-		s.instances.Bus().Publish(instanceUpdatedEvent(inst))
-	}
-
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_enable_ipv6", AccountID: inst.AccountID,
-		Target: inst.DisplayName, Detail: result.Address, IP: s.clientIP(r),
+		s.audit(who, store.AuditEntry{
+			Action: "instance_enable_ipv6", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: result.Address,
+		})
+		return jobsvc.Outcome{Summary: "已分配 IPv6 " + result.Address, Result: result}, nil
 	})
-	writeJSON(w, http.StatusOK, result)
 }
 
-// handleAttachVnic 为实例添加附属网卡。网卡返回时处于 ATTACHING，
-// 落定由后台等待，完成后经 SSE 推送。
+// vnicSettleTimeout 比 instancesvc 里等网卡落定的上限略长，让那边先给出结论。
+const vnicSettleTimeout = 5 * time.Minute
+
+// waitVnicSettled 等 instancesvc 推送这台实例的网卡落定事件。
+// 订阅必须在发起挂载/分离之前建立，否则可能错过很快就落定的那一条。
+func waitVnicSettled(ctx context.Context, events <-chan instancesvc.Event, instanceID string) (string, error) {
+	timeout := time.NewTimer(vnicSettleTimeout)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timeout.C:
+			return "", errors.New("等待网卡状态落定超时，请稍后在实例详情里确认")
+		case e, ok := <-events:
+			if !ok {
+				return "", errors.New("事件流已关闭")
+			}
+			if e.Type == instancesvc.EventInstanceNetwork && e.InstanceID == instanceID {
+				return e.State, nil
+			}
+		}
+	}
+}
+
+// handleAttachVnic 为实例添加附属网卡。校验子网、开通 IPv6、挂载、等落定都在后台任务里。
 func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
 	var req instancesvc.AttachVnicRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-
-	inst, result, err := s.instances.AttachVnic(ctx, r.PathValue("id"), req)
-	if err != nil {
-		writeVnicError(w, err)
+	if strings.TrimSpace(req.SubnetID) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "请选择子网")
 		return
 	}
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	who := s.actorOf(r)
 
-	detail := "子网 " + req.SubnetID
-	if req.AssignPublicIP {
-		detail += "，分配公网 IPv4"
-	}
-	if req.AssignIPv6 {
-		detail += "，分配 IPv6"
-	}
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_attach_vnic", AccountID: inst.AccountID,
-		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobAttachVnic, Title: "添加附属网卡 · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 8 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		events, unsubscribe := s.instances.Bus().Subscribe()
+		defer unsubscribe()
+
+		p.Step("校验网卡数量与子网")
+		_, result, err := s.instances.AttachVnic(ctx, inst.ID, req)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		for _, warn := range result.Warnings {
+			p.Step("⚠ " + warn)
+		}
+
+		detail := "子网 " + req.SubnetID
+		if req.AssignPublicIP {
+			detail += "，分配公网 IPv4"
+		}
+		if req.AssignIPv6 {
+			detail += "，分配 IPv6"
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_attach_vnic", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: detail,
+		})
+
+		p.Step("已提交挂载，等待网卡就绪")
+		p.Set(40)
+		state, err := waitVnicSettled(ctx, events, inst.ID)
+		if err != nil {
+			return jobsvc.Outcome{Result: result}, err
+		}
+		result.State = state
+		if state != "ATTACHED" {
+			return jobsvc.Outcome{Result: result}, errors.New("网卡没有挂上，Oracle 返回的状态是 " + state)
+		}
+		return jobsvc.Outcome{Summary: "附属网卡已挂载", Result: result}, nil
 	})
-	writeJSON(w, http.StatusOK, result)
 }
 
 // handleDetachVnic 分离一张附属网卡。网卡上的临时公网 IP 随之释放，是 L2 级操作。
@@ -379,40 +470,62 @@ func (s *Server) handleDetachVnic(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
-
-	inst, vnic, err := s.instances.DetachVnic(ctx, r.PathValue("id"), r.PathValue("attachmentId"))
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeVnicError(w, err)
+		writeStoreError(w, err)
 		return
 	}
+	attachmentID := r.PathValue("attachmentId")
+	who := s.actorOf(r)
 
-	name := vnic.DisplayName
-	if name == "" {
-		name = vnic.ID
-	}
-	detail := name + " · 私网 " + vnic.PrivateIP
-	if vnic.PublicIP != "" {
-		detail += " · 公网 " + vnic.PublicIP
-	}
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_detach_vnic", AccountID: inst.AccountID,
-		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobDetachVnic, Title: "分离附属网卡 · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 8 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		events, unsubscribe := s.instances.Bus().Subscribe()
+		defer unsubscribe()
+
+		_, vnic, err := s.instances.DetachVnic(ctx, inst.ID, attachmentID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+
+		name := vnic.DisplayName
+		if name == "" {
+			name = vnic.ID
+		}
+		detail := name + " · 私网 " + vnic.PrivateIP
+		if vnic.PublicIP != "" {
+			detail += " · 公网 " + vnic.PublicIP
+		}
+		p.Step("已提交分离：" + detail)
+		p.Set(30)
+
+		s.audit(who, store.AuditEntry{
+			Action: "instance_detach_vnic", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: detail,
+		})
+		fields := map[string]string{"实例": inst.DisplayName, "网卡": name, "操作者": who.username}
+		if vnic.PublicIP != "" {
+			fields["释放的公网 IP"] = vnic.PublicIP
+		}
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event:  notify.EventDangerOperation,
+			Title:  "实例 " + inst.DisplayName + " 分离了一张附属网卡",
+			Body:   "网卡上的临时公网 IP 已释放。",
+			Fields: fields,
+		})
+
+		p.Step("等待网卡下线")
+		state, err := waitVnicSettled(ctx, events, inst.ID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		if state != "DETACHED" {
+			return jobsvc.Outcome{}, errors.New("网卡分离没有完成，状态 " + state)
+		}
+		return jobsvc.Outcome{Summary: "网卡 " + name + " 已分离"}, nil
 	})
-	fields := map[string]string{"实例": inst.DisplayName, "网卡": name, "操作者": user.Username}
-	if vnic.PublicIP != "" {
-		fields["释放的公网 IP"] = vnic.PublicIP
-	}
-	s.notifier.Dispatch(r.Context(), notify.Message{
-		Event:  notify.EventDangerOperation,
-		Title:  "实例 " + inst.DisplayName + " 分离了一张附属网卡",
-		Body:   "网卡上的临时公网 IP 已释放。",
-		Fields: fields,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func writeVnicError(w http.ResponseWriter, err error) {

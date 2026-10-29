@@ -15,6 +15,7 @@ import (
 	"ocicore/internal/config"
 	"ocicore/internal/huntsvc"
 	"ocicore/internal/instancesvc"
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociconn"
 	"ocicore/internal/store"
@@ -56,6 +57,7 @@ type Server struct {
 	hunter    *huntsvc.Service
 	capacity  *capacitysvc.Service
 	billing   *billingsvc.Service
+	jobs      *jobsvc.Service
 	started   time.Time
 
 	// elevations 记录通过了危险操作复核的会话，见 danger.go。
@@ -91,6 +93,9 @@ func New(deps Deps) *Server {
 	})
 	// 账单只是按需查询，没有后台轮询，所以构造得比其余 service 简单。
 	s.billing = billingsvc.New(billingsvc.Deps{Store: s.st, Conns: s.conns})
+	// 长耗时操作（创建实例、换 IP、改配置……）放到后台跑，进度经 SSE 推送。
+	s.jobs = jobsvc.New(jobsvc.Deps{Store: s.st, OnChange: s.onJobChange})
+	s.jobs.Recover(context.Background())
 	s.hunter = huntsvc.New(huntsvc.Deps{
 		Store:    s.st,
 		Conns:    s.conns,
@@ -152,6 +157,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/instances/{id}/console", s.guard(s.requireAuth(s.handleCreateConsole)))
 	s.mux.HandleFunc("POST /api/instances/bulk", s.guard(s.requireAuth(s.handleBulkAction)))
 	s.mux.HandleFunc("POST /api/auth/sessions/revoke-all", s.guard(s.requireAuth(s.danger(s.handleRevokeSessions))))
+
+	// 后台任务。长耗时操作提交后立刻返回 202 与任务快照，进度看这里。
+	s.mux.HandleFunc("GET /api/jobs", s.requireAuth(s.handleListJobs))
+	s.mux.HandleFunc("GET /api/jobs/{id}", s.requireAuth(s.handleGetJob))
+	s.mux.HandleFunc("POST /api/jobs/{id}/cancel", s.guard(s.requireAuth(s.handleCancelJob)))
+	s.mux.HandleFunc("DELETE /api/jobs/{id}", s.guard(s.requireAuth(s.handleDeleteJob)))
+	s.mux.HandleFunc("POST /api/jobs/clear", s.guard(s.requireAuth(s.handleClearJobs)))
 
 	// 实时事件流。SSE 单向推送足够，不需要 WebSocket 的双向能力。
 	s.mux.HandleFunc("GET /api/events", s.requireAuth(s.handleEvents))

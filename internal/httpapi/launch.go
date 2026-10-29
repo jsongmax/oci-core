@@ -3,10 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -151,17 +153,17 @@ type launchRequest struct {
 	CloudInit    string `json:"cloudInit"`
 }
 
-// launchResponse 返回创建结果与过程说明。
-type launchResponse struct {
-	Instance store.Instance `json:"instance"`
-	Steps    []string       `json:"steps"`
-	Notice   string         `json:"notice,omitempty"`
+// launchResult 是创建任务的结构化结果。
+type launchResult struct {
+	InstanceID string `json:"instanceId"`
+	PublicIP   string `json:"publicIp,omitempty"`
 }
 
 // handleLaunchInstance 创建实例。
 //
-// 流程：校验参数 → 配额预检 → 准备网络 → LaunchInstance → 写入缓存并起轮询。
-// 前端拿到响应时实例处于 PROVISIONING，落定由 SSE 推送。
+// 请求里只做必填项与凭据校验，随后交给后台任务：选可用域 → 校验规格 →
+// 配额预检 → 准备网络 → LaunchInstance → 写入缓存 → 等到 RUNNING。
+// 整个流程要几分钟，以前请求一直挂着，现在立刻返回 202 与任务快照。
 func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	var req launchRequest
 	if !decodeJSON(w, r, &req) {
@@ -176,6 +178,11 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_fields", "请填写实例名称")
 		return
 	}
+	if req.SubnetID == "" && !req.AutoCreateNetwork {
+		writeError(w, http.StatusBadRequest, "missing_subnet",
+			"请选择子网，或勾选自动创建网络")
+		return
+	}
 
 	client, acc, err := s.conns.ForID(r.Context(), req.AccountID)
 	if err != nil {
@@ -187,35 +194,41 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	if region == "" {
 		region = acc.DefaultRegion
 	}
+	who := s.actorOf(r)
 
-	// 创建实例是多步长流程，用独立 context：用户关掉页面不该让
-	// 已经建好的 VCN 悬在那里没人收尾。
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
-	defer cancel()
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobLaunch, Title: "创建实例 " + strings.TrimSpace(req.DisplayName), AccountID: acc.ID,
+		// 创建、建网、等就绪加起来，容量紧张时十分钟也不算离谱。
+		Timeout: 20 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		return s.runLaunch(ctx, p, client, acc, region, req, who)
+	})
+}
 
-	resp := launchResponse{}
+func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ociclient.Client,
+	acc *store.Account, region string, req launchRequest, who actor) (jobsvc.Outcome, error) {
+
+	p.Stepf("账号 %s · 区域 %s · 规格 %s", acc.Alias, region, req.Shape)
 
 	ad := req.AvailabilityDomain
 	if ad == "" {
 		ads, err := client.ListAvailabilityDomains(ctx, region, acc.CompartmentOCID)
 		if err != nil {
-			writeOCIError(w, err)
-			return
+			return jobsvc.Outcome{}, err
 		}
 		if len(ads) == 0 {
-			writeError(w, http.StatusBadRequest, "no_ad", "该区域没有可用域")
-			return
+			return jobsvc.Outcome{}, errors.New("该区域没有可用域")
 		}
 		ad = ads[0].Name
-		resp.Steps = append(resp.Steps, "未指定可用域，已选用 "+ad)
+		p.Step("未指定可用域，已选用 " + ad)
 	}
+	p.Set(5)
 
 	// 规格校验：拿真实的规格元数据来校验 OCPU/内存搭配，
 	// 比硬编码 A1.Flex 的规则可靠——Oracle 会调整免费额度上限。
 	shapes, err := client.ListShapes(ctx, region, acc.CompartmentOCID, ad)
 	if err != nil {
-		writeOCIError(w, err)
-		return
+		return jobsvc.Outcome{}, err
 	}
 	var target *ociclient.Shape
 	for i := range shapes {
@@ -225,9 +238,7 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		writeError(w, http.StatusBadRequest, "invalid_shape",
-			"该可用域不提供规格 "+req.Shape)
-		return
+		return jobsvc.Outcome{}, errors.New("该可用域不提供规格 " + req.Shape)
 	}
 
 	var shapeConfig *ociclient.ShapeConfig
@@ -235,41 +246,37 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		cfg := ociclient.ShapeConfig{Ocpus: req.Ocpus, MemoryInGBs: req.MemoryInGBs,
 			BaselineOcpuUtilization: req.BaselineOcpuUtilization}
 		if err := ociclient.ValidateShapeConfig(target, cfg); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_shape_config", err.Error())
-			return
+			return jobsvc.Outcome{}, err
 		}
 		shapeConfig = &cfg
 	}
+	p.Step("规格校验通过")
+	p.Set(10)
 
 	// 配额预检：配额已满的话 LaunchInstance 必定失败，
 	// 提前查一次能把"重试无意义"这件事说清楚。
 	if notice := s.checkLaunchQuota(ctx, client, acc, region, req.Shape, req.Ocpus); notice != "" {
-		writeJSON(w, http.StatusBadRequest, errorBody{
-			Code: "quota_exceeded", Message: notice,
-			Advice: "请先释放已有资源，或在账号详情的配额页确认限额。",
-		})
-		return
+		return jobsvc.Outcome{}, errors.New(notice + "请先释放已有资源，或在账号详情的配额页确认限额。")
 	}
+	p.Set(15)
 
 	subnetID := req.SubnetID
 	if subnetID == "" {
-		if !req.AutoCreateNetwork {
-			writeError(w, http.StatusBadRequest, "missing_subnet",
-				"请选择子网，或勾选自动创建网络")
-			return
-		}
+		p.Step("正在准备网络（VCN / 子网 / 网关 / 路由）")
 		netResult, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
 			Region:        region,
 			CompartmentID: acc.CompartmentOCID,
 			EnableIPv6:    req.EnableIPv6,
 		})
 		if err != nil {
-			writeOCIError(w, err)
-			return
+			return jobsvc.Outcome{}, err
 		}
 		subnetID = netResult.SubnetID
-		resp.Steps = append(resp.Steps, netResult.Steps...)
+		for _, step := range netResult.Steps {
+			p.Step(step)
+		}
 	}
+	p.Set(30)
 
 	// 无论子网是手选的、复用的还是新建的，要 IPv6 就得先确认它真能分配 IPv6。
 	// 开通不了就到此为止：带着 assignIpv6Ip 去创建只会换来 Oracle 一句
@@ -278,10 +285,12 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	if req.EnableIPv6 {
 		prep, err := netsvc.PrepareIPv6(ctx, client, region, subnetID)
 		if err != nil {
-			writeIPv6Error(w, err)
-			return
+			return jobsvc.Outcome{}, errors.New("没能为子网开通 IPv6，实例未创建：" + ipv6ErrText(err) +
+				"。可以关闭 IPv6 后重试，或换一个子网。")
 		}
-		resp.Steps = append(resp.Steps, prep.Steps...)
+		for _, step := range prep.Steps {
+			p.Step(step)
+		}
 		ipv6Warnings = prep.Warnings
 	}
 
@@ -317,10 +326,11 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 
 	created, err := client.LaunchInstance(ctx, region, launchReq)
 	if err != nil {
-		writeOCIError(w, err)
-		return
+		return jobsvc.Outcome{}, err
 	}
-	resp.Steps = append(resp.Steps, "已提交创建请求，实例进入 PROVISIONING")
+	p.SetInstance(created.ID)
+	p.Step("已提交创建请求，实例进入 PROVISIONING")
+	p.Set(40)
 
 	// 立刻写入缓存，让列表马上出现这一行（PROVISIONING 状态），
 	// 而不是等下一轮同步。落定由后台轮询推送。
@@ -348,39 +358,40 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 		row.BaselineOcpu = created.ShapeConfig.BaselineOcpuUtilization
 	}
 	if err := s.st.UpsertInstance(ctx, row); err != nil {
-		writeStoreError(w, err)
-		return
+		return jobsvc.Outcome{}, err
 	}
-	s.instances.Watch(created.ID)
 	s.instances.Bus().Publish(instanceUpdatedEvent(&row))
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_launch", AccountID: acc.ID,
-		Target: created.DisplayName,
-		Detail: req.Shape + " · " + region + " · " + ad, IP: s.clientIP(r),
+	s.audit(who, store.AuditEntry{
+		Action: "instance_launch", AccountID: acc.ID, Target: created.DisplayName,
+		Detail: req.Shape + " · " + region + " · " + ad,
 	})
 
-	stored, err := s.st.GetInstance(ctx, created.ID)
+	for _, warn := range ipv6Warnings {
+		p.Step("⚠ IPv6：" + warn)
+	}
+	p.Step("等待实例就绪，通常需要 1–3 分钟")
+
+	result := launchResult{InstanceID: created.ID}
+	inst, err := s.waitInstanceSettled(ctx, p, created.ID, 40, 99, 0)
 	if err != nil {
-		writeStoreError(w, err)
-		return
+		return jobsvc.Outcome{Result: result}, err
 	}
-	resp.Instance = *stored
-	resp.Notice = "实例正在创建，通常需要 1–3 分钟。公网 IP 会在就绪后出现。"
-	if len(ipv6Warnings) > 0 {
-		resp.Notice += "\nIPv6：" + strings.Join(ipv6Warnings, "；")
+	if inst == nil || inst.LifecycleState != ociclient.LifecycleRunning {
+		state := ociclient.LifecycleTerminated
+		if inst != nil {
+			state = inst.LifecycleState
+		}
+		return jobsvc.Outcome{Result: result},
+			errors.New("实例已提交创建，但没有进入 RUNNING，当前状态 " + state)
 	}
-	writeJSON(w, http.StatusCreated, resp)
-}
 
-// writeIPv6Error 报告子网开通 IPv6 失败。此时实例还没有创建。
-func writeIPv6Error(w http.ResponseWriter, err error) {
-	writeJSON(w, http.StatusBadGateway, errorBody{
-		Code:    "ipv6_unavailable",
-		Message: "没能为子网开通 IPv6，实例未创建：" + ipv6ErrText(err),
-		Advice:  "可以关闭 IPv6 后重试，或换一个子网，也可以先在 Oracle 控制台给这个子网分配 IPv6 前缀。",
-	})
+	result.PublicIP = inst.PublicIP
+	summary := "实例 " + inst.DisplayName + " 已就绪"
+	if inst.PublicIP != "" {
+		summary += "，公网 IP " + inst.PublicIP
+	}
+	return jobsvc.Outcome{Summary: summary, Result: result}, nil
 }
 
 // ipv6ErrText 保留出错的是哪一步，同时把 OCI 错误压成「代码 · 说明」。

@@ -1,10 +1,15 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"ocicore/internal/jobsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -302,52 +307,111 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := make([]bulkResult, len(req.InstanceIDs))
-	var wg sync.WaitGroup
-	// 并发度压到 3：批量操作往往集中在同一个租户上，
-	// 并发太高很容易把这个账号打进限流，反而拖慢所有人。
-	sem := make(chan struct{}, 3)
+	verb := bulkVerb(action)
+	who := s.actorOf(r)
+	ids := append([]string(nil), req.InstanceIDs...)
 
-	for i, id := range req.InstanceIDs {
-		wg.Add(1)
-		go func(idx int, instanceID string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobBulkAction, Title: "批量" + verb + " · " + itoa(len(ids)) + " 台实例",
+		Timeout: 20 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		results := make([]bulkResult, len(ids))
+		var (
+			wg   sync.WaitGroup
+			done atomic.Int32
+		)
+		// 并发度压到 3：批量操作往往集中在同一个租户上，
+		// 并发太高很容易把这个账号打进限流，反而拖慢所有人。
+		sem := make(chan struct{}, 3)
 
-			entry := bulkResult{InstanceID: instanceID}
-			if cached, err := s.st.GetInstance(r.Context(), instanceID); err == nil {
-				entry.Name = cached.DisplayName
-			}
+		for i, id := range ids {
+			wg.Add(1)
+			go func(idx int, instanceID string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 
-			if _, err := s.instances.Action(r.Context(), instanceID, action); err != nil {
-				entry.Error = errorTextOf(err)
-			} else {
-				entry.OK = true
-			}
-			results[idx] = entry
-		}(i, id)
-	}
-	wg.Wait()
+				entry := bulkResult{InstanceID: instanceID, Name: instanceID}
+				if cached, err := s.st.GetInstance(ctx, instanceID); err == nil {
+					entry.Name = cached.DisplayName
+				}
 
-	succeeded := 0
-	for _, res := range results {
-		if res.OK {
-			succeeded++
+				if _, err := s.instances.Action(ctx, instanceID, action); errors.Is(err, store.ErrNotFound) {
+					entry.Error = "实例不存在或尚未同步"
+					p.Step(entry.Name + "：失败 · " + entry.Error)
+				} else if err != nil {
+					entry.Error = errorTextOf(err)
+					p.Step(entry.Name + "：失败 · " + entry.Error)
+				} else {
+					entry.OK = true
+					p.Step(entry.Name + "：已提交" + verb)
+				}
+				results[idx] = entry
+				p.Set(int(done.Add(1)) * 30 / len(ids))
+			}(i, id)
 		}
-	}
+		wg.Wait()
 
-	user := userFrom(r.Context())
-	_ = s.st.Audit(r.Context(), store.AuditEntry{
-		UserID: user.ID, Action: "instance_bulk_" + strings.ToLower(action),
-		Target: itoa(len(req.InstanceIDs)) + " 台实例",
-		Detail: "成功 " + itoa(succeeded) + " 台", IP: s.clientIP(r),
+		succeeded := 0
+		for _, res := range results {
+			if res.OK {
+				succeeded++
+			}
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_bulk_" + strings.ToLower(action),
+			Target: itoa(len(ids)) + " 台实例",
+			Detail: "成功 " + itoa(succeeded) + " 台",
+		})
+
+		// 逐台等状态落定，进度条按台数推进。
+		if succeeded > 0 {
+			p.Step("等待实例状态落定")
+		}
+		waited := 0
+		for _, res := range results {
+			if !res.OK {
+				continue
+			}
+			from := 30 + 69*waited/succeeded
+			to := 30 + 69*(waited+1)/succeeded
+			if inst, err := s.waitInstanceSettled(ctx, p, res.InstanceID, from, to, 0); err != nil {
+				return jobsvc.Outcome{}, err
+			} else if inst != nil {
+				p.Step(res.Name + "：" + inst.LifecycleState)
+			}
+			waited++
+		}
+
+		out := jobsvc.Outcome{
+			Summary: "成功 " + itoa(succeeded) + " 台，失败 " + itoa(len(ids)-succeeded) + " 台",
+			Result: map[string]any{
+				"results":   results,
+				"succeeded": succeeded,
+				"failed":    len(ids) - succeeded,
+			},
+		}
+		if succeeded == 0 {
+			return out, errors.New("全部 " + itoa(len(ids)) + " 台都没能提交" + verb)
+		}
+		return out, nil
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"results":   results,
-		"succeeded": succeeded,
-		"failed":    len(results) - succeeded,
-	})
+}
+
+// bulkVerb 是批量操作在任务标题里的说法。
+func bulkVerb(action string) string {
+	switch action {
+	case ociclient.ActionStart:
+		return "开机"
+	case ociclient.ActionStop:
+		return "强制关机"
+	case ociclient.ActionReset:
+		return "强制重启"
+	case ociclient.ActionSoftReset:
+		return "重启"
+	default:
+		return "关机"
+	}
 }
 
 func errorTextOf(err error) string {

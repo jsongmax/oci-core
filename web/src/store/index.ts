@@ -6,9 +6,10 @@ import { LIFECYCLE, isTransitional } from '@/lib/lifecycle'
 import { toAccount, toInstance, toQuota } from '@/lib/adapt'
 import {
   accounts as accountsApi, auth as authApi, instances as instancesApi,
-  insights, launch as launchApi, settings as settingsApi,
+  insights, jobs as jobsApi, launch as launchApi, settings as settingsApi,
   ApiError, errorText, setDangerCodeProvider, type InstanceAction, type LaunchInput
 } from '@/api'
+import type { ChangeIpDTO, JobDTO, SyncReportDTO } from '@/api/types'
 import { connectEvents, type ServerEvent } from '@/api/events'
 
 export type Density = 'comfy' | 'compact'
@@ -84,6 +85,8 @@ const state = reactive({
 
   accounts: [] as Account[],
   instances: [] as Instance[],
+  /** 后台任务，最新的在前。进度由 SSE 的 job.updated 推送 */
+  jobs: [] as JobDTO[],
 
   drawer: null as DrawerRequest | null,
   confirm: null as ConfirmRequest | null,
@@ -223,7 +226,11 @@ function toast(payload: ToastPayload, ms = 6000) {
  * 提示不自动消失：新 IP 是用户接下来要复制去连的东西，6 秒根本来不及。
  * 列表那一行同时标出原 IP，刷新列表也保留，直到页面重新加载。
  */
-function markIpChanged(inst: Instance, oldIp: string, newIp: string): void {
+function markIpChanged(instanceId: string, oldIp: string, newIp: string): void {
+  // 按 id 取当前对象：换 IP 在后台任务里跑，等它结束时列表可能已经整体刷新过，
+  // 提交时拿到的那个对象早就不在 state.instances 里了。
+  const inst = state.instances.find(i => i.id === instanceId)
+  if (!inst) return
   inst.previousIp = oldIp
   inst.publicIp = newIp
   toast({
@@ -354,10 +361,21 @@ async function loadSettings(): Promise<void> {
   }
 }
 
+/** 拉任务列表。失败不打扰：任务列表是旁路信息，不影响主流程。 */
+async function loadJobs(): Promise<void> {
+  try {
+    const { jobs } = await jobsApi.list()
+    state.jobs = jobs
+  } catch (err) {
+    console.warn('加载任务列表失败', err)
+  }
+}
+
 /** 加载全部数据。登录成功后与手动刷新时调用。 */
 async function loadAll(): Promise<void> {
   state.loading = true
   state.loadError = ''
+  void loadJobs()
   try {
     await Promise.all([loadAccounts(), loadInstances(), loadSettings()])
   } catch (err) {
@@ -377,39 +395,174 @@ async function refreshInstances(): Promise<void> {
   }
 }
 
-/** 触发一次后端同步。这会真的去调 OCI，可能要几十秒。 */
+/**
+ * 触发一次后端同步。这会真的去调 OCI，可能要几十秒，所以放在后台任务里跑；
+ * 结果提示由 finishJob 按任务种类给出。
+ */
 async function syncNow(accountId?: string): Promise<void> {
   if (state.syncing) return
   state.syncing = true
   try {
-    const report = await instancesApi.sync(accountId)
-    await loadInstances()
-
-    const failures = report.errors ?? []
-    if (failures.length > 0) {
-      toast({
-        tone: 'warning',
-        title: `同步完成，${failures.length} 个区域失败`,
-        body: failures.map(e => `${e.accountAlias} · ${e.region}：${e.ociCode || e.message}`).join('\n')
-      }, 9000)
-    } else {
-      toast({
-        tone: 'success',
-        title: '同步完成',
-        // 已终止的单独说，不混进台数——界面各处都不显示它们，
-        // 混在一起会出现「同步说 14 台、列表只有 13 台」这种自相矛盾。
-        body: `${report.instances} 台实例 · ${report.regions} 个区域 · ${(report.durationMs / 1000).toFixed(1)}s`
-          + (report.terminated ? `（另有 ${report.terminated} 台已终止）` : '')
-      })
-    }
-    // 同步可能改变账号的连通性状态与配额。
-    await loadAccounts().catch(() => undefined)
+    const { job } = await instancesApi.sync(accountId)
+    trackJob(job, { quiet: true })
   } catch (err) {
-    toastError('同步失败', err)
-  } finally {
     state.syncing = false
+    toastError('同步失败', err)
   }
 }
+
+/** 同步任务结束后的提示。已终止的单独说，不混进台数——界面各处都不显示它们。 */
+function announceSync(job: JobDTO): void {
+  const report = job.result as SyncReportDTO | undefined
+  const failures = report?.errors ?? []
+  if (failures.length > 0) {
+    toast({
+      tone: 'warning',
+      title: `同步完成，${failures.length} 个区域失败`,
+      body: failures.map(e => `${e.accountAlias} · ${e.region}：${e.ociCode || e.message}`).join('\n')
+    }, 9000)
+  } else {
+    toast({ tone: 'success', title: '同步完成', body: job.summary })
+  }
+  // 同步可能改变账号的连通性状态与配额。
+  void loadAccounts().catch(() => undefined)
+}
+
+/* ---------- 后台任务 ---------- */
+
+const isJobDone = (j: JobDTO) =>
+  j.status !== 'queued' && j.status !== 'running'
+
+interface TrackOptions {
+  /** 成功后的自定义收尾。给了它，默认的成功提示就不再弹 */
+  onSuccess?: (job: JobDTO) => void
+  /** 不弹「已转入后台」的提示（比如同步，顶栏本来就有进度） */
+  quiet?: boolean
+}
+
+/** 提交时登记的收尾回调。只在提交它的这个标签页里有。 */
+const jobCallbacks = new Map<string, TrackOptions>()
+
+/** 把新/变化的任务并进列表，返回之前的那一份（没有则为 undefined）。 */
+function upsertJob(job: JobDTO): JobDTO | undefined {
+  const idx = state.jobs.findIndex(j => j.id === job.id)
+  if (idx < 0) {
+    state.jobs.unshift(job)
+    return undefined
+  }
+  const prev = state.jobs[idx]
+  // SSE 与 HTTP 响应谁先到不一定；已经是终态的不能被更早的快照覆盖回去。
+  if (isJobDone(prev) && !isJobDone(job)) return prev
+  state.jobs[idx] = job
+  return prev
+}
+
+/**
+ * 登记一个刚提交的任务。
+ *
+ * 事件可能比 HTTP 响应先到——任务很快就失败时尤其如此——所以这里也要检查
+ * 是否已经结束，结束了就当场收尾。
+ */
+function trackJob(job: JobDTO, opts: TrackOptions = {}): void {
+  jobCallbacks.set(job.id, opts)
+  upsertJob(job)
+  const current = state.jobs.find(j => j.id === job.id) ?? job
+  if (isJobDone(current)) {
+    finishJob(current)
+    return
+  }
+  if (!opts.quiet) {
+    toast({
+      tone: 'accent',
+      title: `已转入后台：${job.title}`,
+      body: '可以继续做别的，完成后会提示你。',
+      link: { label: '查看任务', to: '/jobs' }
+    })
+  }
+}
+
+/** 任务结束：按种类给出提示，并刷新受影响的数据。 */
+function finishJob(job: JobDTO): void {
+  const opts = jobCallbacks.get(job.id)
+  jobCallbacks.delete(job.id)
+
+  if (job.instanceId || job.kind.startsWith('instance.')) void refreshInstances()
+  if (job.kind === 'instance.sync' && job.status !== 'succeeded') {
+    // 失败时不会有 sync.finished 事件，按服务端的真实状态复位。
+    void refreshInstances()
+  }
+
+  if (job.status !== 'succeeded') {
+    if (job.status === 'canceled') {
+      toast({ tone: 'info', title: `已取消：${job.title}` })
+      return
+    }
+    toast({
+      tone: 'danger', title: `${job.title} 失败`,
+      body: job.error, link: { label: '查看详情', to: '/jobs' }
+    }, 12000)
+    return
+  }
+
+  if (opts?.onSuccess) {
+    opts.onSuccess(job)
+    return
+  }
+  switch (job.kind) {
+    case 'instance.change_ip': {
+      const r = job.result as ChangeIpDTO | undefined
+      if (r && job.instanceId) markIpChanged(job.instanceId, r.oldIp, r.newIp)
+      return
+    }
+    case 'instance.sync':
+      announceSync(job)
+      return
+    // 这两类由实例事件自己报：就绪提示带 SSH 命令，终止提示来自 instance.removed。
+    case 'instance.launch':
+    case 'instance.terminate':
+    // 网卡挂上/分离的提示来自 instance.network。
+    case 'instance.attach_vnic':
+    case 'instance.detach_vnic':
+      return
+  }
+  toast({ tone: 'success', title: `${job.title} 完成`, body: job.summary })
+}
+
+/** 取消排队中的任务。 */
+async function cancelJob(id: string): Promise<void> {
+  try {
+    await jobsApi.cancel(id)
+  } catch (err) {
+    toastError('取消失败', err)
+  }
+}
+
+/** 从列表里移除一条已结束的任务。 */
+async function removeJob(id: string): Promise<void> {
+  try {
+    await jobsApi.remove(id)
+    state.jobs = state.jobs.filter(j => j.id !== id)
+  } catch (err) {
+    toastError('移除失败', err)
+  }
+}
+
+/** 清空全部已结束的任务。 */
+async function clearFinishedJobs(): Promise<void> {
+  try {
+    await jobsApi.clearFinished()
+    state.jobs = state.jobs.filter(j => !isJobDone(j))
+  } catch (err) {
+    toastError('清理失败', err)
+  }
+}
+
+/** 进行中（含排队）的任务数，侧栏徽标用。 */
+const activeJobCount = computed(() => state.jobs.filter(j => !isJobDone(j)).length)
+
+/** 某台实例上进行中的任务。详情抽屉据此提示「有操作在后台进行」。 */
+const activeJobsFor = (instanceId: string) =>
+  state.jobs.filter(j => j.instanceId === instanceId && !isJobDone(j))
 
 /* ---------- 实时事件 ---------- */
 
@@ -417,6 +570,16 @@ let disconnect: (() => void) | null = null
 
 function applyEvent(event: ServerEvent): void {
   switch (event.type) {
+    case 'job.updated': {
+      const job = event.data as JobDTO | undefined
+      if (!job?.id) break
+      const prev = upsertJob(job)
+      // 只对「见过它没结束」的任务报结果：页面刚打开时加载到的旧任务早就结束了，
+      // 不该再弹一遍。
+      if (isJobDone(job) && prev && !isJobDone(prev)) finishJob(job)
+      break
+    }
+
     case 'sync.started':
       state.syncing = true
       break
@@ -529,7 +692,10 @@ function startLiveUpdates(): void {
     onOpen: (reconnected) => {
       state.live = true
       // 后端不补发历史事件，重连后必须重新拉全量。
-      if (reconnected) void refreshInstances()
+      if (reconnected) {
+        void refreshInstances()
+        void loadJobs()
+      }
     },
     onError: () => { state.live = false }
   })
@@ -586,8 +752,9 @@ async function terminate(id: string, preserveBootVolume = false): Promise<void> 
 
   inst.busy = true
   try {
-    await instancesApi.terminate(id, inst.name, preserveBootVolume)
-    inst.state = 'TERMINATING'
+    // 状态由 instance.updated 推送：任务可能还在排队，这里不抢先改成 TERMINATING。
+    const { job } = await instancesApi.terminate(id, inst.name, preserveBootVolume)
+    trackJob(job)
   } catch (err) {
     inst.anomaly = true
     inst.lastError = errorText(err)
@@ -597,31 +764,31 @@ async function terminate(id: string, preserveBootVolume = false): Promise<void> 
   }
 }
 
-/** 批量操作。逐台串行提交，避免同租户并发过多触发 OCI 限流。 */
+/**
+ * 批量操作。交给后端的批量接口在后台任务里执行：并发度在服务端压到 3，
+ * 任务会等每台都落定，结果在任务列表里逐台可查。
+ */
 async function bulk(action: 'start' | 'stop' | 'restart'): Promise<void> {
   const ids = [...state.selection]
-  state.selection.clear()
-
-  const fn = action === 'start' ? start : action === 'stop' ? stop : restart
-  for (const id of ids) {
-    await fn(id)
+  if (ids.length === 0) return
+  const op: InstanceAction = action === 'start' ? 'START' : action === 'stop' ? 'SOFTSTOP' : 'SOFTRESET'
+  try {
+    const { job } = await instancesApi.bulk(ids, op)
+    state.selection.clear()
+    trackJob(job)
+  } catch (err) {
+    toastError('批量操作失败', err)
   }
-  toast({ tone: 'info', title: `已对 ${ids.length} 台实例提交${action === 'start' ? '开机' : action === 'stop' ? '关机' : '重启'}` })
 }
 
+/** 创建实例。成功受理返回任务 id，失败返回 null（表单保持打开）。 */
 async function launchInstance(input: LaunchInput): Promise<string | null> {
   try {
-    const result = await launchApi.create(input)
+    const { job } = await launchApi.create(input)
     closeDrawer()
-
-    // 立刻把新实例插到列表最前，用户马上能看到 PROVISIONING 那一行。
-    state.instances.unshift(toInstance(result.instance))
-    toast({
-      tone: 'accent',
-      title: `${result.instance.displayName} 正在创建`,
-      body: result.notice ?? '通常需要 1–3 分钟，就绪后会通知你。'
-    }, 8000)
-    return result.instance.id
+    // 新实例那一行会在任务提交创建后由 instance.updated 带进列表。
+    trackJob(job)
+    return job.id
   } catch (err) {
     toastError('创建实例失败', err)
     return null
@@ -722,6 +889,7 @@ async function logout(): Promise<void> {
   state.authed = false
   state.accounts = []
   state.instances = []
+  state.jobs = []
   state.accountFilter.clear()
   state.selection.clear()
   state.username = ''
@@ -754,6 +922,8 @@ export function useStore() {
 
     loadAll, loadAccounts, loadInstances, refreshInstances, loadStatus, syncNow,
     startLiveUpdates, stopLiveUpdates,
+
+    trackJob, cancelJob, removeJob, clearFinishedJobs, loadJobs, activeJobCount, activeJobsFor,
 
     start, stop, restart, forceStop, forceRestart, terminate, bulk,
     launchInstance, dismissInstanceError,

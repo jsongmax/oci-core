@@ -60,6 +60,8 @@ func newHarness(t *testing.T) *harness {
 		Conns:     conns,
 		Instances: instancesvc.New(st, conns, bus),
 	})
+	// 后台任务可能在测试结束时还在写库，先等它们跑完再关库。
+	t.Cleanup(api.jobs.Wait)
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 
