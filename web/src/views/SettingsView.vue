@@ -14,6 +14,7 @@ import KeyValueList from '@/components/KeyValueList.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import QrCode from '@/components/QrCode.vue'
+import { actionLabel, auditTarget } from '@/lib/audit'
 
 const router = useRouter()
 const { state, ask, toast, toastError, updateOptions, logout } = useStore()
@@ -216,32 +217,6 @@ const colorOf = (id: string) => {
   const a = id ? state.accounts.find(x => x.id === id) : undefined
   return a ? acctColor(a.colorIndex) : 'var(--border-default)'
 }
-
-/** 动作名映射成中文。未登记的动作原样显示，不至于变成空白。 */
-const ACTION_LABEL: Record<string, string> = {
-  login: '登录', logout: '登出', setup: '首次设置',
-  totp_verify: '两步验证', totp_enable: '启用两步验证',
-  change_password: '修改口令', sessions_revoke_all: '强制会话下线',
-  account_create: '添加账号', account_update: '修改账号',
-  account_rotate_key: '轮换密钥', account_delete: '删除账号',
-  instance_start: '开机', instance_softstop: '关机', instance_stop: '强制关机',
-  instance_softreset: '重启', instance_reset: '强制重启',
-  instance_rename: '重命名', instance_reshape: '改配置',
-  instance_attach_vnic: '添加网卡', instance_detach_vnic: '分离网卡',
-  instance_remove_ipv6: '移除 IPv6', volume_delete: '删除卷', reserved_ip_release: '释放保留 IP',
-  console_delete: '删除控制台连接',
-  instance_terminate: '终止实例', instance_launch: '创建实例',
-  instance_change_ip: '更换公网 IP', instance_enable_ipv6: '启用 IPv6',
-  boot_volume_update: '修改引导卷', boot_volume_detach: '分离引导卷',
-  boot_volume_attach: '挂载引导卷', volume_update: '修改块存储',
-  security_list_update: '修改安全规则', network_ensure: '自动建网',
-  console_create: '建立控制台连接', settings_update: '修改设置',
-  channel_create: '添加通知渠道', channel_update: '修改通知渠道',
-  channel_delete: '删除通知渠道'
-}
-
-const actionLabel = (action: string) =>
-  ACTION_LABEL[action] ?? (action.startsWith('instance_bulk_') ? '批量操作' : action)
 
 const auditTime = (iso: string) => {
   const d = new Date(iso)
@@ -600,7 +575,7 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
           <span class="mono t-xs dim">{{ auditTime(r.createdAt) }}</span>
           <span class="t-xs">{{ actionLabel(r.action) }}</span>
           <span class="mono t-xs" :style="{ color: colorOf(r.accountId), fontWeight: 600 }">{{ codeOf(r.accountId) }}</span>
-          <span class="mono t-xs dim">{{ r.target || '—' }}</span>
+          <span class="mono t-xs dim" :title="r.target">{{ r.target ? auditTarget(r.target) : '—' }}</span>
           <span class="t-xs dim-3">{{ r.detail || '—' }}</span>
           <span class="mono t-xs dim-3"><MaskedText :value="r.ip || '—'" kind="ip" /></span>
           <span class="t-xs" :style="{ color: r.result === 'ok' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">

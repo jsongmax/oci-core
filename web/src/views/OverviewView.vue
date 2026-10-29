@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor, countUp, shortRegion, pct } from '@/lib/format'
 import { accountStatusText, relativeTime } from '@/lib/adapt'
+import { actionLabel, auditTarget, isRoutineAction } from '@/lib/audit'
 import { insights, hunt as huntApi, type AuditEntryDTO, type HuntTaskDTO } from '@/api'
 import { now } from '@/lib/clock'
 import QuotaMeter from '@/components/QuotaMeter.vue'
@@ -57,7 +58,8 @@ const totals = computed(() => {
 onMounted(async () => {
   totals.value.forEach((t, n) => countUp(t, v => { live.value[n] = v }))
   try {
-    auditEntries.value = (await insights.audit({ limit: 20 })).entries
+    // 多取一些：例行复查会被过滤掉，取 20 条可能剩不够 8 条。
+    auditEntries.value = (await insights.audit({ limit: 50 })).entries
   } catch {
     // 时间线是锦上添花，读不到不影响总览的其余部分。
   }
@@ -182,28 +184,6 @@ const matrix = computed(() => shownAccounts.value.map(a => ({
 /** 最近操作时间线，取自真实审计日志。 */
 const auditEntries = ref<AuditEntryDTO[]>([])
 
-const ACTION_LABEL: Record<string, string> = {
-  login: '登录', logout: '登出', setup: '首次设置',
-  change_password: '修改口令', sessions_revoke_all: '强制会话下线',
-  account_create: '添加账号', account_update: '修改账号',
-  account_rotate_key: '轮换密钥', account_delete: '删除账号',
-  instance_start: '开机', instance_softstop: '关机', instance_stop: '强制关机',
-  instance_softreset: '重启', instance_reset: '强制重启',
-  instance_rename: '重命名', instance_reshape: '改配置',
-  instance_attach_vnic: '添加网卡', instance_detach_vnic: '分离网卡',
-  instance_remove_ipv6: '移除 IPv6', volume_delete: '删除卷', reserved_ip_release: '释放保留 IP',
-  console_delete: '删除控制台连接',
-  instance_terminate: '终止实例', instance_launch: '创建实例',
-  instance_change_ip: '更换公网 IP', instance_enable_ipv6: '启用 IPv6',
-  boot_volume_update: '修改引导卷', boot_volume_detach: '分离引导卷',
-  security_list_update: '修改安全规则', network_ensure: '自动建网',
-  console_create: '建立控制台连接', settings_update: '修改设置',
-  hunt_create: '建立守候任务', hunt_pause: '暂停守候', hunt_resume: '恢复守候',
-  hunt_delete: '删除守候任务', volume_attach: '挂载数据盘', volume_detach: '分离数据盘',
-  boot_volume_attach: '挂载引导卷', volume_update: '修改块存储',
-  channel_create: '添加通知渠道', channel_update: '修改通知渠道',
-  channel_delete: '删除通知渠道', totp_enable: '启用两步验证'
-}
 
 /* ---------- 守候任务 ---------- */
 
@@ -230,14 +210,15 @@ function huntCountdown(t: HuntTaskDTO): string {
 }
 
 const timeline = computed(() =>
-  auditEntries.value.slice(0, 8).map(e => {
+  // 例行的自动复查不进这里（审计日志里照常有），否则 8 条里大半是它。
+  auditEntries.value.filter(e => !isRoutineAction(e.action)).slice(0, 8).map(e => {
     const a = e.accountId ? state.accounts.find(x => x.id === e.accountId) : undefined
-    const label = ACTION_LABEL[e.action] ?? e.action
+    const label = actionLabel(e.action)
     return {
       code: a?.code ?? '—',
       // 账号可能已被删除，颜色要有兜底，不能用 ! 强断言。
       color: a ? acctColor(a.colorIndex) : 'var(--border-default)',
-      text: e.target ? `${label} ${e.target}` : label,
+      text: e.target ? `${label} ${auditTarget(e.target)}` : label,
       result: e.result === 'ok' ? '成功' : '失败',
       at: relativeTime(e.createdAt)
     }
@@ -355,7 +336,7 @@ const timeline = computed(() =>
         <div v-for="(t, n) in timeline" :key="n" class="tl__row">
           <span class="acct-bar" :style="{ background: t.color }" />
           <span class="tl__code mono" :style="{ color: t.color }">{{ t.code }}</span>
-          <span class="tl__text">{{ t.text }}</span>
+          <span class="tl__text" :title="t.text">{{ t.text }}</span>
           <span class="tl__result" :style="{ color: t.result === '成功' ? 'var(--success)' : 'var(--danger)' }">{{ t.result }}</span>
           <span class="tl__at mono">{{ t.at }}</span>
         </div>
@@ -457,8 +438,9 @@ const timeline = computed(() =>
 
 .tl__row { display: flex; align-items: center; gap: 14px; height: 44px; padding: 0 20px 0 14px; border-bottom: 1px solid var(--border-subtle); position: relative; }
 .tl__code { width: 44px; flex: 0 0 auto; font-size: 11px; font-weight: 600; }
-.tl__text { flex: 1 1 auto; font-size: 13px; }
-.tl__result { font-size: 11px; font-weight: 600; }
+.tl__text { flex: 1 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 结果列不许被挤窄：文字太长时截断的是左边的说明，不是「成功」两个字 */
+.tl__result { flex: 0 0 auto; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .tl__at { width: 132px; text-align: right; font-size: 11px; color: var(--text-tertiary); }
 
 @media (max-width: 1279px) {

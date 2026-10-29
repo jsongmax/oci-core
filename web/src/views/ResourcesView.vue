@@ -87,7 +87,7 @@ async function load(refresh = false, clear = false) {
   try {
     const res = await accountsApi.resources(id, region.value || undefined, refresh)
     if (mine !== seq) return
-    data.value = res
+    data.value = withoutRemoved(res)
   } catch (err) {
     if (mine !== seq) return
     data.value = null
@@ -203,6 +203,27 @@ const volumeKind = (v: ResourceVolumeDTO) => (v.kind === 'boot' ? '引导卷' : 
 
 /* ---------- 清理操作 ---------- */
 
+/**
+ * 本次会话里已经删掉 / 释放的资源 OCID。
+ *
+ * OCI 的删除是异步的，刚删完的一小会儿里列表接口可能仍把它报成 ACTIVE。
+ * 不挡住的话，它会随着刷新又出现、还带着删除按钮——用户以为没删掉，再点一次。
+ * OCI 不再返回某个 OCID 时，就把它从这里清掉。
+ */
+const removed = new Set<string>()
+
+function withoutRemoved(d: AccountResourcesDTO): AccountResourcesDTO {
+  const present = new Set([...d.volumes, ...d.publicIps, ...d.consoleConnections].map(x => x.id))
+  for (const id of [...removed]) if (!present.has(id)) removed.delete(id)
+  if (removed.size === 0) return d
+  return {
+    ...d,
+    volumes: d.volumes.filter(x => !removed.has(x.id)),
+    publicIps: d.publicIps.filter(x => !removed.has(x.id)),
+    consoleConnections: d.consoleConnections.filter(x => !removed.has(x.id))
+  }
+}
+
 /** 正在处理的资源 OCID。同一时刻允许多条，各自的按钮各自转圈。 */
 const acting = ref<Set<string>>(new Set())
 
@@ -211,6 +232,9 @@ async function run(id: string, label: string, fn: () => Promise<string | void>) 
   try {
     const notice = await fn()
     toast({ tone: 'success', title: label, body: notice || undefined })
+    // 先在本地拿掉，待处理里那一项立刻滑出；随后静默重拉对一遍账。
+    removed.add(id)
+    if (data.value) data.value = withoutRemoved(data.value)
     await load(true)
   } catch (err) {
     toastError(label.replace(/^已/, '') + '失败', err)
