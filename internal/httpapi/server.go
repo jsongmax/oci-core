@@ -53,6 +53,7 @@ type Server struct {
 	mux       *http.ServeMux
 	logins    *attemptLimiter
 	quotas    *quotaCache
+	resources *resourcesCache
 	notifier  *notify.Dispatcher
 	hunter    *huntsvc.Service
 	capacity  *capacitysvc.Service
@@ -74,6 +75,7 @@ func New(deps Deps) *Server {
 		mux:       http.NewServeMux(),
 		logins:    newAttemptLimiter(5, 15*time.Minute),
 		quotas:    newQuotaCache(),
+		resources: newResourcesCache(),
 		notifier:  notify.NewDispatcher(deps.Store, notify.WithAllowedNets(deps.Config.NotifyAllowedNets)),
 		started:   time.Now(),
 
@@ -134,6 +136,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/accounts/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteAccount))))
 	s.mux.HandleFunc("POST /api/accounts/{id}/check", s.guard(s.requireAuth(s.handleCheckAccount)))
 	s.mux.HandleFunc("GET /api/accounts/{id}/regions", s.requireAuth(s.handleAccountRegions))
+	// 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与免费额度用量。只读。
+	s.mux.HandleFunc("GET /api/accounts/{id}/resources", s.requireAuth(s.handleAccountResources))
 
 	// 添加账号抽屉的两个辅助接口：粘贴解析与保存前测试。
 	s.mux.HandleFunc("POST /api/accounts/parse-config", s.guard(s.requireAuth(s.handleParseConfig)))

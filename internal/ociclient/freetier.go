@@ -34,4 +34,8 @@ const (
 	AlwaysFreeMicroInstances = 2
 	// AlwaysFreeBlockGB 是永久免费的块存储总量。
 	AlwaysFreeBlockGB = 200
+
+	// AlwaysFreeCheckedAt 是上面这些数字的核对日期，资源页会把它显示出来，
+	// 让用户自己判断参考额度是否已经过时。改数字时一并改它。
+	AlwaysFreeCheckedAt = "2026-08-18"
 )
