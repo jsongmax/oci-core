@@ -215,14 +215,44 @@ func (s *Server) handleDeleteConsoleConnection(w http.ResponseWriter, r *http.Re
 	defer cancel()
 
 	connID := r.PathValue("connId")
+
+	// 先查出这条连接：要知道它属于哪台实例（审计里记实例名，而不是一长串 OCID），
+	// 也要知道它是不是已经在删了。
+	conns, err := client.ListConsoleConnections(ctx, region, acc.CompartmentOCID, "")
+	if err != nil {
+		writeOCIError(w, err)
+		return
+	}
+	var conn *ociclient.InstanceConsoleConnection
+	for i := range conns {
+		if conns[i].ID == connID {
+			conn = &conns[i]
+		}
+	}
+	if conn == nil {
+		writeError(w, http.StatusNotFound, "not_found", "这条控制台连接不存在，可能已经删除")
+		return
+	}
+	// 删除是异步的：连接会先停在 DELETING 一段时间。这期间再点一次不该再发请求、
+	// 再记一条审计——先前就是这样，同一条连接要「删两次」才从列表里消失。
+	if conn.LifecycleState == "DELETING" || conn.LifecycleState == "DELETED" {
+		s.resources.invalidate(acc.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "alreadyDeleting": true})
+		return
+	}
+
 	if err := client.DeleteConsoleConnection(ctx, region, connID); err != nil {
 		writeOCIError(w, err)
 		return
 	}
+	target := conn.InstanceID
+	if inst, err := s.st.GetInstance(r.Context(), conn.InstanceID); err == nil {
+		target = inst.DisplayName
+	}
 	user := userFrom(r.Context())
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "console_delete", AccountID: acc.ID,
-		Target: connID, Detail: region, IP: s.clientIP(r),
+		Target: target, Detail: region, IP: s.clientIP(r),
 	})
 	s.resources.invalidate(acc.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

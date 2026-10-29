@@ -107,9 +107,10 @@ func (s *Server) recheckAccount(ctx context.Context, acc *store.Account) {
 		}
 	}
 
+	// 记账号别名而不是 ID，并带上 AccountID：审计列表与总览靠它显示账号代号与颜色。
 	_ = s.st.Audit(ctx, store.AuditEntry{
-		Action: "account_check_auto", Target: acc.ID,
-		Result: auditResult(result.OK),
+		Action: "account_check_auto", AccountID: acc.ID, Target: acc.Alias,
+		Detail: message, Result: auditResult(result.OK),
 	})
 
 	// 状态没变就不打扰：每 6 小时推一次"还是好的"只会让用户学会忽略通知。

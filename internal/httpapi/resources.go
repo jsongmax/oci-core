@@ -509,9 +509,14 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 			blockTo[a.VolumeID] = append(blockTo[a.VolumeID], ref(a.InstanceID))
 		}
 	}
+	// 正在删除 / 释放的条目不列出：它们几分钟内就会消失，留着的话「待处理」里
+	// 仍带着删除按钮，用户以为没删掉又点一次（控制台连接先前就要删两次）。
+	gone := func(state string) bool {
+		return state == ociclient.VolumeTerminated || state == ociclient.VolumeTerminating
+	}
 	if !bootsFailed {
 		for _, b := range boots {
-			if b.LifecycleState == ociclient.VolumeTerminated {
+			if gone(b.LifecycleState) {
 				continue
 			}
 			out.volumes = append(out.volumes, ResourceVolume{
@@ -523,7 +528,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 		}
 	}
 	for _, b := range blocks {
-		if b.LifecycleState == ociclient.VolumeTerminated {
+		if gone(b.LifecycleState) {
 			continue
 		}
 		out.volumes = append(out.volumes, ResourceVolume{
@@ -536,7 +541,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 
 	seen := map[string]bool{}
 	for _, ip := range ips {
-		if seen[ip.ID] || ip.LifecycleState == "TERMINATED" {
+		if seen[ip.ID] || ip.LifecycleState == "TERMINATED" || ip.LifecycleState == "TERMINATING" {
 			continue
 		}
 		seen[ip.ID] = true
@@ -553,7 +558,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 	}
 
 	for _, c := range consoles {
-		if c.LifecycleState == "DELETED" {
+		if c.LifecycleState == "DELETED" || c.LifecycleState == "DELETING" {
 			continue
 		}
 		out.consoles = append(out.consoles, ResourceConsole{

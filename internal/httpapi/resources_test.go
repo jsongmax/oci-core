@@ -44,8 +44,10 @@ func TestCollectRegionClassifiesIdleResources(t *testing.T) {
 		"/volumeAttachments": `[]`,
 		"/publicIps": `[
 			{"id":"ip-eph","ipAddress":"1.1.1.1","lifetime":"EPHEMERAL","privateIpId":"p-1","lifecycleState":"ASSIGNED"},
-			{"id":"ip-res","ipAddress":"2.2.2.2","lifetime":"RESERVED","lifecycleState":"AVAILABLE"}]`,
-		"/instanceConsoleConnections": `[{"id":"cc-1","instanceId":"i-1","lifecycleState":"ACTIVE"}]`,
+			{"id":"ip-res","ipAddress":"2.2.2.2","lifetime":"RESERVED","lifecycleState":"AVAILABLE"},
+			{"id":"ip-going","ipAddress":"3.3.3.3","lifetime":"RESERVED","lifecycleState":"TERMINATING"}]`,
+		"/instanceConsoleConnections": `[{"id":"cc-1","instanceId":"i-1","lifecycleState":"ACTIVE"},
+			{"id":"cc-going","instanceId":"i-1","lifecycleState":"DELETING"}]`,
 		"/vcns": `[
 			{"id":"vcn-ok","displayName":"ok","cidrBlocks":["10.0.0.0/16"],"lifecycleState":"AVAILABLE"},
 			{"id":"vcn-nogw","displayName":"nogw","cidrBlock":"10.1.0.0/16","lifecycleState":"AVAILABLE"}]`,
@@ -119,6 +121,10 @@ func TestCollectRegionClassifiesIdleResources(t *testing.T) {
 	}
 	if got := ips["ip-eph"]; !got.Assigned || got.Instance == nil || got.Instance.Name != "web-01" {
 		t.Errorf("临时 IP 应已绑定并对照到 web-01，实际 %+v", got)
+	}
+	// 正在释放 / 删除的不列出，否则「待处理」里还带着按钮，用户会再点一次。
+	if _, ok := ips["ip-going"]; ok {
+		t.Error("TERMINATING 的保留 IP 不该列出")
 	}
 	if got := ips["ip-res"]; got.Assigned || got.Lifetime != "RESERVED" {
 		t.Errorf("保留 IP 应为未绑定，实际 %+v", got)
