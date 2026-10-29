@@ -236,3 +236,18 @@ func (s *Service) watchVnic(instanceID, attachmentID, want string) {
 		}
 	}()
 }
+
+// RefreshNetwork 重新拉取实例的网卡与 IP 并写回缓存，供 IPv6 增删这类
+// 不经过生命周期轮询的操作在完成后调用。
+func (s *Service) RefreshNetwork(ctx context.Context, instanceID string) error {
+	cached, err := s.st.GetInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	client, _, err := s.conns.ForID(ctx, cached.AccountID)
+	if err != nil {
+		return err
+	}
+	s.refreshNetwork(ctx, cached, client)
+	return nil
+}

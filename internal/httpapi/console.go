@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -64,15 +67,31 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 一台实例只能有一个活跃的控制台连接，已存在就直接复用，
-	// 否则 Oracle 会返回 409 而用户完全不知道发生了什么。
+	// 一台实例只能有一个活跃的控制台连接，否则 Oracle 会返回 409 而用户完全
+	// 不知道发生了什么。已有连接时：
+	//   - 公钥一致就直接复用；
+	//   - 公钥不一致就删掉旧的再建。先前一律复用，换了公钥的人拿到的仍是绑着
+	//     旧公钥的连接，照着命令连只会 Permission denied，界面上看不出原因。
+	replaced := false
 	existing, err := client.ListConsoleConnections(r.Context(), inst.Region, acc.CompartmentOCID, inst.ID)
 	if err == nil {
+		want := sshKeyMD5Fingerprint(key)
 		for i := range existing {
-			if existing[i].LifecycleState == "ACTIVE" {
+			if existing[i].LifecycleState != "ACTIVE" {
+				continue
+			}
+			if want == "" || strings.EqualFold(existing[i].Fingerprint, want) {
 				writeJSON(w, http.StatusOK, consoleResponse(&existing[i]))
 				return
 			}
+			if err := s.replaceConsoleConnection(r.Context(), client, inst.Region, acc.CompartmentOCID,
+				inst.ID, existing[i].ID); err != nil {
+				writeError(w, http.StatusBadGateway, "console_replace",
+					"已有一条用另一把公钥建立的控制台连接，删除它时失败："+shortOCIError(err))
+				return
+			}
+			replaced = true
+			break
 		}
 	}
 
@@ -83,11 +102,71 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := userFrom(r.Context())
+	detail := ""
+	if replaced {
+		detail = "替换了用另一把公钥建立的旧连接"
+	}
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "console_create", AccountID: inst.AccountID,
-		Target: inst.DisplayName, IP: s.clientIP(r),
+		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
 	})
-	writeJSON(w, http.StatusOK, consoleResponse(conn))
+	resp := consoleResponse(conn)
+	if replaced {
+		resp["replaced"] = true
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// sshKeyMD5Fingerprint 按 OCI 控制台连接记录的格式（ssh-keygen -E md5 的
+// aa:bb:… 形式）计算 OpenSSH 公钥的指纹。解析不了时返回空串，调用方应当
+// 退回「直接复用」，宁可多复用一次也不要误删别人的连接。
+func sshKeyMD5Fingerprint(publicKey string) string {
+	fields := strings.Fields(publicKey)
+	if len(fields) < 2 {
+		return ""
+	}
+	blob, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil {
+		return ""
+	}
+	sum := md5.Sum(blob)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = hex.EncodeToString([]byte{b})
+	}
+	return strings.Join(parts, ":")
+}
+
+// replaceConsoleConnection 删除旧连接并等它真正消失。
+//
+// 删除是异步的：连接会先停在 DELETING，这期间再建新连接 Oracle 仍会回 409。
+func (s *Server) replaceConsoleConnection(ctx context.Context, client *ociclient.Client,
+	region, compartment, instanceID, connID string) error {
+
+	if err := client.DeleteConsoleConnection(ctx, region, connID); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	for {
+		conns, err := client.ListConsoleConnections(ctx, region, compartment, instanceID)
+		if err == nil {
+			busy := false
+			for _, c := range conns {
+				if c.ID == connID && c.LifecycleState != "DELETED" {
+					busy = true
+				}
+			}
+			if !busy {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("等待旧连接删除超时，请稍后重试")
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func consoleResponse(conn *ociclient.InstanceConsoleConnection) map[string]any {

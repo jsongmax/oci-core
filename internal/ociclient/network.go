@@ -630,6 +630,19 @@ func (c *Client) CreatePublicIP(ctx context.Context, region, compartmentID, life
 	return &out, nil
 }
 
+// GetPublicIP 按 OCID 取回一个公网 IP。
+func (c *Client) GetPublicIP(ctx context.Context, region, publicIPID string) (*PublicIP, error) {
+	var out PublicIP
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodGet, Service: ServiceCore,
+		Path: "/publicIps/" + url.PathEscape(publicIPID), Region: region,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DeletePublicIP 删除公网 IP。
 //
 // 对 EPHEMERAL 类型来说这就是「更换 IP」的实现：删掉之后 OCI 会自动分配一个新的。

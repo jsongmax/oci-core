@@ -428,3 +428,35 @@ func ValidateVpus(vpus int64) error {
 	}
 	return nil
 }
+
+// GetVolume 取回单个块存储卷。
+func (c *Client) GetVolume(ctx context.Context, region, volumeID string) (*Volume, error) {
+	var out Volume
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodGet, Service: ServiceCore,
+		Path: "/volumes/" + url.PathEscape(volumeID), Region: region,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	out.Region = orString(region, c.creds.Region)
+	return &out, nil
+}
+
+// DeleteBootVolume 删除引导卷。不可恢复；挂着的卷 Oracle 会拒绝（409）。
+func (c *Client) DeleteBootVolume(ctx context.Context, region, bootVolumeID string) error {
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodDelete, Service: ServiceCore,
+		Path: "/bootVolumes/" + url.PathEscape(bootVolumeID), Region: region,
+	}, nil)
+	return err
+}
+
+// DeleteVolume 删除块存储卷。不可恢复；挂着的卷 Oracle 会拒绝（409）。
+func (c *Client) DeleteVolume(ctx context.Context, region, volumeID string) error {
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodDelete, Service: ServiceCore,
+		Path: "/volumes/" + url.PathEscape(volumeID), Region: region,
+	}, nil)
+	return err
+}

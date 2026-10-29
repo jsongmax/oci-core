@@ -138,6 +138,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/accounts/{id}/regions", s.requireAuth(s.handleAccountRegions))
 	// 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与免费额度用量。只读。
 	s.mux.HandleFunc("GET /api/accounts/{id}/resources", s.requireAuth(s.handleAccountResources))
+	// 资源页的清理操作。删卷、释放保留 IP 不可恢复，走 danger 并要求回传名称；
+	// 删控制台连接不丢数据，只要 confirm=true。
+	s.mux.HandleFunc("DELETE /api/accounts/{id}/resources/volumes/{volumeId}", s.guard(s.requireAuth(s.danger(s.handleDeleteVolume))))
+	s.mux.HandleFunc("DELETE /api/accounts/{id}/resources/public-ips/{ipId}", s.guard(s.requireAuth(s.danger(s.handleReleaseReservedIP))))
+	s.mux.HandleFunc("DELETE /api/accounts/{id}/resources/console-connections/{connId}", s.guard(s.requireAuth(s.handleDeleteConsoleConnection)))
 
 	// 添加账号抽屉的两个辅助接口：粘贴解析与保存前测试。
 	s.mux.HandleFunc("POST /api/accounts/parse-config", s.guard(s.requireAuth(s.handleParseConfig)))
@@ -182,6 +187,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/network/ensure", s.guard(s.requireAuth(s.handleEnsureNetwork)))
 	s.mux.HandleFunc("POST /api/instances/{id}/change-ip", s.guard(s.requireAuth(s.danger(s.handleChangePublicIP))))
 	s.mux.HandleFunc("POST /api/instances/{id}/enable-ipv6", s.guard(s.requireAuth(s.danger(s.handleEnableIPv6))))
+	s.mux.HandleFunc("DELETE /api/instances/{id}/ipv6", s.guard(s.requireAuth(s.danger(s.handleRemoveIPv6))))
 	// 添加附属网卡只是多分配资源，不走 danger；分离会释放网卡上的公网 IP，不可找回，走 danger。
 	s.mux.HandleFunc("POST /api/instances/{id}/vnics", s.guard(s.requireAuth(s.handleAttachVnic)))
 	s.mux.HandleFunc("DELETE /api/instances/{id}/vnics/{attachmentId}", s.guard(s.requireAuth(s.danger(s.handleDetachVnic))))
