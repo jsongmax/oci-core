@@ -74,6 +74,12 @@ export const accounts = {
   regions: (id: string) =>
     http.get<{ regions: { regionName: string; isHomeRegion: boolean }[] }>(`/api/accounts/${id}/regions`),
 
+  /** 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与额度用量。后端缓存 2 分钟，refresh 绕过 */
+  resources: (id: string, region?: string, refresh = false) =>
+    http.get<D.AccountResourcesDTO>(`/api/accounts/${encodeURIComponent(id)}/resources`, {
+      query: { region, refresh: refresh ? 'true' : undefined }
+    }),
+
   parseConfig: (text: string) =>
     http.post<{ profiles: D.ConfigProfileDTO[] }>('/api/accounts/parse-config', { text }),
 

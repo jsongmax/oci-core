@@ -845,3 +845,85 @@ export interface PasswordPolicyResultDTO {
   policy: PasswordPolicyDTO
   notice: string
 }
+
+/* ---------- 资源页 ---------- */
+
+export interface ResourceRefDTO {
+  instanceId: string
+  /** 实例缓存里查不到时为空（例如别的工具刚建的） */
+  name: string
+}
+
+export interface ResourceVolumeDTO {
+  id: string
+  kind: 'boot' | 'block'
+  displayName: string
+  region: string
+  availabilityDomain: string
+  sizeInGbs: number
+  vpusPerGb: number
+  lifecycleState: string
+  timeCreated: string
+  /** 空数组表示未挂载 */
+  attachedTo: ResourceRefDTO[]
+}
+
+export interface ResourcePublicIpDTO {
+  id: string
+  ipAddress: string
+  region: string
+  lifetime: 'EPHEMERAL' | 'RESERVED' | string
+  lifecycleState: string
+  displayName: string
+  assigned: boolean
+  instance?: ResourceRefDTO
+}
+
+export interface ResourceConsoleDTO {
+  id: string
+  region: string
+  lifecycleState: string
+  fingerprint: string
+  instance: ResourceRefDTO
+}
+
+export interface ResourceVcnDTO {
+  id: string
+  displayName: string
+  region: string
+  cidrBlocks: string[]
+  ipv6CidrBlocks: string[]
+  lifecycleState: string
+  subnets: number
+  /** null 表示 VCN 里没有互联网网关 */
+  internetGateway: { id: string; name: string; isEnabled: boolean } | null
+}
+
+export interface ResourceInstanceDTO {
+  id: string
+  name: string
+  region: string
+  shape: string
+  lifecycleState: string
+  ocpus: number
+  memoryGb: number
+  bootVolumeGb: number
+}
+
+export interface AccountResourcesDTO {
+  accountId: string
+  regions: string[]
+  instances: ResourceInstanceDTO[]
+  volumes: ResourceVolumeDTO[]
+  publicIps: ResourcePublicIpDTO[]
+  consoleConnections: ResourceConsoleDTO[]
+  vcns: ResourceVcnDTO[]
+  /** 按所选区域的资源清单算出的用量 */
+  usage: { armOcpus: number; armMemoryGb: number; microInstances: number; storageGb: number }
+  /** 永久免费参考额度与核对日期 */
+  freeTier: { armOcpus: number; armMemoryGb: number; microInstances: number; storageGb: number; checkedAt: string }
+  /** Oracle 给这个账号的真实限额（主区域） */
+  quota: AccountQuotaDTO
+  errors?: { region: string; part: string; error: string }[]
+  fetchedAt: string
+}

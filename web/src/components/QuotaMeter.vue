@@ -14,7 +14,13 @@ const props = defineProps<{
 
 const tone = computed(() => usageTone(props.used, props.limit))
 const width = computed(() => pct(props.used, props.limit) + '%')
-const full = computed(() => props.limit > 0 && props.used >= props.limit)
+const full = computed(() => props.limit > 0 && props.used === props.limit)
+/**
+ * 超出多少。「已满」只适合恰好用满；用量超过上限时（升级号超出免费额度、
+ * 创建表单里预估的用量）写「已满」会让人以为还差一点，实际已经超了。
+ */
+const over = computed(() =>
+  props.limit > 0 && props.used > props.limit ? Math.round((props.used - props.limit) * 10) / 10 : 0)
 </script>
 
 <template>
@@ -28,7 +34,7 @@ const full = computed(() => props.limit > 0 && props.used >= props.limit)
     </template>
     <template v-else>
       <span class="meter__track"><span class="meter__fill" :style="{ width }" /></span>
-      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="full"> 已满</template></span>
+      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="over"> 超出 {{ over }}</template><template v-else-if="full"> 已满</template></span>
     </template>
   </div>
 </template>

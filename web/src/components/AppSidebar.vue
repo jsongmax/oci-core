@@ -13,6 +13,8 @@ const items = computed(() => [
   { to: '/instances', icon: '▤', label: '实例', badge: visibleInstances.value.filter(i => i.state !== 'TERMINATED').length },
   { to: '/network', icon: '⌗', label: '网络' },
   { to: '/storage', icon: '◱', label: '存储' },
+  // 按账号盘点：网络、存储两页按资源类型跨账号聚合，这一页反过来按账号看。
+  { to: '/resources', icon: '▣', label: '资源' },
   // 徽标只数进行中的：已结束的任务不需要注意力。
   { to: '/jobs', icon: '◷', label: '任务', badge: activeJobCount.value, live: activeJobCount.value > 0 },
   { to: '/capacity', icon: '◇', label: '容量' },

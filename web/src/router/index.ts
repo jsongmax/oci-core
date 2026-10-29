@@ -15,6 +15,7 @@ const router = createRouter({
     { path: '/hunt', name: 'hunt', component: () => import('@/views/HuntView.vue'), meta: { title: '容量守候' } },
     { path: '/capacity', name: 'capacity', component: () => import('@/views/CapacityView.vue'), meta: { title: '容量监控' } },
     { path: '/storage', name: 'storage', component: () => import('@/views/StorageView.vue'), meta: { title: '存储' } },
+    { path: '/resources', name: 'resources', component: () => import('@/views/ResourcesView.vue'), meta: { title: '资源' } },
     { path: '/billing', name: 'billing', component: () => import('@/views/BillingView.vue'), meta: { title: '账单' } },
     { path: '/proxies', name: 'proxies', component: () => import('@/views/ProxiesView.vue'), meta: { title: '代理' } },
     { path: '/notifications', name: 'notifications', component: () => import('@/views/NotificationsView.vue'), meta: { title: '通知' } },
