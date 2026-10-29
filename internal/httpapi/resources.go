@@ -109,7 +109,14 @@ type ResourceUsage struct {
 }
 
 // ResourceFreeTier 是永久免费的参考额度（ociclient/freetier.go），带核对日期。
+//
+// 按账号类型取值：升级号（PAY_AS_YOU_GO）沿用 2026-06-15 之前的 ARM 额度
+// 4 OCPU / 24 GB，免费号是 2 OCPU / 12 GB。拿免费号的数字去对照升级号，
+// 会把一台完全不收费的 4 核 24 GB 报成「超出 2 核」。
 type ResourceFreeTier struct {
+	// Tier 是 free / paid / unknown。unknown 表示还没识别出账号类型
+	// （没跑过连通性校验，或缺 organizations 读权限），按更紧的免费号额度对照。
+	Tier           string `json:"tier"`
 	ArmOcpus       int    `json:"armOcpus"`
 	ArmMemoryGB    int    `json:"armMemoryGb"`
 	MicroInstances int    `json:"microInstances"`
@@ -158,6 +165,17 @@ func (c *resourcesCache) get(key string) (*AccountResources, bool) {
 		return nil, false
 	}
 	return e, true
+}
+
+// invalidate 丢掉一个账号的全部缓存（各种区域组合都算）。清理操作成功后调用。
+func (c *resourcesCache) invalidate(accountID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.entries {
+		if strings.HasPrefix(k, accountID+"|") {
+			delete(c.entries, k)
+		}
+	}
 }
 
 func (c *resourcesCache) put(key string, v *AccountResources) {
@@ -224,12 +242,8 @@ func (s *Server) collectResources(ctx context.Context, client *ociclient.Client,
 		AccountID: acc.ID, Regions: regions, FetchedAt: time.Now(),
 		Instances: make([]ResourceInstance, 0), Volumes: make([]ResourceVolume, 0),
 		PublicIPs: make([]ResourcePublicIP, 0), ConsoleConnections: make([]ResourceConsole, 0),
-		Vcns: make([]ResourceVcn, 0),
-		FreeTier: ResourceFreeTier{
-			ArmOcpus: ociclient.AlwaysFreeARMOcpus, ArmMemoryGB: ociclient.AlwaysFreeARMMemoryGB,
-			MicroInstances: ociclient.AlwaysFreeMicroInstances, StorageGB: ociclient.AlwaysFreeBlockGB,
-			CheckedAt: ociclient.AlwaysFreeCheckedAt,
-		},
+		Vcns:     make([]ResourceVcn, 0),
+		FreeTier: freeTierFor(acc.PaymentModel),
 	}
 
 	wanted := make(map[string]bool, len(regions))
@@ -576,6 +590,25 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 		}
 	}
 	return out
+}
+
+// freeTierFor 按账号的付费模式给出参考额度。
+func freeTierFor(paymentModel string) ResourceFreeTier {
+	ft := ResourceFreeTier{
+		Tier:     "unknown",
+		ArmOcpus: ociclient.AlwaysFreeARMOcpus, ArmMemoryGB: ociclient.AlwaysFreeARMMemoryGB,
+		MicroInstances: ociclient.AlwaysFreeMicroInstances, StorageGB: ociclient.AlwaysFreeBlockGB,
+		CheckedAt: ociclient.AlwaysFreeCheckedAt,
+	}
+	switch paymentModel {
+	case "":
+	case ociclient.PaymentFreeTrial:
+		ft.Tier = "free"
+	default:
+		ft.Tier = "paid"
+		ft.ArmOcpus, ft.ArmMemoryGB = ociclient.LegacyFreeARMOcpus, ociclient.LegacyFreeARMMemoryGB
+	}
+	return ft
 }
 
 func nonNil(refs []ResourceRef) []ResourceRef {

@@ -24,9 +24,8 @@ const (
 
 	// LegacyFreeARMOcpus 是 2026-06-15 之前的永久免费 ARM 上限。
 	//
-	// 保留它不是为了怀旧：据用户报告，升级为 PAY_AS_YOU_GO 的账号仍按这个
-	// 额度免费使用 ARM。这个说法未见 Oracle 正式确认，因此只用于给升级号
-	// 提供一档预设，不作为任何判断依据。
+	// 升级为 PAY_AS_YOU_GO 的账号仍按这个额度免费使用 ARM。用于给升级号
+	// 提供一档创建预设，以及资源页对照升级号的免费额度；不作为任何校验依据。
 	LegacyFreeARMOcpus    = 4
 	LegacyFreeARMMemoryGB = 24
 

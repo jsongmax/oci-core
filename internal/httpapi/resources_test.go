@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"ocicore/internal/ociclient"
+	"ocicore/internal/store"
 )
 
 type rewriteTransport struct{ target *url.URL }
@@ -136,5 +137,78 @@ func TestCollectRegionClassifiesIdleResources(t *testing.T) {
 	}
 	if got := vcns["vcn-nogw"]; got.InternetGateway != nil || len(got.CidrBlocks) != 1 {
 		t.Errorf("vcn-nogw 应没有网关、CIDR 退回 cidrBlock，实际 %+v", got)
+	}
+}
+
+// 升级号的 ARM 免费额度是 4 OCPU / 24 GB，免费号是 2 / 12。
+// 拿免费号的数字去对照升级号，会把一台不收费的 4 核 24 GB 报成「超出」。
+func TestFreeTierFollowsPaymentModel(t *testing.T) {
+	cases := []struct {
+		model      string
+		tier       string
+		ocpu, memo int
+	}{
+		{"PAY_AS_YOU_GO", "paid", ociclient.LegacyFreeARMOcpus, ociclient.LegacyFreeARMMemoryGB},
+		{"FREE_TRIAL", "free", ociclient.AlwaysFreeARMOcpus, ociclient.AlwaysFreeARMMemoryGB},
+		{"", "unknown", ociclient.AlwaysFreeARMOcpus, ociclient.AlwaysFreeARMMemoryGB},
+	}
+	for _, c := range cases {
+		ft := freeTierFor(c.model)
+		if ft.Tier != c.tier || ft.ArmOcpus != c.ocpu || ft.ArmMemoryGB != c.memo {
+			t.Errorf("%q: 得到 %s %d/%d，期望 %s %d/%d", c.model, ft.Tier, ft.ArmOcpus, ft.ArmMemoryGB, c.tier, c.ocpu, c.memo)
+		}
+	}
+}
+
+// 控制台连接复用旧连接的前提是公钥一致。指纹算法要与 OCI 记录的一致
+// （ssh-keygen -E md5 的格式），算错了会把每条连接都当成「公钥不同」删掉重建。
+// 期望值来自 ssh-keygen -l -E md5。
+func TestSSHKeyMD5FingerprintMatchesSSHKeygen(t *testing.T) {
+	const key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQDMgfJWVcUUv9CORWMIALq78j5G287IVzuHataD4ueaBHtwE0zaxRu6FTdAsLps4pzLmsW3q8sEvAhJlcqq1W6kcU0AavSyPsBwTcTP/UpGaPEczrCwhoxwNk+72y7LMOpv+8KsaJ8fsjubxTRzhVVhIgn1DrMyCTSAMUzAQwUL0w== test"
+	if got, want := sshKeyMD5Fingerprint(key), "45:ea:ec:7b:20:7c:ae:97:90:24:09:ac:38:17:b0:29"; got != want {
+		t.Errorf("指纹 = %s，期望 %s", got, want)
+	}
+	if got := sshKeyMD5Fingerprint("ssh-rsa not-base64!!"); got != "" {
+		t.Errorf("解析不了的公钥应返回空串，实际 %q", got)
+	}
+}
+
+// 删卷、释放保留 IP 不可恢复：没有回传名称 / 地址时，服务端必须在碰 OCI 之前拦下。
+// 区域参数缺失同样要先拦，免得落到账号的默认区域上删错地方。
+func TestResourceCleanupRequiresRegion(t *testing.T) {
+	h := newHarness(t)
+	h.setupAndLogin()
+
+	for _, path := range []string{
+		"/api/accounts/acc-1/resources/volumes/v-1?kind=boot&confirm=x",
+		"/api/accounts/acc-1/resources/public-ips/ip-1?confirm=1.2.3.4",
+		"/api/accounts/acc-1/resources/console-connections/cc-1?confirm=true",
+	} {
+		resp := h.do("DELETE", path, nil, true)
+		expectStatus(t, resp, http.StatusBadRequest)
+		if body := decode[errorBody](t, resp); body.Code != "missing_region" {
+			t.Errorf("%s: 错误码 = %q，期望 missing_region", path, body.Code)
+		}
+	}
+}
+
+// 移除 IPv6 与开启对称：没有 confirm=true 不提交任务。
+func TestRemoveIPv6RequiresConfirmation(t *testing.T) {
+	h := newHarness(t)
+	h.setupAndLogin()
+
+	acc, err := h.store.CreateAccount(t.Context(), storeTestAccount(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertInstance(t.Context(), store.Instance{
+		ID: "i-1", AccountID: acc.ID, Region: "ap-tokyo-1", DisplayName: "web-01", LifecycleState: "RUNNING",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := h.do("DELETE", "/api/instances/i-1/ipv6?address=2603::1", nil, true)
+	expectStatus(t, resp, http.StatusBadRequest)
+	if body := decode[errorBody](t, resp); body.Code != "confirm_required" {
+		t.Errorf("错误码 = %q，期望 confirm_required", body.Code)
 	}
 }
