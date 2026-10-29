@@ -98,6 +98,9 @@ X-OCI-Tools: 1
 | POST | `/api/accounts/{id}/check` | 重新校验连通性 |
 | GET | `/api/accounts/{id}/regions` | 该账号已订阅的区域 |
 | GET | `/api/accounts/{id}/resources` | 资源盘点：各区域的卷、公网 IP、控制台连接、VCN 与额度用量 |
+| DELETE | `/api/accounts/{id}/resources/volumes/{volumeId}?region=&kind=&confirm={name}` | 删除未挂载的引导卷 / 块存储，**需回传卷名** |
+| DELETE | `/api/accounts/{id}/resources/public-ips/{ipId}?region=&confirm={ip}` | 释放未绑定的保留 IP，**需回传 IP 地址** |
+| DELETE | `/api/accounts/{id}/resources/console-connections/{connId}?region=&confirm=true` | 删除串行控制台连接 |
 | POST | `/api/accounts/parse-config` | 解析粘贴的 OCI 配置 |
 | POST | `/api/accounts/check-draft` | 保存前测试凭据 |
 
@@ -173,6 +176,7 @@ X-OCI-Tools: 1
 | POST | `/api/instances/{ocid}/dismiss-error` | 清除该行的错误提示 |
 | POST | `/api/instances/{ocid}/change-ip?confirm=true` | 更换公网 IP |
 | POST | `/api/instances/{ocid}/enable-ipv6` | 启用 IPv6 |
+| DELETE | `/api/instances/{ocid}/ipv6?address=&confirm=true` | 移除网卡上的一个 IPv6 地址（后台任务） |
 | POST | `/api/instances/{ocid}/vnics` | 添加附属网卡 |
 | DELETE | `/api/instances/{ocid}/vnics/{attachmentId}?confirm=true` | 分离附属网卡 |
 | GET | `/api/instances/{ocid}/metrics` | 监控数据 |
@@ -405,6 +409,15 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 `vcns`（`internetGateway` 为 `null` 表示没有互联网网关）、`usage`（按资源清单算出的用量）、
 `freeTier`（永久免费参考额度与核对日期）、`quota`（Oracle 真实限额，仅主区域）。
 某个区域某类资源查询失败时记入 `errors`，其余照常返回。
+`freeTier.tier` 按账号付费模式取值：`paid`（升级号，ARM 参考额度 4 OCPU / 24 GB）、`free`（2 OCPU / 12 GB）、
+`unknown`（尚未识别，按免费号对照）。
+
+清理接口都会先在服务端重新确认资源确实闲置，不依赖资源页的缓存：卷仍挂在实例上返回 409 `volume_attached`，
+状态不是 `AVAILABLE` 返回 409 `volume_busy`；保留 IP 仍绑定返回 409 `ip_assigned`，临时 IP 返回 400 `not_reserved`
+（临时 IP 请在实例上更换）。删卷与释放保留 IP 不可恢复，需要两步验证复核（若已启用）。成功后清除该账号的资源缓存。
+
+**`POST /api/instances/{ocid}/console`** 已有活跃连接时，公钥指纹一致则直接复用；不一致则删除旧连接、等它消失后
+用新公钥重建，响应带 `replaced: true`。
 
 **`POST /api/instances/{ocid}/change-ip?confirm=true`**
 
