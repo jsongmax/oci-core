@@ -377,6 +377,10 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
 
     <PageTabs :tabs="TABS" v-model:active="active" />
 
+    <!-- 各标签的条件链彼此独立，没法逐个过渡；外层按标签换 key，切换时整块淡入淡出 -->
+    <Transition name="swap" mode="out-in">
+    <div :key="active">
+
     <template v-if="active === '账户安全'">
       <SectionCard title="两步验证">
         <div class="pad">
@@ -584,7 +588,7 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
         <button class="btn btn--sm" @click="exportCsv">导出 CSV</button>
       </template>
 
-      <SkeletonRows v-if="auditLoading" :rows="6" />
+      <SkeletonRows v-if="auditLoading && audit.length === 0" :rows="6" />
       <EmptyState v-else-if="audit.length === 0" title="暂无审计记录"
                   body="所有账号与实例操作都会记录在这里。" />
       <template v-else>
@@ -607,7 +611,7 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
         <div class="more">
           <button v-if="auditMore" class="btn btn--sm" :disabled="auditLoading"
                   @click="loadAudit(true)">
-            {{ auditLoading ? '加载中…' : `加载更早的 ${AUDIT_PAGE} 条` }}
+            <span v-if="auditLoading" class="btn-spin" aria-hidden="true" />{{ auditLoading ? '加载中' : `加载更早的 ${AUDIT_PAGE} 条` }}
           </button>
           <span v-else class="t-2xs dim-3">已经到最早的一条了</span>
         </div>
@@ -617,6 +621,8 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
     <SectionCard v-else title="关于">
       <KeyValueList :items="aboutItems" />
     </SectionCard>
+    </div>
+    </Transition>
   </div>
 </template>
 

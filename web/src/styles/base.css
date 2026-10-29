@@ -146,6 +146,39 @@ select.input {
   animation: shimmer 1.4s linear infinite;
 }
 
+/*
+ * ---------- 加载过渡（全站统一，§10.1）----------
+ *
+ * 三种状态，每页都按这套来：
+ *   首次加载：贴合真实布局的骨架屏（.skeleton / SkeletonRows），不用居中转圈；
+ *   刷新：保留旧数据加 .is-stale 调暗，页头下方的 LoadingBar 走进度；
+ *   数据到达：容器加 .reveal 淡入上移，多块时用 --i 错开 60ms。
+ * 减少动效偏好由下方 prefers-reduced-motion 统一压掉，这里不用单独处理。
+ */
+.reveal { animation: rise var(--dur-slow) var(--ease-decelerate) both; animation-delay: calc(var(--i, 0) * 60ms); }
+.stale-able { transition: opacity var(--dur-normal) var(--ease-standard); }
+.is-stale { opacity: 0.55; pointer-events: none; transition: opacity var(--dur-normal) var(--ease-standard); }
+/* 切标签：内容淡入淡出。<Transition name="swap" mode="out-in"> */
+.swap-enter-active { animation: fade-in var(--dur-normal) var(--ease-decelerate); }
+.swap-leave-active { animation: fade-in var(--dur-fast) var(--ease-accelerate) reverse; }
+/* 按钮里的小转圈：操作进行中，按钮宽度基本不变 */
+.btn-spin {
+  display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; flex: 0 0 auto;
+  border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+/* 骨架屏上方的一行说明：告诉用户在读什么、为什么要等 */
+.skeleton-hint { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 12px; color: var(--text-secondary); }
+/* 三个点依次呼吸：比静止文字有生气，又不像转圈那样喧宾夺主 */
+.dot-pulse, .dot-pulse::before, .dot-pulse::after {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  animation: pulse 1.2s var(--ease-standard) infinite;
+}
+.dot-pulse { position: relative; display: inline-block; margin: 0 8px; animation-delay: 0.2s; flex: 0 0 auto; }
+.dot-pulse::before, .dot-pulse::after { content: ''; position: absolute; top: 0; }
+.dot-pulse::before { left: -7px; animation-delay: 0s; }
+.dot-pulse::after { left: 7px; animation-delay: 0.4s; }
+
 .view-fade-enter-active { animation: rise var(--dur-normal) var(--ease-decelerate); }
 .drawer-enter-active { animation: slide-in-right var(--dur-normal) var(--ease-decelerate); }
 .drawer-leave-active { animation: slide-in-right var(--dur-fast) var(--ease-accelerate) reverse; }

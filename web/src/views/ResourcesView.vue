@@ -25,6 +25,7 @@ import QuotaMeter from '@/components/QuotaMeter.vue'
 import MaskedText from '@/components/MaskedText.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 
 const { state, accountById, openDrawer, ask, toast, toastError } = useStore()
 
@@ -312,10 +313,11 @@ const STATE_TEXT: Record<string, string> = {
                     aria-label="账号" :min-width="200" />
         <SelectMenu v-model="region" :groups="regionGroups" aria-label="区域" :min-width="180" />
         <button class="btn" :disabled="loading || !accountId" @click="load(true)">
-          <span v-if="loading" class="spin" aria-hidden="true" />{{ loading ? '读取中' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '读取中' : '刷新' }}
         </button>
       </div>
     </header>
+    <LoadingBar :active="loading && !!data" />
 
     <EmptyState v-if="usableAccounts.length === 0" title="还没有可用的账号" body="先在账号页添加一个账号。" />
 
@@ -324,7 +326,7 @@ const STATE_TEXT: Record<string, string> = {
 
       <!-- 首次加载 / 换账号：按真实布局画骨架，数据到了原地替换，页面不跳 -->
       <div v-if="loading && !data" class="sk" aria-busy="true">
-        <p class="sk__hint t-xs dim">
+        <p class="skeleton-hint">
           <span class="dot-pulse" aria-hidden="true" />
           正在读取 {{ regionCount }} 个区域的卷、公网 IP、控制台连接与 VCN，区域多时需要十几秒
         </p>
@@ -358,9 +360,8 @@ const STATE_TEXT: Record<string, string> = {
         </div>
       </div>
 
-      <div v-if="data" class="content" :class="{ 'is-stale': loading }">
-        <!-- 换区域、刷新时保留旧数据并调暗，顶部走一条进度条 -->
-        <span v-if="loading" class="progress" aria-hidden="true"><span /></span>
+      <!-- 换区域、刷新时保留旧数据并调暗，页头下方的进度条在走 -->
+      <div v-if="data" class="stale-able" :class="{ 'is-stale': loading }">
 
         <p v-if="data.errors?.length" class="warn reveal">
           部分资源没查到，下面的清单可能不完整：
@@ -413,7 +414,7 @@ const STATE_TEXT: Record<string, string> = {
                         @click="openDrawer({ kind: 'instance', id: p.instanceId, tab: '控制台' })">查看实例</button>
                 <button v-if="p.action" class="btn btn--xs btn--warning" :disabled="acting.has(p.key)"
                         @click="doAction(p.action)">
-                  <span v-if="acting.has(p.key)" class="spin" aria-hidden="true" />{{ ACTION_LABEL[p.action.kind] }}
+                  <span v-if="acting.has(p.key)" class="btn-spin" aria-hidden="true" />{{ ACTION_LABEL[p.action.kind] }}
                 </button>
               </span>
             </div>
@@ -423,7 +424,7 @@ const STATE_TEXT: Record<string, string> = {
         <PageTabs class="mt reveal" style="--i: 3" :tabs="TABS" v-model:active="active" />
 
         <SectionCard class="reveal" style="--i: 3" :title="active" :note="tabNote">
-          <Transition name="tab" mode="out-in">
+          <Transition name="swap" mode="out-in">
             <div :key="active">
               <template v-if="active === '计算'">
                 <EmptyState v-if="data.instances.length === 0" title="没有实例" />
@@ -456,7 +457,7 @@ const STATE_TEXT: Record<string, string> = {
                     <span class="row__act">
                       <button v-if="!v.attachedTo.length && v.lifecycleState === 'AVAILABLE'" class="btn btn--xs btn--warning"
                               :disabled="acting.has(v.id)" @click="deleteVolume(v)">
-                        <span v-if="acting.has(v.id)" class="spin" aria-hidden="true" />删除
+                        <span v-if="acting.has(v.id)" class="btn-spin" aria-hidden="true" />删除
                       </button>
                     </span>
                   </div>
@@ -478,7 +479,7 @@ const STATE_TEXT: Record<string, string> = {
                     <span class="row__act">
                       <button v-if="ip.lifetime === 'RESERVED' && !ip.assigned" class="btn btn--xs btn--warning"
                               :disabled="acting.has(ip.id)" @click="releaseIp(ip)">
-                        <span v-if="acting.has(ip.id)" class="spin" aria-hidden="true" />释放
+                        <span v-if="acting.has(ip.id)" class="btn-spin" aria-hidden="true" />释放
                       </button>
                     </span>
                   </div>
@@ -514,7 +515,7 @@ const STATE_TEXT: Record<string, string> = {
                     <span class="mono t-xs dim">{{ c.fingerprint || '—' }}</span>
                     <span class="row__act">
                       <button class="btn btn--xs" :disabled="acting.has(c.id)" @click="deleteConsole(c)">
-                        <span v-if="acting.has(c.id)" class="spin" aria-hidden="true" />删除
+                        <span v-if="acting.has(c.id)" class="btn-spin" aria-hidden="true" />删除
                       </button>
                     </span>
                   </div>
@@ -548,7 +549,6 @@ const STATE_TEXT: Record<string, string> = {
 /* ---------- 加载 ---------- */
 
 /* 骨架：形状与真实内容一致，数据到了原地替换 */
-.sk__hint { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .sk-card { overflow: hidden; }
 .sk-card__head { height: 46px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--border-subtle); }
 .sk-meter { display: grid; grid-template-columns: minmax(84px, 150px) minmax(60px, 1fr) 90px; gap: 10px; align-items: center; height: 18px; }
@@ -559,40 +559,7 @@ const STATE_TEXT: Record<string, string> = {
 .sk-pend__text .skeleton { height: 12px; }
 .sk-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
 
-/* 三个点依次呼吸：告诉用户「在读，没卡住」，比静止的文字有生气，又不像转圈那样喧宾夺主 */
-.dot-pulse, .dot-pulse::before, .dot-pulse::after {
-  width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
-  animation: pulse 1.2s var(--ease-standard) infinite;
-}
-.dot-pulse { position: relative; margin: 0 8px; animation-delay: 0.2s; }
-.dot-pulse::before, .dot-pulse::after { content: ''; position: absolute; top: 0; }
-.dot-pulse::before { left: -7px; animation-delay: 0s; }
-.dot-pulse::after { left: 7px; animation-delay: 0.4s; }
-
-/* 数据到达：各块依次淡入上移，比整页一下子冒出来柔和 */
-.reveal { animation: rise var(--dur-slow) var(--ease-decelerate) both; animation-delay: calc(var(--i, 0) * 60ms); }
-
-/* 换区域、刷新：旧数据调暗，顶部一条不定进度条 */
-.content { position: relative; transition: opacity var(--dur-normal) var(--ease-standard); }
-.content.is-stale { opacity: 0.55; pointer-events: none; }
-.progress { position: absolute; left: 0; right: 0; top: -10px; height: 2px; overflow: hidden; border-radius: 2px; }
-.progress > span {
-  display: block; height: 2px; width: 40%; background: var(--accent);
-  animation: indeterminate 1.4s var(--ease-standard) infinite;
-}
-
-/* 按钮里的小转圈：操作进行中，按钮本身不变宽 */
-.spin {
-  display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
-  border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-/* 切标签：内容淡入 */
-.tab-enter-active { animation: fade-in var(--dur-normal) var(--ease-decelerate); }
-.tab-leave-active { animation: fade-in var(--dur-fast) var(--ease-accelerate) reverse; }
-
-/* 待处理里的一项被清理掉：向左淡出并收起高度 */
+/* 待处理里的一项被清理掉：向左淡出，其余的平滑补位 */
 .pend-leave-active { transition: opacity var(--dur-normal), transform var(--dur-normal); }
 .pend-leave-to { opacity: 0; transform: translateX(-12px); }
 .pend-move { transition: transform var(--dur-normal) var(--ease-standard); }

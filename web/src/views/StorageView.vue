@@ -14,6 +14,7 @@ import PageTabs from '@/components/PageTabs.vue'
 import AccountChip from '@/components/AccountChip.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import AccountGroupRow from '@/components/AccountGroupRow.vue'
 import { groupByAccount } from '@/lib/grouping'
 
@@ -110,15 +111,17 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
         <button class="pill" :class="{ 'is-active': state.groupByAccount }"
                 @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
         <button v-if="active === '块存储'" class="btn" :disabled="loading" @click="loadBlocks">
-          {{ loading ? '加载中…' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '加载中' : '刷新' }}
         </button>
       </div>
     </header>
 
+    <LoadingBar :active="loading && blocks.length > 0 && active === '块存储'" />
     <PageTabs :tabs="TABS" v-model:active="active" />
 
     <p v-if="loadError && active === '块存储'" class="warn">{{ loadError }}</p>
 
+    <Transition name="swap" mode="out-in">
     <SectionCard v-if="active === '引导卷'" title="引导卷"
                  note="容量只能增不能减；扩容后需在实例内扩展分区与文件系统">
       <EmptyState v-if="boots.length === 0" title="所选账号下暂无实例"
@@ -145,8 +148,10 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
       </template>
     </SectionCard>
 
-    <SectionCard v-else title="块存储" note="独立于实例的数据盘">
-      <SkeletonRows v-if="loading" :rows="3" />
+    <SectionCard v-else title="块存储" note="独立于实例的数据盘" class="stale-able"
+                 :class="{ 'is-stale': loading && blocks.length > 0 }">
+      <!-- 已有数据时刷新只调暗，不再整块换回骨架 -->
+      <SkeletonRows v-if="loading && blocks.length === 0" :rows="3" />
       <EmptyState v-else-if="blocks.length === 0" title="所选账号下暂无块存储卷"
                   body="块存储需要在 Oracle 控制台创建后再挂载到实例。" />
       <template v-else>
@@ -169,6 +174,7 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
         </template>
       </template>
     </SectionCard>
+    </Transition>
   </div>
 </template>
 

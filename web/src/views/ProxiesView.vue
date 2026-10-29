@@ -22,6 +22,7 @@ import {
 import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import CheckList from '@/components/CheckList.vue'
 import AccountChip from '@/components/AccountChip.vue'
 import MaskedText from '@/components/MaskedText.vue'
@@ -35,6 +36,16 @@ const notice = ref('')
 const loading = ref(false)
 const loadError = ref('')
 const checking = ref(false)
+
+/**
+ * 手动刷新。只有点「刷新」才调暗列表、走进度条；定时轮询和操作后的重拉
+ * 保持安静，否则每隔十几秒整页闪一下。
+ */
+const refreshing = ref(false)
+async function refresh() {
+  refreshing.value = true
+  try { await load() } finally { refreshing.value = false }
+}
 
 async function load() {
   loading.value = true
@@ -242,9 +253,12 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
         <button class="btn" :disabled="checking || list.length === 0" @click="check()">
           {{ checking ? '检测中…' : '全部检测' }}
         </button>
-        <button class="btn" :disabled="loading" @click="load()">刷新</button>
+        <button class="btn" :disabled="refreshing" @click="refresh()">
+          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />刷新
+        </button>
       </div>
     </header>
+    <LoadingBar :active="refreshing" />
 
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
@@ -293,13 +307,14 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
     </SectionCard>
 
     <!-- 代理列表 -->
-    <SectionCard title="代理池" :note="`${list.length} 条`">
+    <SectionCard title="代理池" :note="`${list.length} 条`" class="stale-able" :class="{ 'is-stale': refreshing && list.length > 0 }">
       <SkeletonRows v-if="loading && list.length === 0" :rows="3" />
 
       <EmptyState v-else-if="list.length === 0" icon="⇄" title="代理池是空的"
                   sub="在上面粘贴代理列表导入。不导入的话所有账号都走本机直连。" />
 
-      <div v-for="p in list" v-else :key="p.id" class="px" :class="{ 'is-off': !p.enabled }">
+      <div v-for="(p, n) in list" v-else :key="p.id" class="px reveal" :class="{ 'is-off': !p.enabled }"
+           :style="{ '--i': Math.min(n, 8) }">
         <span class="px__dot" :style="{ background: TONE[p.lastStatus] }" />
         <span class="px__status" :style="{ color: TONE[p.lastStatus] }">
           {{ STATUS_TEXT[p.lastStatus] }}

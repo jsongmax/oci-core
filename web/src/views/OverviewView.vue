@@ -9,6 +9,7 @@ import { insights, hunt as huntApi, type AuditEntryDTO, type HuntTaskDTO } from 
 import { now } from '@/lib/clock'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import SectionCard from '@/components/SectionCard.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 
 const router = useRouter()
 const { state, accountById, openDrawer, allRegions, visibleInstances } = useStore()
@@ -35,6 +36,12 @@ const shownRegions = computed(() =>
 const shownInstances = computed(() =>
   visibleInstances.value.filter(i => i.state !== 'TERMINATED')
 )
+
+/**
+ * 首次加载、还没拿到任何账号时显示骨架。不这样的话，进来先看到四个 0 和
+ * 一张空矩阵，像是「没有账号」，一两秒后又突然变成真实数字。
+ */
+const booting = computed(() => state.loading && state.accounts.length === 0)
 
 const live = ref([0, 0, 0, 0])
 const totals = computed(() => {
@@ -247,9 +254,37 @@ const timeline = computed(() =>
       </div>
       <span class="dim-3 mono t-xs">{{ lastSyncAbsolute }}</span>
     </header>
+    <LoadingBar :active="state.loading && !booting" />
 
+    <template v-if="booting">
+      <div class="kpis" aria-busy="true">
+        <div v-for="n in 4" :key="n" class="card card-pad sk-kpi">
+          <span class="skeleton" style="width: 64px; height: 12px" />
+          <span class="skeleton" style="width: 72px; height: 36px; margin: 10px 0 8px" />
+          <span class="skeleton" style="width: 96px; height: 10px" />
+        </div>
+      </div>
+      <div class="grid-6-4">
+        <div class="col-left">
+          <div v-for="n in 2" :key="n" class="card sk-card">
+            <div class="sk-card__head"><span class="skeleton" style="width: 96px; height: 14px" /></div>
+            <div class="sk-card__body">
+              <span v-for="m in 4" :key="m" class="skeleton" :style="{ width: 60 + ((m * 17 + n * 11) % 35) + '%' }" />
+            </div>
+          </div>
+        </div>
+        <div class="card sk-card">
+          <div class="sk-card__head"><span class="skeleton" style="width: 80px; height: 14px" /></div>
+          <div class="sk-card__body">
+            <span v-for="m in 6" :key="m" class="skeleton" :style="{ width: 50 + ((m * 23) % 45) + '%' }" />
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template v-else>
     <div class="kpis">
-      <div v-for="k in kpis" :key="k.label" class="card card-pad">
+      <div v-for="(k, n) in kpis" :key="k.label" class="card card-pad reveal" :style="{ '--i': n }">
         <p class="kpi__label">{{ k.label }}</p>
         <p class="kpi__value mono" :style="{ color: k.tone }">{{ k.value }}</p>
         <p class="kpi__sub">{{ k.sub }}</p>
@@ -257,7 +292,7 @@ const timeline = computed(() =>
     </div>
 
     <!-- 无异常时整块隐藏 -->
-    <section v-if="alerts.length" class="card alerts">
+    <section v-if="alerts.length" class="card alerts reveal" style="--i: 2">
       <header class="alerts__head">
         <span class="alerts__dot" />
         <h2 class="t-lg alerts__title">需要注意的</h2>
@@ -275,7 +310,7 @@ const timeline = computed(() =>
       </button>
     </section>
 
-    <div class="grid-6-4">
+    <div class="grid-6-4 reveal" style="--i: 3">
       <div class="col-left">
       <SectionCard title="实例分布矩阵" note="行为账号，列为区域，色块深浅表示密度">
         <!-- 列数必须跟着区域数走。写死列数时，格子会在错误的位置换行——
@@ -348,6 +383,7 @@ const timeline = computed(() =>
         </div>
       </SectionCard>
     </div>
+    </template>
 
   </div>
 </template>
@@ -357,6 +393,13 @@ const timeline = computed(() =>
 .kpi__label { margin: 0; font-size: 12px; color: var(--text-secondary); }
 .kpi__value { margin: 4px 0 0; font-size: 40px; line-height: 48px; font-weight: 600; }
 .kpi__sub { margin: 0; font-size: 12px; color: var(--text-tertiary); }
+
+/* 骨架：与 KPI 卡、左右两列卡片同形，数据到了原地替换 */
+.sk-kpi { display: flex; flex-direction: column; }
+.sk-card { overflow: hidden; }
+.sk-card__head { height: 46px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--border-subtle); }
+.sk-card__body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.sk-card__body .skeleton { height: 12px; }
 
 .alerts { margin-top: 24px; overflow: hidden; }
 .alerts__head { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); }

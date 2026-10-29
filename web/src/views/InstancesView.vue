@@ -13,6 +13,7 @@ import StateBadge from '@/components/StateBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import InstanceRowActions from '@/components/InstanceRowActions.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import ColumnPicker from '@/components/ColumnPicker.vue'
 import { useColumns, type ColumnDef } from '@/lib/columns'
 
@@ -334,11 +335,13 @@ const bootTone = (i: Instance) =>
       <div class="head-actions">
         <span v-if="!state.live" class="offline" title="实时连接已断开，状态可能不是最新的">离线</span>
         <button class="btn" :disabled="state.syncing" @click="syncNow()">
-          {{ state.syncing ? '同步中…' : '同步' }}
+          <span v-if="state.syncing" class="btn-spin" aria-hidden="true" />{{ state.syncing ? '同步中' : '同步' }}
         </button>
         <button class="btn btn--primary" @click="openDrawer({ kind: 'create-instance' })">创建实例</button>
       </div>
     </header>
+    <!-- 同步要去 OCI 逐个区域查，可能几十秒；列表照常可用，只在页头下走一条进度 -->
+    <LoadingBar :active="state.syncing || (state.loading && !showSkeleton)" />
 
     <p v-if="state.loadError" class="load-err">{{ state.loadError }}</p>
 

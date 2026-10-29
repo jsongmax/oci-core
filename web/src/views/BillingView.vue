@@ -24,6 +24,7 @@ import {
 import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import AccountChip from '@/components/AccountChip.vue'
@@ -334,10 +335,12 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
       </div>
       <div class="head-actions">
         <button class="btn" :disabled="loading" @click="load(true)">
-          {{ loading ? '刷新中…' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '刷新中' : '刷新' }}
         </button>
       </div>
     </header>
+    <!-- 账单要去 Oracle 的 Usage API 逐个账号查，慢；刷新时旧数字照常显示、调暗 -->
+    <LoadingBar :active="(loading && summaries.length > 0) || detailLoading || egressLoading" />
 
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
@@ -377,14 +380,15 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
       </div>
     </div>
 
-    <SectionCard title="按账号" note="点一行看它的明细">
+    <SectionCard title="按账号" note="点一行看它的明细" class="stale-able"
+                 :class="{ 'is-stale': loading && summaries.length > 0 }">
       <SkeletonRows v-if="loading && summaries.length === 0" :rows="4" />
 
       <EmptyState v-else-if="summaries.length === 0" icon="¤" title="还没有账号"
                   sub="先在账号页接入 Oracle 账号，这里才有账单可看。" />
 
       <template v-else>
-        <div v-for="s in rows" :key="s.accountId" class="acct"
+        <div v-for="(s, n) in rows" :key="s.accountId" class="acct reveal" :style="{ '--i': Math.min(n, 8) }"
              :class="{ 'is-open': selected === s.accountId }"
              role="button" tabindex="0"
              @click="select(s.accountId)"
@@ -420,7 +424,8 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
     </SectionCard>
 
     <!-- 明细 -->
-    <SectionCard v-if="selected" :title="`明细 · ${selectedAccount?.alias ?? ''}`"
+    <SectionCard v-if="selected" :title="`明细 · ${selectedAccount?.alias ?? ''}`" class="stale-able reveal"
+                 :class="{ 'is-stale': detailLoading && !!detail }"
                  :note="detail ? `${detail.start.slice(0, 10)} 至今 · ${detail.region}` : ''">
       <template #action>
         <div class="range">
@@ -428,7 +433,9 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                   :class="{ 'btn--primary': days === d }" @click="days = d">
             {{ d }} 天
           </button>
-          <button class="btn btn--xs" :disabled="detailLoading || egressLoading" @click="refreshDetail()">刷新</button>
+          <button class="btn btn--xs" :disabled="detailLoading || egressLoading" @click="refreshDetail()">
+            <span v-if="detailLoading || egressLoading" class="btn-spin" aria-hidden="true" />刷新
+          </button>
         </div>
       </template>
 
@@ -491,7 +498,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                 · {{ pct(egress.usedGb, egress.freeGb) }}%
               </span>
             </div>
-            <p v-if="egressLoading && !egress" class="t-2xs dim-3 egress-month__msg">查询中…</p>
+            <span v-if="egressLoading && !egress" class="skeleton egress-month__sk" aria-label="查询中" />
             <p v-else-if="egressError" class="t-2xs egress-month__msg egress-month__err">{{ egressError }}</p>
             <p v-else-if="egress && egress.status !== 'ok'" class="t-2xs egress-month__msg egress-month__err">
               {{ egress.error || '查询失败' }}
@@ -593,6 +600,8 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
 </template>
 
 <style scoped>
+/* 本月出站流量还没查回来时，占一条和进度条同高的骨架，而不是一行「查询中…」 */
+.egress-month__sk { display: block; height: 6px; width: 100%; margin-top: 8px; border-radius: var(--radius-full); }
 .warn-box { margin-bottom: 16px; }
 .page > .card + .card { margin-top: 16px; }
 

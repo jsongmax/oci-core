@@ -196,10 +196,11 @@ onMounted(load)
     </header>
 
     <SectionCard title="渠道" note="机密字段在服务端打码，不会回传完整值">
-      <SkeletonRows v-if="loading" :rows="3" />
+      <!-- 只在还没有数据时画骨架：每次保存后都会重拉，若一律显示骨架，列表会闪一下 -->
+      <SkeletonRows v-if="loading && channels.length === 0" :rows="3" />
       <EmptyState v-else-if="channels.length === 0" title="还没有配置任何通知渠道"
                   body="配置后，下方列出的事件会推送到这里。" />
-      <div v-else class="cards">
+      <div v-else class="cards reveal">
         <article v-for="ch in channels" :key="ch.id" class="chcard" :class="{ 'is-on': ch.enabled }">
           <header class="chcard__head">
             <h3 class="chcard__title">{{ ch.name }}</h3>

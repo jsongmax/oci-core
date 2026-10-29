@@ -5,7 +5,7 @@ withDefaults(defineProps<{ rows?: number; height?: number }>(), { rows: 6, heigh
 
 <template>
   <div>
-    <div v-for="n in rows" :key="n" class="row" :style="{ height: height + 'px' }">
+    <div v-for="n in rows" :key="n" class="row" :style="{ height: height + 'px', '--n': n - 1 }">
       <span class="skeleton" style="width: 84px" />
       <span class="skeleton" style="width: 180px" />
       <span class="skeleton" style="width: 56px" />
@@ -22,4 +22,6 @@ withDefaults(defineProps<{ rows?: number; height?: number }>(), { rows: 6, heigh
   border-bottom: 1px solid var(--border-subtle);
 }
 .skeleton { height: 12px; }
+/* 行依次浮现：一整块骨架同时出现像是闪了一下，错开 50ms 更像「正在往里填」 */
+.row { animation: fade-in var(--dur-normal) var(--ease-decelerate) both; animation-delay: calc(var(--n) * 50ms); }
 </style>

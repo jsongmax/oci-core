@@ -789,6 +789,9 @@ watch(metricHours, () => void loadMetrics())
       <p v-if="detailError" class="err">{{ detailError }}</p>
       <p v-for="w in detail?.warnings ?? []" :key="w" class="warn">{{ w }}</p>
 
+      <!-- 切标签时内容淡入淡出：外层按标签换 key，Transition 需要单一子元素 -->
+      <Transition name="swap" mode="out-in">
+      <div :key="active">
       <template v-if="active === '概览'">
         <SectionCard title="基本信息">
           <KeyValueList :items="[
@@ -1117,6 +1120,8 @@ watch(metricHours, () => void loadMetrics())
                      :items="[{ tone: 'info', text: '该实例暂无操作记录' }]" />
         </SectionCard>
       </template>
+      </div>
+      </Transition>
     </DrawerBody>
   </AppDrawer>
 </template>

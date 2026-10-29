@@ -87,6 +87,8 @@ const state = reactive({
   instances: [] as Instance[],
   /** 后台任务，最新的在前。进度由 SSE 的 job.updated 推送 */
   jobs: [] as JobDTO[],
+  /** 任务列表是否拉到过一次。任务页据此区分「还在读」与「真的没有任务」 */
+  jobsLoaded: false,
 
   drawer: null as DrawerRequest | null,
   confirm: null as ConfirmRequest | null,
@@ -368,6 +370,8 @@ async function loadJobs(): Promise<void> {
     state.jobs = jobs
   } catch (err) {
     console.warn('加载任务列表失败', err)
+  } finally {
+    state.jobsLoaded = true
   }
 }
 

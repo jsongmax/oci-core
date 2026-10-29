@@ -19,6 +19,7 @@ import KeyValueList from '@/components/KeyValueList.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
+import SkeletonRows from '@/components/SkeletonRows.vue'
 import CredentialField from '@/components/CredentialField.vue'
 
 const props = defineProps<{ id: string; tab?: string }>()
@@ -344,6 +345,9 @@ function askDelete() {
     <DrawerTabs :tabs="TABS" v-model:active="active" />
 
     <DrawerBody>
+      <!-- 切标签时内容淡入淡出：外层按标签换 key，Transition 需要单一子元素 -->
+      <Transition name="swap" mode="out-in">
+      <div :key="active">
       <template v-if="active === '概览'">
         <SectionCard title="租户">
           <KeyValueList :items="[
@@ -404,8 +408,16 @@ function askDelete() {
       <template v-else-if="active === '配额'">
         <SectionCard
           :title="account.quotaRegion || account.regions[0] || '配额'"
-          :note="account.quotaRegion ? '上限来自 Oracle 实时返回' : '配额加载中…'">
-          <div class="pad">
+          :note="account.quotaRegion ? '上限来自 Oracle 实时返回' : '正在读取配额'">
+          <!-- 配额还没回来时画骨架：四条 0 / 0 的进度条会被当成「没有额度」 -->
+          <div v-if="!account.quotaRegion" class="pad sk-quota" aria-busy="true">
+            <div v-for="n in 4" :key="n" class="sk-quota__row">
+              <span class="skeleton" style="width: 64px; height: 10px" />
+              <span class="skeleton" style="height: 6px" />
+              <span class="skeleton" style="width: 72px; height: 10px; justify-self: end" />
+            </div>
+          </div>
+          <div v-else class="pad reveal">
             <QuotaMeter label="ARM OCPU" :used="account.quota.ocpuUsed" :limit="account.quota.ocpuLimit"
                         :unlimited="account.quota.unlimited.ocpu" />
             <QuotaMeter label="ARM 内存" :used="account.quota.memUsed" :limit="account.quota.memLimit" unit=" GB"
@@ -469,11 +481,12 @@ Allow group 'OCI Core' to read all-resources in tenancy`" />
                      :note="policy?.domainName ? `身份域 ${policy.domainName}` : ''">
           <template #action>
             <button class="btn btn--sm" :disabled="policyLoading" @click="loadPolicy()">
-              {{ policyLoading ? '读取中…' : (policy ? '重新读取' : '读取') }}
+              <span v-if="policyLoading" class="btn-spin" aria-hidden="true" />{{ policyLoading ? '读取中' : (policy ? '重新读取' : '读取') }}
             </button>
           </template>
 
-          <CheckList v-if="!policy" :items="[
+          <SkeletonRows v-if="policyLoading && !policy" :rows="2" :height="40" />
+          <CheckList v-else-if="!policy" :items="[
             { tone: 'info', text: '点「读取」查看该租户的密码有效期。读取只需要现有权限，不会改动任何东西。' }
           ]" />
 
@@ -570,11 +583,15 @@ Allow group 'OCI Core' to read all-resources in tenancy`" />
           </div>
         </SectionCard>
       </template>
+      </div>
+      </Transition>
     </DrawerBody>
   </AppDrawer>
 </template>
 
 <style scoped>
+.sk-quota { display: flex; flex-direction: column; gap: 12px; }
+.sk-quota__row { display: grid; grid-template-columns: 80px 1fr 108px; gap: 10px; align-items: center; height: 16px; }
 .pol { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .pol__sep { font-size: 11px; color: var(--text-tertiary); }
 .pol__num { display: flex; align-items: center; gap: 6px; }

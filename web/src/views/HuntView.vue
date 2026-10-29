@@ -15,6 +15,7 @@ import { hunt as huntApi, errorText, type HuntTaskDTO, type HuntLimitsDTO } from
 import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import CheckList from '@/components/CheckList.vue'
 import AccountChip from '@/components/AccountChip.vue'
 
@@ -24,6 +25,16 @@ const tasks = ref<HuntTaskDTO[]>([])
 const limits = ref<HuntLimitsDTO | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+
+/**
+ * 手动刷新。只有点「刷新」才调暗列表、走进度条；定时轮询和操作后的重拉
+ * 保持安静，否则每隔十几秒整页闪一下。
+ */
+const refreshing = ref(false)
+async function refresh() {
+  refreshing.value = true
+  try { await load() } finally { refreshing.value = false }
+}
 
 async function load() {
   loading.value = true
@@ -151,12 +162,15 @@ function openInstance(id: string) {
         </p>
       </div>
       <div class="head-actions">
-        <button class="btn" :disabled="loading" @click="load()">刷新</button>
+        <button class="btn" :disabled="refreshing" @click="refresh()">
+          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />刷新
+        </button>
         <button class="btn btn--primary" @click="openDrawer({ kind: 'create-instance' })">
           新建任务
         </button>
       </div>
     </header>
+    <LoadingBar :active="refreshing" />
 
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
@@ -170,7 +184,7 @@ function openInstance(id: string) {
         text: '每个账号只允许一个任务。容量是账号级共享的，并行不会更快，只会让请求量翻倍。' }
     ]" />
 
-    <SectionCard title="任务" :note="`每 15 秒自动刷新`">
+    <SectionCard title="任务" :note="`每 15 秒自动刷新`" class="stale-able" :class="{ 'is-stale': refreshing && tasks.length > 0 }">
       <SkeletonRows v-if="loading && tasks.length === 0" :rows="3" />
 
       <EmptyState v-else-if="tasks.length === 0" title="还没有守候任务"
@@ -178,7 +192,7 @@ function openInstance(id: string) {
                   action-label="新建任务"
                   @action="openDrawer({ kind: 'create-instance' })" />
 
-      <div v-for="t in tasks" v-else :key="t.id" class="task">
+      <div v-for="(t, n) in tasks" v-else :key="t.id" class="task reveal" :style="{ '--i': Math.min(n, 8) }">
         <span class="task__bar" :style="{ background: acctColor(accountById(t.accountId).colorIndex) }" />
 
         <div class="task__main">

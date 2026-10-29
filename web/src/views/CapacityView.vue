@@ -20,6 +20,7 @@ import {
 import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import CheckList from '@/components/CheckList.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
 import AccountChip from '@/components/AccountChip.vue'
@@ -32,6 +33,16 @@ const watches = ref<CapacityWatchDTO[]>([])
 const probeInterval = ref(300)
 const loading = ref(false)
 const loadError = ref('')
+
+/**
+ * 手动刷新。只有点「刷新」才调暗列表、走进度条；定时轮询和操作后的重拉
+ * 保持安静，否则每隔十几秒整页闪一下。
+ */
+const refreshing = ref(false)
+async function refresh() {
+  refreshing.value = true
+  try { await load() } finally { refreshing.value = false }
+}
 
 async function load() {
   loading.value = true
@@ -225,9 +236,12 @@ const availableCount = computed(() =>
         </p>
       </div>
       <div class="head-actions">
-        <button class="btn" :disabled="loading" @click="load()">刷新</button>
+        <button class="btn" :disabled="refreshing" @click="refresh()">
+          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />刷新
+        </button>
       </div>
     </header>
+    <LoadingBar :active="refreshing" />
 
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
@@ -289,14 +303,14 @@ const availableCount = computed(() =>
       </div>
     </SectionCard>
 
-    <SectionCard title="持续监控"
+    <SectionCard title="持续监控" class="stale-able" :class="{ 'is-stale': refreshing && watches.length > 0 }"
                  :note="`每 ${Math.round(probeInterval / 60)} 分钟复查一次 · 状态变化时才推通知`">
       <SkeletonRows v-if="loading && watches.length === 0" :rows="3" />
 
       <EmptyState v-else-if="watches.length === 0" title="还没有监控项"
                   body="先在上面查一次，再把关心的可用域加入监控。有容量时推通知。" />
 
-      <div v-for="w in watches" v-else :key="w.id" class="watch"
+      <div v-for="(w, n) in watches" v-else :key="w.id" class="watch reveal" :style="{ '--i': Math.min(n, 8) }"
            :class="{ 'is-off': !w.enabled }">
         <span class="watch__bar" :style="{ background: acctColor(accountById(w.accountId).colorIndex) }" />
 

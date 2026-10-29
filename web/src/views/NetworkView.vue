@@ -15,6 +15,7 @@ import PageTabs from '@/components/PageTabs.vue'
 import AccountChip from '@/components/AccountChip.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 import SelectMenu, { type SelectGroup } from '@/components/SelectMenu.vue'
 import AccountGroupRow from '@/components/AccountGroupRow.vue'
 import { groupByAccount } from '@/lib/grouping'
@@ -27,6 +28,11 @@ const active = ref('VCN')
 interface Located<T> { accountId: string; region: string; item: T }
 
 const loading = ref(false)
+/**
+ * 已经拿到过数据。刷新时有数据就保留旧列表调暗显示，只有一条都没有时才画骨架——
+ * 以前每次刷新都把整页换回骨架，列表闪一下才回来。
+ */
+const hasNet = computed(() => vcns.value.length + subnets.value.length + securityLists.value.length > 0)
 const loadError = ref('')
 const vcns = ref<Located<VcnDTO>[]>([])
 const subnets = ref<Located<SubnetDTO>[]>([])
@@ -581,17 +587,21 @@ watch(
         <button v-if="groupable" class="pill" :class="{ 'is-active': state.groupByAccount }"
                 @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
         <button class="btn" :disabled="loading" @click="loadNetwork">
-          {{ loading ? '加载中…' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '加载中' : '刷新' }}
         </button>
       </div>
     </header>
+    <LoadingBar :active="loading && hasNet" />
 
     <PageTabs :tabs="TABS" v-model:active="active" />
 
     <p v-if="loadError" class="net-warn">{{ loadError }}</p>
 
+    <!-- 外层按标签换 key：切标签时整块淡入淡出；安全规则页有多个根，Transition 需要单一子元素 -->
+    <Transition name="swap" mode="out-in">
+    <div :key="active" class="stale-able" :class="{ 'is-stale': loading && hasNet }">
     <SectionCard v-if="active === 'VCN'" title="VCN" note="跨账号聚合，带身份色条">
-      <SkeletonRows v-if="loading" :rows="3" />
+      <SkeletonRows v-if="loading && !hasNet" :rows="3" />
       <EmptyState v-else-if="vcns.length === 0" title="所选账号下暂无 VCN"
                   body="创建实例时勾选「自动创建网络」即可自动建好一套。" />
       <template v-else>
@@ -614,7 +624,7 @@ watch(
     </SectionCard>
 
     <SectionCard v-else-if="active === '子网'" title="子网">
-      <SkeletonRows v-if="loading" :rows="3" />
+      <SkeletonRows v-if="loading && !hasNet" :rows="3" />
       <EmptyState v-else-if="subnets.length === 0" title="所选账号下暂无子网" />
       <template v-else>
         <div class="head cols-subnet">
@@ -720,7 +730,7 @@ watch(
                       aria-label="编辑目标安全列表" placeholder="没有可编辑的安全列表" />
         </div>
 
-        <SkeletonRows v-if="loading" :rows="4" />
+        <SkeletonRows v-if="loading && !hasNet" :rows="4" />
         <EmptyState v-else-if="!selectedList" title="所选账号下暂无安全列表" />
         <template v-else>
           <div class="head cols-rule">
@@ -766,7 +776,7 @@ watch(
     </SectionCard>
 
     <SectionCard v-else title="IPv6 前缀" note="Oracle 免费分配 /56，可按子网切 /64">
-      <SkeletonRows v-if="loading" :rows="2" />
+      <SkeletonRows v-if="loading && !hasNet" :rows="2" />
       <EmptyState v-else-if="ipv6Prefixes.length === 0" title="尚未启用 IPv6"
                   body="在实例详情的「网络」页可以为单台实例启用；创建实例时勾选 IPv6 会自动配好整套。" />
       <template v-else>
@@ -784,6 +794,8 @@ watch(
         </template>
       </template>
     </SectionCard>
+    </div>
+    </Transition>
   </div>
 </template>
 

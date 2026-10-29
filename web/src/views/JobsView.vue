@@ -13,6 +13,7 @@ import { now } from '@/lib/clock'
 import type { JobDTO, JobStatus } from '@/api/types'
 import SectionCard from '@/components/SectionCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import SkeletonRows from '@/components/SkeletonRows.vue'
 import AccountChip from '@/components/AccountChip.vue'
 
 const {
@@ -127,11 +128,13 @@ function askClear() {
     </div>
 
     <SectionCard title="任务列表" note="最多保留最近 300 条已结束的任务">
-      <EmptyState v-if="list.length === 0" icon="◷"
+      <SkeletonRows v-if="!state.jobsLoaded" :rows="4" :height="52" />
+      <EmptyState v-else-if="list.length === 0" icon="◷"
                   :title="state.jobs.length === 0 ? '还没有后台任务' : '这个分类下没有任务'"
                   sub="创建实例、更换公网 IP、修改配置等操作提交后会出现在这里。" />
 
-      <div v-for="j in list" :key="j.id" class="job" :class="{ 'is-active': isActive(j) }">
+      <div v-for="(j, n) in list" :key="j.id" class="job reveal" :class="{ 'is-active': isActive(j) }"
+           :style="{ '--i': Math.min(n, 8) }">
         <button class="job__head" :aria-expanded="isOpen(j)" @click="toggle(j)">
           <span class="job__icon" :style="{ color: STATUS_TONE[j.status] }">
             <span v-if="j.status === 'running'" class="job__spin" />

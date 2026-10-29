@@ -7,6 +7,8 @@ import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
 import type { Account } from '@/types'
 import MaskedText from '@/components/MaskedText.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import SkeletonRows from '@/components/SkeletonRows.vue'
+import LoadingBar from '@/components/LoadingBar.vue'
 
 const { state, openDrawer } = useStore()
 
@@ -87,12 +89,29 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
         <button class="btn btn--primary" @click="openDrawer({ kind: 'add-account' })">添加账号</button>
       </div>
     </header>
+    <LoadingBar :active="state.loading && state.accounts.length > 0" />
 
-    <EmptyState v-if="!state.accounts.length" icon="⬡" title="还没有接入任何 Oracle 账号"
+    <!-- 首次加载：按当前视图画骨架，而不是先闪一下「还没有接入任何账号」 -->
+    <template v-if="state.loading && !state.accounts.length">
+      <div v-if="view === 'card'" class="grid" aria-busy="true">
+        <div v-for="n in 3" :key="n" class="card sk-acct">
+          <span class="sk-acct__bar" />
+          <div class="sk-acct__body">
+            <span class="skeleton" style="width: 46%; height: 16px" />
+            <span class="skeleton" style="width: 70%; height: 10px" />
+            <span class="skeleton" style="width: 58%; height: 10px" />
+            <span class="skeleton" style="width: 100%; height: 6px; margin-top: 8px" />
+          </div>
+        </div>
+      </div>
+      <div v-else class="card"><SkeletonRows :rows="3" /></div>
+    </template>
+
+    <EmptyState v-else-if="!state.accounts.length" icon="⬡" title="还没有接入任何 Oracle 账号"
                 sub="接入后即可统一管理所有实例" action-label="添加第一个账号"
                 @action="openDrawer({ kind: 'add-account' })" />
 
-    <div v-else-if="view === 'card'" class="grid">
+    <div v-else-if="view === 'card'" class="grid reveal">
       <article v-for="a in state.accounts" :key="a.id" class="card acct"
                :class="{ 'is-error': a.status === 'error', 'is-disabled': a.status === 'disabled' }"
                :style="{ '--c': acctColor(a.colorIndex) }"
@@ -163,7 +182,7 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
       </article>
     </div>
 
-    <div v-else class="card table">
+    <div v-else class="card table reveal">
       <div class="table-head acols">
         <span>账号</span><span>类型 · 账龄</span><span class="col-region">区域</span>
         <span class="col-count">实例</span><span class="col-quota">ARM 配额</span>
@@ -289,6 +308,10 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
 }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+/* 账号卡骨架：左侧身份色条位置留一条灰，其余按卡片的几行文字排 */
+.sk-acct { display: flex; overflow: hidden; min-height: 150px; }
+.sk-acct__bar { width: 4px; flex: 0 0 auto; background: var(--bg-inset); }
+.sk-acct__body { flex: 1 1 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .acct { display: flex; overflow: hidden; cursor: pointer; transition: border-color var(--dur-fast); }
 .acct:hover { border-color: var(--border-strong); }
 .acct:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
