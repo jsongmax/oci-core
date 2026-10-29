@@ -26,9 +26,11 @@ async function onCopy(item: KvItem) {
       <dt>{{ item.k }}</dt>
       <!-- 带 secret 的走 MaskedText：它自己管打码与展开，
            复制也由它处理，所以这里不再挂 click -->
-      <dd v-if="item.secret" :class="{ mono: item.mono }"
+      <dd v-if="item.secret" :class="{ mono: item.mono, 'has-action': item.action }"
           :style="{ color: item.tone ?? 'var(--text-primary)' }">
         <MaskedText :value="item.v" :kind="item.secret" :copyable="item.copyable" />
+        <button v-if="item.action" class="kv__act" :class="{ 'is-warning': item.action.tone === 'warning' }"
+                :disabled="item.action.disabled" @click.stop="item.action.onClick()">{{ item.action.label }}</button>
       </dd>
       <dd v-else-if="item.href" :class="{ mono: item.mono }">
         <a :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.v }}</a>
@@ -51,4 +53,14 @@ dd.is-copyable { cursor: copy; }
 dd.is-copyable:hover { color: var(--accent); }
 dd a { color: var(--accent); text-decoration: none; }
 dd a:hover { text-decoration: underline; }
+/* 行内操作（比如 IPv6 地址旁的「移除」）：值与按钮各占一端 */
+dd.has-action { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kv__act {
+  flex: 0 0 auto; height: 22px; padding: 0 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default); background: transparent;
+  color: var(--text-secondary); font-size: 11px; font-family: inherit; cursor: pointer;
+}
+.kv__act:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-hover); }
+.kv__act.is-warning { border-color: var(--warning); color: var(--warning); }
+.kv__act:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

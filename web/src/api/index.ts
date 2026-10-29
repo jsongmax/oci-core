@@ -74,6 +74,24 @@ export const accounts = {
   regions: (id: string) =>
     http.get<{ regions: { regionName: string; isHomeRegion: boolean }[] }>(`/api/accounts/${id}/regions`),
 
+  /** 删除未挂载的卷。confirm 回传卷名（没有名字时回传 OCID），走两步验证复核 */
+  deleteVolume: (id: string, volumeId: string, region: string, kind: 'boot' | 'block', confirm: string) =>
+    http.del<{ ok: boolean; notice: string }>(
+      `/api/accounts/${encodeURIComponent(id)}/resources/volumes/${encodeURIComponent(volumeId)}`,
+      { query: { region, kind, confirm } }),
+
+  /** 释放未绑定的保留 IP。confirm 回传 IP 地址，走两步验证复核 */
+  releaseReservedIp: (id: string, ipId: string, region: string, confirm: string) =>
+    http.del<{ ok: boolean }>(
+      `/api/accounts/${encodeURIComponent(id)}/resources/public-ips/${encodeURIComponent(ipId)}`,
+      { query: { region, confirm } }),
+
+  /** 删除串行控制台连接。不丢数据 */
+  deleteConsoleConnection: (id: string, connId: string, region: string) =>
+    http.del<{ ok: boolean }>(
+      `/api/accounts/${encodeURIComponent(id)}/resources/console-connections/${encodeURIComponent(connId)}`,
+      { query: { region, confirm: 'true' } }),
+
   /** 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与额度用量。后端缓存 2 分钟，refresh 绕过 */
   resources: (id: string, region?: string, refresh = false) =>
     http.get<D.AccountResourcesDTO>(`/api/accounts/${encodeURIComponent(id)}/resources`, {
@@ -159,6 +177,12 @@ export const instances = {
   changeIp: (id: string) =>
     http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/change-ip`, undefined, {
       query: { confirm: 'true' }
+    }),
+
+  /** 删除实例网卡上的一个 IPv6 地址，后台任务 */
+  removeIpv6: (id: string, address: string) =>
+    http.del<{ job: D.JobDTO }>(`/api/instances/${encodeURIComponent(id)}/ipv6`, {
+      query: { address, confirm: 'true' }
     }),
 
   enableIpv6: (id: string) =>

@@ -151,6 +151,8 @@ export interface KvItem {
   secret?: MaskKind
   /** 非空时值渲染成外链，新标签页打开。 */
   href?: string
+  /** 行尾的小按钮。目前只在 secret 行上渲染（IPv6 地址旁的「移除」） */
+  action?: { label: string; onClick: () => void; disabled?: boolean; tone?: 'warning' }
 }
 
 /** CheckList 的一项（权限自检、连接校验、诊断） */

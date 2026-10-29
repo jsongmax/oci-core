@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** §6.7 QuotaMeter —— ≥90% warning，=100% danger 并标注已满 */
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { pct, usageTone } from '@/lib/format'
 
 const props = defineProps<{
@@ -10,10 +10,20 @@ const props = defineProps<{
   unit?: string
   /** 没有实际上限。进度条会被画成永远 0%，不如不画 */
   unlimited?: boolean
+  /**
+   * 用满不算问题。永久免费额度就是拿来用满的——2 / 2 台 AMD 微型实例
+   * 画成一条红色的「已满」，会让人以为出了事。只有超出才标红。
+   */
+  fullOk?: boolean
 }>()
 
-const tone = computed(() => usageTone(props.used, props.limit))
-const width = computed(() => pct(props.used, props.limit) + '%')
+const tone = computed(() =>
+  props.fullOk && props.used <= props.limit ? 'var(--accent)' : usageTone(props.used, props.limit))
+
+/** 首帧宽度为 0，下一帧再给真实宽度，让进度条从左边长出来而不是直接跳到位。 */
+const grown = ref(false)
+onMounted(() => requestAnimationFrame(() => { grown.value = true }))
+const width = computed(() => (grown.value ? pct(props.used, props.limit) : 0) + '%')
 const full = computed(() => props.limit > 0 && props.used === props.limit)
 /**
  * 超出多少。「已满」只适合恰好用满；用量超过上限时（升级号超出免费额度、
@@ -34,7 +44,7 @@ const over = computed(() =>
     </template>
     <template v-else>
       <span class="meter__track"><span class="meter__fill" :style="{ width }" /></span>
-      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="over"> 超出 {{ over }}</template><template v-else-if="full"> 已满</template></span>
+      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="over"> 超出 {{ over }}</template><template v-else-if="full">{{ fullOk ? ' 用满' : ' 已满' }}</template></span>
     </template>
   </div>
 </template>

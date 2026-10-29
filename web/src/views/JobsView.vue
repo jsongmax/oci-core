@@ -32,7 +32,7 @@ const STATUS_TONE: Record<JobStatus, string> = {
 }
 const KIND_ICON: Record<string, string> = {
   'instance.launch': '＋', 'instance.change_ip': '⇄', 'instance.reshape': '⇕',
-  'instance.terminate': '✕', 'instance.enable_ipv6': '⁶', 'instance.attach_vnic': '⌁',
+  'instance.terminate': '✕', 'instance.enable_ipv6': '⁶', 'instance.remove_ipv6': '⁶', 'instance.attach_vnic': '⌁',
   'instance.detach_vnic': '⌁', 'instance.bulk': '▤', 'instance.sync': '↻',
   'network.ensure': '⌗', 'storage.boot_volume': '◱', 'storage.volume': '◱'
 }

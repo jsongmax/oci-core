@@ -921,7 +921,11 @@ export interface AccountResourcesDTO {
   /** 按所选区域的资源清单算出的用量 */
   usage: { armOcpus: number; armMemoryGb: number; microInstances: number; storageGb: number }
   /** 永久免费参考额度与核对日期 */
-  freeTier: { armOcpus: number; armMemoryGb: number; microInstances: number; storageGb: number; checkedAt: string }
+  freeTier: {
+    /** free 免费号 / paid 升级号（ARM 4/24）/ unknown 未识别（按免费号对照） */
+    tier: 'free' | 'paid' | 'unknown'
+    armOcpus: number; armMemoryGb: number; microInstances: number; storageGb: number; checkedAt: string
+  }
   /** Oracle 给这个账号的真实限额（主区域） */
   quota: AccountQuotaDTO
   errors?: { region: string; part: string; error: string }[]

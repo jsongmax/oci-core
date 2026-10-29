@@ -90,8 +90,48 @@ function ipv6Items(ipv6: string[] | null | undefined): KvItem[] {
   if (!ipv6?.length) return [{ k: 'IPv6', v: '未启用', tone: 'var(--text-secondary)' }]
   return ipv6.map((ip, n) => ({
     k: ipv6.length > 1 ? `IPv6 #${n + 1}` : 'IPv6',
-    v: ip, mono: true, copyable: true, secret: 'ip' as const
+    v: ip, mono: true, copyable: true, secret: 'ip' as const,
+    action: {
+      label: removingIpv6.value === ip ? '移除中…' : '移除', tone: 'warning' as const,
+      disabled: locked.value || !!removingIpv6.value, onClick: () => removeIpv6(ip)
+    }
   }))
+}
+
+/* ---------- 移除 IPv6 ---------- */
+
+/** 正在移除的地址；同一时刻只允许一个，任务在实例上本来也是串行的。 */
+const removingIpv6 = ref('')
+
+/** 与「开启 IPv6」对称：删掉的地址不可找回，用它的连接会断。确认框里的地址按隐私模式打码。 */
+function removeIpv6(address: string) {
+  const i = inst.value
+  if (!i) return
+  const shown = state.privacyMode ? mask(address, 'ip') : address
+  ask({
+    level: 2,
+    title: `移除 ${i.name} 的 IPv6`,
+    body: `删除 ${shown} 后这个地址不可找回，正在用它的连接会中断，指向它的 DNS 记录需要手动更新。` +
+      '子网与 VCN 的 IPv6 前缀保持不变，之后可以再开启。',
+    okLabel: '移除 IPv6',
+    onConfirm: async () => {
+      removingIpv6.value = address
+      try {
+        const { job } = await instancesApi.removeIpv6(i.id, address)
+        const id = i.id
+        trackJob(job, {
+          onSuccess: done => {
+            toast({ tone: 'success', title: done.summary || '已移除 IPv6' })
+            if (props.id === id) void loadDetail()
+          }
+        })
+      } catch (err) {
+        toastError('移除 IPv6 失败', err)
+      } finally {
+        removingIpv6.value = ''
+      }
+    }
+  })
 }
 
 /** 一张网卡的地址与所在网络。主网卡与附属网卡共用，保持两边的行一致。 */
