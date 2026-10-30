@@ -11,6 +11,9 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](#docker-部署)
+[![Demo](https://img.shields.io/badge/在线演示-模拟数据-22d3ee)](https://jsongmax.github.io/oci-core/)
+
+**[在线演示 →](https://jsongmax.github.io/oci-core/)** 全部为模拟数据，不连接任何 Oracle 账号，可以随便点
 
 简体中文 · [English](README.en.md)
 
@@ -78,75 +81,51 @@
 
 ## 界面
 
-### 实例
+截图均来自[在线演示](https://jsongmax.github.io/oci-core/)，数据为模拟。点击图片看原图，点标题展开其余分组；想看完整交互，直接去演示站点一点。
 
-跨账号聚合列表。左侧色条与短代号标出这台机器属于哪个账号，状态、规格、引导卷、
-备注、运行时长一行看全。哪些列显示可以自己选——下图正开着列选择器，公网 IP 已关掉。
+<details open>
+<summary><b>实例</b> · 列表 · 创建 · 详情 · 后台任务</summary>
+<br>
 
-<img src="docs/screenshots/instances.png" alt="实例列表" width="100%">
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instances.png"><img src="docs/screenshots/instances.png" alt="实例列表"></a><br><b>实例列表</b> · 跨账号聚合，色条与代号标出归属；列可显隐、可拖宽，公网 IP 一键显隐</td><td width="50%" valign="top"><a href="docs/screenshots/create-instance.png"><img src="docs/screenshots/create-instance.png" alt="创建向导"></a><br><b>创建向导</b> · 免费预设之外可选该可用域的全部规格，镜像按架构过滤</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-network.png"><img src="docs/screenshots/instance-network.png" alt="网络"></a><br><b>网络</b> · 主网卡与附属网卡并列；更换公网 IP、增删 IPv6、添加 / 分离附属网卡</td><td width="50%" valign="top"><a href="docs/screenshots/instance-storage.png"><img src="docs/screenshots/instance-storage.png" alt="存储与配置"></a><br><b>存储与配置</b> · 引导卷扩容与 VPU 用滑块调，改配置时 OCPU 与内存联动</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-rescue.png"><img src="docs/screenshots/instance-rescue.png" alt="救援模式"></a><br><b>救援模式</b> · 把起不来的系统盘挂到另一台机器上改文件，再挂回去</td><td width="50%" valign="top"><a href="docs/screenshots/instance-metrics.png"><img src="docs/screenshots/instance-metrics.png" alt="监控"></a><br><b>监控</b> · CPU / 内存曲线与本月出入站流量，粒度随跨度自适应</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-console.png"><img src="docs/screenshots/instance-console.png" alt="串行控制台"></a><br><b>串行控制台</b> · SSH 连不上时排障；只接受 RSA 公钥，不代管私钥</td><td width="50%" valign="top"><a href="docs/screenshots/jobs.png"><img src="docs/screenshots/jobs.png" alt="后台任务"></a><br><b>后台任务</b> · 创建、换 IP、改配置等长耗时操作在后台跑，关掉页面也会跑完</td></tr>
+</table>
 
-### 实例详情
+</details>
 
-点开任意一台机器，右侧抽屉里是它的全部操作面。
+<details>
+<summary><b>账号与资源</b> · 账号 · 资源盘点 · 网络 · 账单</summary>
+<br>
 
-**存储** —— 引导卷扩容与 VPU 调整都是滑块，旁边实时算出预估 IOPS 和吞吐。
-改配置时 OCPU 与内存联动，并直说 Oracle 会在应用变更时重启实例一次——
-这句话不该等到点下去之后才出现。
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/accounts.png"><img src="docs/screenshots/accounts.png" alt="账号"></a><br><b>账号</b> · 连通性、试用倒计时、开户天数与 ARM 配额一屏看全</td><td width="50%" valign="top"><a href="docs/screenshots/resources.png"><img src="docs/screenshots/resources.png" alt="资源盘点"></a><br><b>资源盘点</b> · 按账号对照免费额度，单列未挂载的卷、未绑定的保留 IP 并可直接清理</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/network.png"><img src="docs/screenshots/network.png" alt="安全规则"></a><br><b>安全规则</b> · 常用规则一键追加，「全部放行」单独警示</td><td width="50%" valign="top"><a href="docs/screenshots/billing.png"><img src="docs/screenshots/billing.png" alt="账单"></a><br><b>账单</b> · 本月与上月费用、按服务与计费项分解；免费号改看用量</td></tr>
+</table>
 
-<img src="docs/screenshots/instance-storage.png" alt="实例详情 · 存储与配置" width="100%">
+</details>
 
-**救援模式** —— 机器起不来时把系统盘卸下来，挂到另一台能 SSH 的机器上改文件，
-再挂回去。补 SSH 公钥、修坏掉的 fstab 都靠它。
+<details>
+<summary><b>容量与守候</b> · 容量监控 · 容量守候</summary>
+<br>
 
-<img src="docs/screenshots/instance-rescue.png" alt="实例详情 · 救援模式" width="100%">
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/capacity.png"><img src="docs/screenshots/capacity.png" alt="容量监控"></a><br><b>容量监控</b> · 调 Oracle 只读的容量报告，看某规格在各可用域有没有货</td><td width="50%" valign="top"><a href="docs/screenshots/hunt.png"><img src="docs/screenshots/hunt.png" alt="容量守候"></a><br><b>容量守候</b> · 反复尝试创建直到成功，默认先查容量，没货就不发创建请求</td></tr>
+</table>
 
-**监控** —— 出入站流量与 CPU 使用率，粒度随时间跨度自适应。
+</details>
 
-<img src="docs/screenshots/instance-metrics.png" alt="实例详情 · 监控" width="100%">
+<details>
+<summary><b>设置</b> · 操作策略 · 两步验证 · 审计</summary>
+<br>
 
-**串行控制台** —— 不依赖网络配置，SSH 连不上时用它排障。这里明说了两件容易踩的事：
-Oracle 只接受 RSA 公钥（不支持 ed25519），以及本工具不会代管你的私钥。
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="设置"></a><br><b>设置</b> · 危险操作策略、两步验证、审计日志与保留期限</td><td width="50%"></td></tr>
+</table>
 
-<img src="docs/screenshots/instance-console.png" alt="实例详情 · 串行控制台" width="100%">
-
-### 容量监控
-
-调 Oracle 官方的只读容量报告接口，查某个规格在各可用域此刻有没有货。
-不创建任何资源、不消耗配额，可以放心随时查。
-
-<img src="docs/screenshots/capacity.png" alt="容量监控" width="100%">
-
-### 容量守候
-
-后台反复尝试创建实例，直到成功或到期。页面顶部直说风险：间隔硬下限 30 秒不可放开、
-每个账号只允许一个任务。任务跑起来后会显示已尝试次数、当前轮到哪个可用域、
-上次失败的原因和下次尝试的倒计时——任务在后台无人看管地跑，这些不显示它就是个黑盒。
-
-<img src="docs/screenshots/hunt.png" alt="容量守候" width="100%">
-
-### 账单
-
-各账号本月与上月的费用、日趋势、按服务与区域的分解。数据来自 Oracle 的 Usage API，
-只读，查询本身不产生费用。
-
-这一页处理的核心现实是：本工具的用户大多是免费额度账号，金额恒为零。
-一屏 `0.00` 和「功能坏了」长得一模一样，所以金额为零时页面转而展示**用量**——
-用了多少 OCPU 小时、多少 GB 月，那才是免费号该盯的数字。
-
-「免费额度内」与「缺查询权限」是两个独立状态，不能合并：前者是「确实没花钱」，
-后者是「不知道花没花钱」，含义正好相反。缺权限时直接给出可照抄的策略，
-而不是一句「查询失败」——那条策略是唯一要做的事。
-
-跨账号合计按币种分开，不给单一总数；查不到的账号不计入合计，
-把它们算成 0 会让总数看着像「这几个账号没花钱」。
-
-<img src="docs/screenshots/billing.png" alt="账单" width="100%">
-
-### 通知与设置
-
-| 通知渠道 | 操作策略 |
-|---|---|
-| <img src="docs/screenshots/notify.png" alt="通知渠道"> | <img src="docs/screenshots/settings.png" alt="设置"> |
+</details>
 
 ---
 
@@ -326,6 +305,19 @@ cd web && npm install && npm run dev
 ```bash
 OCICORE_STATIC_DIR=./internal/web/dist go run ./cmd/server
 ```
+
+### 演示站
+
+[在线演示](https://jsongmax.github.io/oci-core/)是前端的一个特殊构建：不需要后端，所有接口由
+`web/src/demo/server.ts` 在浏览器里模拟，数据全是编的（IP 用文档保留段）。
+每次打 `v*` tag 时由 `.github/workflows/pages.yml` 构建并部署到 GitHub Pages。
+
+```bash
+cd web && npm run build:demo   # 产物在 web/dist-demo
+```
+
+正常构建（`npm run build`）会把演示代码整个摇掉，发版的二进制与镜像里没有它。
+新增接口时记得在 `server.ts` 里补一个模拟实现，否则演示站上会提示「不支持」。
 
 ### 构建单二进制
 

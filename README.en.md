@@ -12,6 +12,9 @@ so you stop switching tenants and regions in the official console.
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](#docker-deployment)
+[![Demo](https://img.shields.io/badge/Live_demo-mock_data-22d3ee)](https://jsongmax.github.io/oci-core/)
+
+**[Live demo →](https://jsongmax.github.io/oci-core/)** All data is simulated and no Oracle account is connected — click around freely
 
 [简体中文](README.md) · English
 
@@ -80,87 +83,51 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 
 ## Screenshots
 
-### Instances
+All screenshots are from the [live demo](https://jsongmax.github.io/oci-core/) with simulated data. Click an image for full size and a heading to expand a group — or just go click around in the demo.
 
-One aggregated list across every account. The colored bar and short code on the left
-identify which account an instance belongs to; state, shape, boot volume, notes and
-uptime all read in a single row. You choose which columns to show — the column picker
-is open in the shot below, with the public IP column switched off.
+<details open>
+<summary><b>Instances</b> · list · launch · detail · background jobs</summary>
+<br>
 
-<img src="docs/screenshots/instances.png" alt="Instance list" width="100%">
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instances.png"><img src="docs/screenshots/instances.png" alt="Instance list"></a><br><b>Instance list</b> · Aggregated across accounts with per-account color bars; columns can be hidden and resized, public IPs revealed in one click</td><td width="50%" valign="top"><a href="docs/screenshots/create-instance.png"><img src="docs/screenshots/create-instance.png" alt="Launch wizard"></a><br><b>Launch wizard</b> · Free-tier presets plus every shape in the AD; images filtered by architecture</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-network.png"><img src="docs/screenshots/instance-network.png" alt="Networking"></a><br><b>Networking</b> · Primary and secondary VNICs side by side; change public IP, add / remove IPv6, attach / detach VNICs</td><td width="50%" valign="top"><a href="docs/screenshots/instance-storage.png"><img src="docs/screenshots/instance-storage.png" alt="Storage & reshape"></a><br><b>Storage & reshape</b> · Boot volume size and VPU sliders; OCPU and memory linked when reshaping</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-rescue.png"><img src="docs/screenshots/instance-rescue.png" alt="Rescue mode"></a><br><b>Rescue mode</b> · Mount a broken boot volume on another instance, fix files, attach it back</td><td width="50%" valign="top"><a href="docs/screenshots/instance-metrics.png"><img src="docs/screenshots/instance-metrics.png" alt="Metrics"></a><br><b>Metrics</b> · CPU / memory charts and this month's traffic, resolution adapts to the time range</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-console.png"><img src="docs/screenshots/instance-console.png" alt="Serial console"></a><br><b>Serial console</b> · Troubleshoot when SSH is down; RSA keys only, your private key never leaves you</td><td width="50%" valign="top"><a href="docs/screenshots/jobs.png"><img src="docs/screenshots/jobs.png" alt="Background jobs"></a><br><b>Background jobs</b> · Launch, IP change, reshape and other long operations keep running after you close the page</td></tr>
+</table>
 
-### Instance detail
+</details>
 
-Open any instance and the right-hand drawer holds everything you can do to it.
+<details>
+<summary><b>Accounts & resources</b> · accounts · inventory · networking · billing</summary>
+<br>
 
-**Storage** — boot volume resize and VPU tuning are sliders with live estimates of IOPS
-and throughput. Reshaping links OCPU and memory, and states plainly that Oracle will
-restart the instance once when the change is applied — that sentence should not wait
-until after you click.
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/accounts.png"><img src="docs/screenshots/accounts.png" alt="Accounts"></a><br><b>Accounts</b> · Connectivity, trial countdown, account age and ARM quota at a glance</td><td width="50%" valign="top"><a href="docs/screenshots/resources.png"><img src="docs/screenshots/resources.png" alt="Resource inventory"></a><br><b>Resource inventory</b> · Per-account usage vs. Always Free; unattached volumes and unassigned reserved IPs listed and cleanable</td></tr>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/network.png"><img src="docs/screenshots/network.png" alt="Security rules"></a><br><b>Security rules</b> · Common rules in one click; "allow all" is flagged separately</td><td width="50%" valign="top"><a href="docs/screenshots/billing.png"><img src="docs/screenshots/billing.png" alt="Billing"></a><br><b>Billing</b> · This and last month's cost, by service and SKU; free accounts show usage instead</td></tr>
+</table>
 
-<img src="docs/screenshots/instance-storage.png" alt="Instance detail — storage and reshape" width="100%">
+</details>
 
-**Rescue mode** — when a machine will not boot, detach its boot volume, mount it on
-another instance you can still SSH into, fix the files, and attach it back. This is how
-you restore a lost SSH key or repair a broken fstab.
+<details>
+<summary><b>Capacity</b> · capacity monitor · capacity hunter</summary>
+<br>
 
-<img src="docs/screenshots/instance-rescue.png" alt="Instance detail — rescue mode" width="100%">
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/capacity.png"><img src="docs/screenshots/capacity.png" alt="Capacity monitor"></a><br><b>Capacity monitor</b> · Oracle's read-only capacity report: is a shape available in each AD right now</td><td width="50%" valign="top"><a href="docs/screenshots/hunt.png"><img src="docs/screenshots/hunt.png" alt="Capacity hunter"></a><br><b>Capacity hunter</b> · Retries launches until it succeeds; checks capacity first and skips the launch when there is none</td></tr>
+</table>
 
-**Metrics** — inbound and outbound traffic plus CPU utilization, with resolution that
-adapts to the selected time span.
+</details>
 
-<img src="docs/screenshots/instance-metrics.png" alt="Instance detail — metrics" width="100%">
+<details>
+<summary><b>Settings</b> · policies · two-factor auth · audit</summary>
+<br>
 
-**Serial console** — independent of network configuration, for when SSH will not connect.
-Two easily-missed facts are stated up front: Oracle accepts RSA keys only (not ed25519),
-and this tool never holds your private key.
+<table>
+<tr><td width="50%" valign="top"><a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings"></a><br><b>Settings</b> · Dangerous-operation policies, two-factor auth, audit log and retention</td><td width="50%"></td></tr>
+</table>
 
-<img src="docs/screenshots/instance-console.png" alt="Instance detail — serial console" width="100%">
-
-### Capacity monitor
-
-Queries Oracle's official read-only capacity report to see whether a shape has capacity
-in each availability domain right now. It creates nothing and consumes no quota, so you
-can run it whenever you like.
-
-<img src="docs/screenshots/capacity.png" alt="Capacity monitor" width="100%">
-
-### Capacity hunter
-
-Retries launching an instance in the background until it succeeds or expires. The page
-states the risks up front: a hard 30-second floor on the interval that cannot be raised,
-and one task per account. Running tasks show attempt count, the availability domain
-currently in rotation, why the last attempt failed, and a countdown to the next one —
-the task runs unattended, and without those numbers it is a black box.
-
-<img src="docs/screenshots/hunt.png" alt="Capacity hunter" width="100%">
-
-### Billing
-
-Per-account cost for this month and last, a daily trend, and a breakdown by service and
-region. Data comes from Oracle's Usage API — read-only; the query itself costs nothing.
-
-The reality this page is built around: most users of this tool run free-tier accounts where
-the amount is permanently zero. A screen full of `0.00` looks exactly like a broken feature,
-so when the cost is zero the page shows **consumption** instead — OCPU hours, GB months.
-That is the number a free-tier user should actually be watching.
-
-"Within free tier" and "permission missing" are separate states and must stay that way: the
-first means "nothing was spent", the second means "we cannot tell whether anything was
-spent". When the permission is missing the page hands you the exact policy to copy rather
-than a generic "query failed" — that policy is the only thing you need to do.
-
-Cross-account totals are grouped by currency rather than summed into one number, and
-accounts that could not be read are excluded from the total — counting them as 0 would make
-the total look like "these accounts spent nothing".
-
-<img src="docs/screenshots/billing.png" alt="Billing" width="100%">
-
-### Notifications and settings
-
-| Notification channels | Operation policy |
-|---|---|
-| <img src="docs/screenshots/notify.png" alt="Notification channels"> | <img src="docs/screenshots/settings.png" alt="Settings"> |
+</details>
 
 ---
 
@@ -345,6 +312,21 @@ don't require rebuilding Go:
 ```bash
 OCICORE_STATIC_DIR=./internal/web/dist go run ./cmd/server
 ```
+
+### Demo site
+
+The [live demo](https://jsongmax.github.io/oci-core/) is a special frontend build with no backend: every API call is
+simulated in the browser by `web/src/demo/server.ts`, and all data is made up (IPs come from
+documentation ranges). It is built and deployed to GitHub Pages by
+`.github/workflows/pages.yml` on every `v*` tag.
+
+```bash
+cd web && npm run build:demo   # output in web/dist-demo
+```
+
+The regular build (`npm run build`) tree-shakes the demo code away entirely, so release
+binaries and images never contain it. When adding an API endpoint, add a mock for it in
+`server.ts`, otherwise the demo will report it as unsupported.
 
 ### Building a single binary
 
