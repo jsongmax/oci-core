@@ -143,9 +143,11 @@ const alerts = computed<Alert[]>(() => {
     detail: `${a.code} · ${accountStatusText(a)}`,
     go: () => openDrawer({ kind: 'account', id: a.id, tab: '概览' })
   }))
+  // anomaly 只表示「实例上记着一条最近操作失败的原因」，与它此刻是什么状态无关。
+  // 以前这里一律写「意外进入 STOPPED」，一台软重启超时、其实还在跑的机器也会被说成停了。
   shownInstances.value.filter(i => i.anomaly).forEach(i => out.push({
-    code: 'STOP', severity: '异常', accountId: i.accountId,
-    text: `${i.name} 意外进入 STOPPED，非用户操作`, detail: i.region,
+    code: 'FAIL', severity: '异常', accountId: i.accountId,
+    text: `${i.name} 上次操作失败${i.lastError ? '：' + i.lastError : ''}`, detail: i.region,
     go: () => openDrawer({ kind: 'instance', id: i.id, tab: '操作记录' })
   }))
   shownAccounts.value.filter(a => a.quota.memUsed / a.quota.memLimit >= 0.9).forEach(a => out.push({

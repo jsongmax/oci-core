@@ -1,1 +1,0 @@
-import{d as s,c as n,b as o,a as t,m as r,_ as c}from"./index-DD5LiPWf.js";const i=s({__name:"LoadingBar",props:{active:{type:Boolean}},setup(e){return(l,a)=>(r(),n("div",{class:o(["lbar",{"is-on":e.active}]),"aria-hidden":"true"},[...a[0]||(a[0]=[t("span",null,null,-1)])],2))}}),p=c(i,[["__scopeId","data-v-d3f37eab"]]);export{p as L};
