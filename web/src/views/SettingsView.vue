@@ -235,6 +235,11 @@ function exportCsv() {
     return
   }
   // 同源、带 Cookie 的普通下载，交给浏览器处理。BOM 与转义都在后端做了。
+  // 演示站没有后端，导出不了文件。
+  if (import.meta.env.VITE_DEMO === 'true') {
+    toast({ tone: 'info', title: '演示站不支持导出', body: '部署自己的实例后即可导出完整的 CSV。' })
+    return
+  }
   window.location.href = '/api/audit/export'
 }
 

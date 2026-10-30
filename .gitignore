@@ -24,3 +24,6 @@
 .idea/
 *.swp
 .DS_Store
+
+# 演示站构建产物（GitHub Pages 由 CI 构建，不进版本库）
+/web/dist-demo/

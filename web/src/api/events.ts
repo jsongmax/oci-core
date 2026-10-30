@@ -45,6 +45,14 @@ const ALL_TYPES: ServerEventType[] = [
  * 每个页面各连一条很容易撞上浏览器的并发连接上限。
  */
 export function connectEvents(handlers: EventHandlers): () => void {
+  // 演示站：事件来自浏览器里的模拟后端，见 @/demo/server。
+  if (import.meta.env.VITE_DEMO === 'true') {
+    let stop = () => {}
+    let closed = false
+    void import('@/demo/server').then(m => { if (!closed) stop = m.demoConnect(handlers) })
+    return () => { closed = true; stop() }
+  }
+
   let source: EventSource | null = null
   let opened = false
   let closed = false

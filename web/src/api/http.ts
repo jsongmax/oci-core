@@ -117,6 +117,13 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
 }
 
 async function send<T>(method: Method, path: string, opts: RequestOptions, dangerCode?: string): Promise<T> {
+  // 演示站（GitHub Pages）没有后端，所有请求交给浏览器里的模拟实现。
+  // VITE_DEMO 在构建时就被替换成常量，正常构建里这个分支连同 demo 模块一起被摇掉。
+  if (import.meta.env.VITE_DEMO === 'true') {
+    const { demoSend } = await import('@/demo/server')
+    return demoSend<T>(method, path, opts.query, opts.body)
+  }
+
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (dangerCode) headers[DANGER_CODE_HEADER] = dangerCode
 
