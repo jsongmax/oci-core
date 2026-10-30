@@ -1,0 +1,65 @@
+# 打 tag 时把演示站部署到 GitHub Pages。
+#
+# 演示站是前端的一个特殊构建（npm run build:demo，VITE_DEMO=true）：不连后端，
+# 所有接口由 web/src/demo/server.ts 在浏览器里模拟，数据全是编的。
+# 正常构建会把 demo 代码整个摇掉，发版的二进制与镜像里没有它。
+#
+# 与 Release、Docker 并列，各跑各的：演示站部署失败不该挡住发版，反之亦然。
+# 也可以在 Actions 页面手动触发（workflow_dispatch），用于单独重新部署。
+#
+# 第一次使用前要在仓库 Settings → Pages 把 Source 设成 GitHub Actions。
+name: Pages
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只部署一次；新的一次进来时不取消正在进行的，避免站点停在半截。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建演示站
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        working-directory: web
+        run: npm ci
+
+      # 版本号显示在演示站的设置 → 关于里。手动触发时没有 tag，退回提交短哈希。
+      - name: 构建
+        working-directory: web
+        env:
+          VITE_APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: npm run build:demo
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist-demo
+
+  deploy:
+    name: 部署
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
