@@ -137,9 +137,9 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
           <span class="mono t-xs">{{ i.name }}</span>
           <AccountChip :account="accountById(i.accountId)" />
           <span class="mono t-xs dim">{{ i.region }}</span>
-          <span class="mono t-xs">{{ i.bootGb }} GB</span>
-          <span class="mono t-xs dim">VPU {{ i.vpu }}</span>
-          <span class="mono t-xs dim">{{ iopsHint(i.vpu) }}</span>
+          <span class="mono t-xs">{{ i.bootGb > 0 ? `${i.bootGb} GB` : '—' }}</span>
+          <span class="mono t-xs dim">{{ i.bootGb > 0 ? `VPU ${i.vpu}` : '—' }}</span>
+          <span class="mono t-xs dim">{{ i.bootGb > 0 ? iopsHint(i.vpu) : '—' }}</span>
           <button class="btn btn--sm" @click="openDrawer({ kind: 'instance', id: i.id, tab: '存储' })">
             管理
           </button>

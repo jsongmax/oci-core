@@ -666,10 +666,21 @@ function applyEvent(event: ServerEvent): void {
         announceSettled(inst, previous, next)
         // 落定时公网 IP 等字段可能变了，补一次全量。
         void refreshInstances()
+      } else if (previous === next) {
+        // 状态没变却有事件：后端刚补完缓存（公网 IP、引导卷容量、改名等）。
+        // 落定那一刻的全量往往抢在这些写入之前，不再读一次页面就一直是旧值。
+        refreshInstancesSoon()
       }
       break
     }
   }
+}
+
+let refreshSoonTimer = 0
+/** 防抖：落定后后端会连着发几条事件，合并成一次读取。 */
+function refreshInstancesSoon(): void {
+  window.clearTimeout(refreshSoonTimer)
+  refreshSoonTimer = window.setTimeout(() => void refreshInstances(), 300)
 }
 
 function announceSettled(inst: Instance, from: LifecycleState, to: LifecycleState): void {

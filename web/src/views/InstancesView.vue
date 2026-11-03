@@ -456,8 +456,12 @@ const bootTone = (i: Instance) =>
             </span>
 
             <span v-if="cols.has('boot')" class="cell cell--boot" :style="{ order: cols.pos('boot') }">
-              <span class="mono t-xs" :style="{ color: bootTone(i) }">{{ i.bootGb }} GB</span>
-              <span class="mono t-2xs dim-3">VPU {{ i.vpu }}</span>
+              <!-- 0 表示还没查到（实例刚创建），不是真的 0 GB -->
+              <template v-if="i.bootGb > 0">
+                <span class="mono t-xs" :style="{ color: bootTone(i) }">{{ i.bootGb }} GB</span>
+                <span class="mono t-2xs dim-3">VPU {{ i.vpu }}</span>
+              </template>
+              <span v-else class="mono t-xs dim-3" title="引导卷信息读取中">—</span>
             </span>
 
             <span v-if="cols.has('note')" class="cell col-note" :style="{ order: cols.pos('note') }">
