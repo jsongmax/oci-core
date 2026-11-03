@@ -202,6 +202,49 @@ jobs:
           sha256sum *.tar.gz *.zip > checksums.txt
           cat checksums.txt
 
+      # 发布说明 = tag 的注解（这个版本改了什么）+ 固定的安装说明。
+      # 更新内容放最前面：关注者首页的动态只显示开头几行，以前那里每个版本都是
+      # 同一段安装说明，看不出这次更新了什么。
+      #
+      # 走 API 而不是 git：actions/checkout 在 tag 触发时把标签当轻量引用拉下来，
+      # 注解会丢。读不到注解（比如轻量标签）就只是少一节，不挡发版。
+      - name: 生成发布说明
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          api="repos/$GITHUB_REPOSITORY/git"
+          notes=""
+          if [ "$(gh api "$api/ref/tags/$GITHUB_REF_NAME" --jq .object.type)" = "tag" ]; then
+            sha=$(gh api "$api/ref/tags/$GITHUB_REF_NAME" --jq .object.sha)
+            # 第一行是版本号本身，发布标题里已经有了；再去掉紧随其后的空行。
+            notes=$(gh api "$api/tags/$sha" --jq .message | tail -n +2 | sed '/./,$!d')
+          fi
+          {
+            if [ -n "$notes" ]; then
+              printf '## 更新内容\n\n%s\n\n' "$notes"
+            fi
+            cat <<'INSTALL'
+          ## 安装
+
+          下载对应平台的压缩包，解开后直接运行：
+
+          ```bash
+          ./ocicore
+          ```
+
+          默认监听 `127.0.0.1:8080`，数据写入 `./data/`，首次启动自动生成主密钥。
+
+          > **这个面板持有你所有 Oracle 租户的完整控制权。**
+          > 不要直接暴露到公网，部署前请读 README 的「安全须知」。
+
+          Docker 部署见 README。校验和在 `checksums.txt`。
+
+          想先看看长什么样：[在线演示](https://jsongmax.github.io/oci-core/)（模拟数据）。
+          INSTALL
+          } > release-notes.md
+          cat release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -209,18 +252,4 @@ jobs:
             artifacts/*.zip
             artifacts/checksums.txt
           generate_release_notes: true
-          body: |
-            ## 安装
-
-            下载对应平台的压缩包，解开后直接运行：
-
-            ```bash
-            ./ocicore
-            ```
-
-            默认监听 `127.0.0.1:8080`，数据写入 `./data/`，首次启动自动生成主密钥。
-
-            > **这个面板持有你所有 Oracle 租户的完整控制权。**
-            > 不要直接暴露到公网，部署前请读 README 的「安全须知」。
-
-            Docker 部署见 README。校验和在 `checksums.txt`。
+          body_path: release-notes.md
