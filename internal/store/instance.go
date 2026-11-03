@@ -99,8 +99,13 @@ func (s *Store) UpsertInstance(ctx context.Context, in Instance) error {
 			public_ip=excluded.public_ip, private_ip=excluded.private_ip, ipv6=excluded.ipv6,
 			secondary_ipv4=excluded.secondary_ipv4, secondary_ipv6=excluded.secondary_ipv6,
 			vnic_id=excluded.vnic_id, subnet_id=excluded.subnet_id,
-			boot_volume_id=excluded.boot_volume_id, boot_volume_gb=excluded.boot_volume_gb,
-			boot_volume_vpus=excluded.boot_volume_vpus,
+			boot_volume_id=excluded.boot_volume_id,
+			-- 同一块卷传来容量 0，说明这次没查到卷详情（挂载关系查到了、卷列表查失败），
+			-- 不是卷变成了 0 GB，保留已知的值。VPU 可以合法为 0，所以跟着容量一起判断。
+			boot_volume_gb = CASE WHEN excluded.boot_volume_gb = 0 AND excluded.boot_volume_id = instances.boot_volume_id
+				THEN instances.boot_volume_gb ELSE excluded.boot_volume_gb END,
+			boot_volume_vpus = CASE WHEN excluded.boot_volume_gb = 0 AND excluded.boot_volume_id = instances.boot_volume_id
+				THEN instances.boot_volume_vpus ELSE excluded.boot_volume_vpus END,
 			time_created=excluded.time_created, synced_at=excluded.synced_at,
 			-- 只在"观测到状态跃迁进 RUNNING"时打点。首次见到就已经在跑的实例
 			-- 保持 NULL：那种情况我们并不知道它是什么时候开的机，猜一个值

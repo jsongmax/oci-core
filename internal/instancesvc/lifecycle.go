@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	// bootVolumeAttempts 是实例落定后查引导卷的次数，每次间隔 watchInterval。
+	bootVolumeAttempts = 4
 	// watchInterval 是生命周期转换的轮询间隔。
 	// 转换通常要 30–90 秒，5 秒一次既能及时反馈又不至于打爆 API。
 	watchInterval = 5 * time.Second
@@ -288,6 +290,7 @@ func (s *Service) watchLoop(instanceID string) {
 			// 状态已落定。开机会分配新的公网 IP，需要补一次网络信息，
 			// 否则列表里的 IP 列会一直显示旧值。
 			s.refreshNetwork(ctx, cached, client)
+			s.refreshBootVolume(ctx, cached, client)
 
 			// 从 PROVISIONING 落到 RUNNING 才算"新实例就绪"——
 			// 这是用户真正在等的那一刻，也是唯一值得推送的实例事件。
@@ -340,6 +343,69 @@ func (s *Service) refreshNetwork(ctx context.Context, cached *store.Instance, cl
 		Type: EventInstanceUpdated, InstanceID: cached.ID,
 		AccountID: cached.AccountID, State: fresh.LifecycleState,
 	})
+}
+
+// findBootVolume 查实例当前挂着的引导卷。没有挂载中的引导卷时返回 nil, nil
+// （还没挂好，或救援模式下被分离了）。
+func findBootVolume(ctx context.Context, client *ociclient.Client,
+	region, compartmentID, availabilityDomain, instanceID string) (*ociclient.BootVolume, error) {
+
+	atts, err := client.ListBootVolumeAttachments(ctx, region, compartmentID, availabilityDomain, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, att := range atts {
+		if att.LifecycleState == "ATTACHED" {
+			return client.GetBootVolume(ctx, region, att.BootVolumeID)
+		}
+	}
+	return nil, nil
+}
+
+// refreshBootVolume 给还不知道容量的实例补上引导卷信息。
+//
+// 创建时写入缓存的那一行没有引导卷，以前要等下一轮全量同步才有，这期间列表上
+// 显示 0 GB。已经有容量的实例直接跳过：开关机不会改变引导卷，不必每次多发请求。
+// 实例刚落定时挂载关系可能还没就绪，所以重试几次。
+func (s *Service) refreshBootVolume(ctx context.Context, cached *store.Instance, client *ociclient.Client) {
+	if current, err := s.st.GetInstance(ctx, cached.ID); err != nil || current.BootVolumeGB > 0 {
+		return
+	}
+
+	for attempt := 0; attempt < bootVolumeAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(watchInterval):
+			}
+		}
+		vol, err := findBootVolume(ctx, client, cached.Region, cached.CompartmentID, cached.AvailabilityDomain, cached.ID)
+		if err != nil {
+			slog.Debug("读取引导卷失败", "instance", cached.ID, "err", err)
+			continue
+		}
+		if vol == nil {
+			continue
+		}
+		// 查询期间实例可能被改名、改状态，写回前重新读一次。
+		fresh, err := s.st.GetInstance(ctx, cached.ID)
+		if err != nil {
+			return
+		}
+		fresh.BootVolumeID = vol.ID
+		fresh.BootVolumeGB = vol.SizeInGBs
+		fresh.BootVolumeVpus = vol.VpusPerGB
+		if err := s.st.UpsertInstance(ctx, *fresh); err != nil {
+			slog.Warn("写入引导卷信息失败", "instance", cached.ID, "err", err)
+			return
+		}
+		s.bus.Publish(Event{
+			Type: EventInstanceUpdated, InstanceID: cached.ID,
+			AccountID: cached.AccountID, State: fresh.LifecycleState,
+		})
+		return
+	}
 }
 
 // notifyInstanceReady 推送"新实例已就绪"。

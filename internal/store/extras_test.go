@@ -449,3 +449,52 @@ func TestSetAccountIdentity(t *testing.T) {
 		t.Error("非空字段应当更新")
 	}
 }
+
+// 同步时挂载关系查到了、卷列表却查失败，会传来「同一块卷、容量 0」。
+// 那不是卷变成了 0 GB，不能把已知的容量和 VPU 冲掉；换了一块卷则要照常更新。
+func TestInstanceBootVolumeSurvivesMissingDetail(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	acc, err := st.CreateAccount(ctx, testAccount(t, "东京主号", "TYO", "tokyo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := Instance{
+		ID: "i-1", AccountID: acc.ID, Region: "ap-tokyo-1", DisplayName: "web", LifecycleState: "RUNNING",
+		BootVolumeID: "bv-1", BootVolumeGB: 100, BootVolumeVpus: 20, TimeCreated: time.Now(),
+	}
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+
+	row.BootVolumeGB, row.BootVolumeVpus = 0, 0
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, "i-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BootVolumeGB != 100 || got.BootVolumeVpus != 20 {
+		t.Errorf("同一块卷查不到详情时应保留原值，实际 %d GB / VPU %d", got.BootVolumeGB, got.BootVolumeVpus)
+	}
+
+	// VPU 合法地改成 0（低成本档）要能写进去。
+	row.BootVolumeGB, row.BootVolumeVpus = 100, 0
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetInstance(ctx, "i-1"); got.BootVolumeVpus != 0 {
+		t.Errorf("VPU 0 是合法值，应正常更新，实际 %d", got.BootVolumeVpus)
+	}
+
+	// 换了一块卷（救援模式挂回别的卷、或分离后 ID 变空）照常覆盖。
+	row.BootVolumeID, row.BootVolumeGB = "", 0
+	if err := st.UpsertInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetInstance(ctx, "i-1"); got.BootVolumeID != "" || got.BootVolumeGB != 0 {
+		t.Errorf("引导卷被分离后应清空，实际 %q / %d GB", got.BootVolumeID, got.BootVolumeGB)
+	}
+}
