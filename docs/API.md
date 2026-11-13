@@ -173,6 +173,7 @@ X-OCI-Tools: 1
 | PATCH | `/api/instances/{ocid}` | 改名 |
 | POST | `/api/instances/{ocid}/reshape` | 改配置（运行中会由 Oracle 重启一次） |
 | DELETE | `/api/instances/{ocid}?confirm={name}` | 终止，**需回传实例名** |
+| POST | `/api/instances/{ocid}/replace-boot-volume` | 用镜像替换引导卷（重装系统），**需回传实例名** |
 | POST | `/api/instances/{ocid}/dismiss-error` | 清除该行的错误提示 |
 | POST | `/api/instances/{ocid}/change-ip?confirm=true` | 更换公网 IP |
 | POST | `/api/instances/{ocid}/enable-ipv6` | 启用 IPv6 |
@@ -230,6 +231,10 @@ X-OCI-Tools: 1
 **`POST /api/instances/{ocid}/reshape`** — `{ "ocpus": 2, "memoryInGbs": 12, "baselineOcpuUtilization": "" }`
 
 不要求先关机：运行中的实例由 Oracle 重启一次来应用变更；处于过渡态时返回 409 `instance_busy`。通过后返回 202 与任务（`instance.reshape`），运行中的实例会一直等到重启落定。OCPU/内存搭配与突发基线按规格元数据实时校验（A1.Flex 每 OCPU 最多 6 GB）。`baselineOcpuUtilization` 留空表示不改突发设置，改回独占传 `BASELINE_1_1`。
+
+**`POST /api/instances/{ocid}/replace-boot-volume`** — `{ "imageId": "ocid1.image…", "bootVolumeGb": 100, "preserveBootVolume": true, "sshPublicKey": "", "cloudInit": "", "confirm": "实例名" }`
+
+对应 Oracle 的 Replace boot volume：实例、OCID 与 A1 容量保留，只换系统盘。L3 危险操作，`confirm` 必须等于实例名，否则返回 `confirm_required`；过渡态返回 409 `instance_busy`（卡在关机中的机器要先强制关机）。`bootVolumeGb` 为 0 时按镜像默认大小，非 0 时至少 50。`sshPublicKey` / `cloudInit` 留空则沿用实例原有元数据，非空时合并进去。`preserveBootVolume` 为 true 时旧盘保留并继续占用块存储额度。通过后返回 202 与任务（`instance.replace_boot_volume`），运行中的实例会一直等到重新开机，结束后以 Oracle 为准重读新引导卷。
 
 **`GET /api/instances/{ocid}/metrics`** — `?hours=6&metrics=CpuUtilization,NetworksBytesIn`
 

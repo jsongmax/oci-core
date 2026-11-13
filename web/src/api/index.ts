@@ -161,6 +161,17 @@ export const instances = {
     http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/reshape`,
       { ocpus, memoryInGbs, baselineOcpuUtilization }),
 
+  /** 用镜像替换引导卷（重装系统）。confirm 必须等于实例名。 */
+  replaceBootVolume: (id: string, body: {
+    imageId: string
+    bootVolumeGb?: number
+    preserveBootVolume: boolean
+    sshPublicKey?: string
+    cloudInit?: string
+    confirm: string
+  }) =>
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/replace-boot-volume`, body),
+
   /** 终止需回传实例名。preserveBootVolume 决定引导卷是否保留。 */
   terminate: (id: string, confirmName: string, preserveBootVolume = false) =>
     http.del<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}`, {

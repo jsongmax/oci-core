@@ -18,6 +18,7 @@ const (
 	jobChangeIP     = "instance.change_ip"
 	jobReshape      = "instance.reshape"
 	jobTerminate    = "instance.terminate"
+	jobReplaceBoot  = "instance.replace_boot_volume"
 	jobEnableIPv6   = "instance.enable_ipv6"
 	jobRemoveIPv6   = "instance.remove_ipv6"
 	jobAttachVnic   = "instance.attach_vnic"

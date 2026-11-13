@@ -209,6 +209,144 @@ func (s *Service) Reshape(ctx context.Context, instanceID string, req ReshapeReq
 	return s.st.GetInstance(ctx, instanceID)
 }
 
+// ReplaceBootVolumeRequest 是用镜像替换引导卷（重装系统）的请求。
+type ReplaceBootVolumeRequest struct {
+	ImageID string
+	// BootVolumeGB 为 0 时按镜像默认大小。
+	BootVolumeGB int64
+	// PreserveOld 为 true 时旧引导卷保留下来，仍占块存储配额。
+	PreserveOld bool
+	// SSHPublicKey / UserData 非空时写进实例元数据，新系统首次启动时 cloud-init 会读取。
+	// UserData 已经是 base64 编码。
+	SSHPublicKey string
+	UserData     string
+}
+
+// MinBootVolumeGB 是 Oracle 对引导卷的最小容量要求。
+const MinBootVolumeGB = 50
+
+// ReplaceBootVolume 用新镜像替换实例的引导卷，相当于重装系统。
+//
+// 这条路保留实例本身：OCID、公网 IP（临时 IP 一般不变）和 A1 宿主机上的容量
+// 都还在。终止再重建在 A1 紧张的区域里很可能就抢不回来了。
+//
+// 运行中和已关机的实例都可以换；过渡态不行——卡在「关机中」的机器得先强制关机。
+func (s *Service) ReplaceBootVolume(ctx context.Context, instanceID string, req ReplaceBootVolumeRequest) (*store.Instance, error) {
+	if strings.TrimSpace(req.ImageID) == "" {
+		return nil, errors.New("请选择镜像")
+	}
+	if req.BootVolumeGB != 0 && req.BootVolumeGB < MinBootVolumeGB {
+		return nil, fmt.Errorf("引导卷至少 %d GB", MinBootVolumeGB)
+	}
+
+	cached, err := s.st.GetInstance(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if ociclient.IsTransitionalState(cached.LifecycleState) {
+		return nil, fmt.Errorf("实例正在 %s，等状态落定后再替换引导卷", cached.LifecycleState)
+	}
+
+	client, _, err := s.conns.ForID(ctx, cached.AccountID)
+	if err != nil {
+		return nil, err
+	}
+
+	preserve := req.PreserveOld
+	update := ociclient.UpdateInstanceRequest{
+		SourceDetails: &ociclient.UpdateInstanceSourceDetails{
+			SourceType:                  ociclient.SourceTypeImage,
+			ImageID:                     req.ImageID,
+			BootVolumeSizeInGBs:         req.BootVolumeGB,
+			IsPreserveBootVolumeEnabled: &preserve,
+		},
+	}
+
+	// 元数据是整体替换的，必须在 Oracle 上现有的那份基础上改，
+	// 否则会把用户之前配的其它键一并抹掉。
+	sshKey := strings.TrimSpace(req.SSHPublicKey)
+	if sshKey != "" || req.UserData != "" {
+		live, err := client.GetInstance(ctx, cached.Region, instanceID)
+		if err != nil {
+			return nil, err
+		}
+		meta := make(map[string]string, len(live.Metadata)+2)
+		for k, v := range live.Metadata {
+			meta[k] = v
+		}
+		if sshKey != "" {
+			meta["ssh_authorized_keys"] = sshKey
+		}
+		if req.UserData != "" {
+			meta["user_data"] = req.UserData
+		}
+		update.Metadata = meta
+	}
+
+	updated, err := client.UpdateInstance(ctx, cached.Region, instanceID, update)
+	if err != nil {
+		s.recordFailure(ctx, instanceID, err)
+		return nil, err
+	}
+
+	_ = s.st.ClearInstanceError(ctx, instanceID)
+	// 旧盘的信息作废：清掉后落定时 refreshBootVolume 才会去查新盘。
+	// 换了 ID，UpsertInstance 里「同一块卷容量为 0 则保留旧值」的保护不会生效。
+	cached.ImageID = req.ImageID
+	cached.ImageOS = s.ImageOS(ctx, client, cached.Region, req.ImageID)
+	cached.BootVolumeID = ""
+	cached.BootVolumeGB = 0
+	cached.BootVolumeVpus = 0
+	if updated.LifecycleState != "" {
+		cached.LifecycleState = updated.LifecycleState
+	}
+	if err := s.st.UpsertInstance(ctx, *cached); err != nil {
+		return nil, err
+	}
+	s.bus.Publish(Event{
+		Type: EventInstanceUpdated, InstanceID: instanceID,
+		AccountID: cached.AccountID, State: cached.LifecycleState,
+	})
+	return s.st.GetInstance(ctx, instanceID)
+}
+
+// RefreshBootVolume 重新读取实例当前挂着的引导卷并写回缓存，不管缓存里是否已有值。
+//
+// 替换引导卷时实例中途会停在 STOPPED，那一刻轮询协程就会去补引导卷信息，
+// 可能读到还没换下来的旧盘。任务在实例最终落定后再调一次这里，以 Oracle 为准。
+func (s *Service) RefreshBootVolume(ctx context.Context, instanceID string) error {
+	cached, err := s.st.GetInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	client, _, err := s.conns.ForID(ctx, cached.AccountID)
+	if err != nil {
+		return err
+	}
+	vol, err := findBootVolume(ctx, client, cached.Region, cached.CompartmentID, cached.AvailabilityDomain, cached.ID)
+	if err != nil {
+		return err
+	}
+	if vol == nil {
+		return errors.New("没有找到挂载中的引导卷")
+	}
+	fresh, err := s.st.GetInstance(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	fresh.BootVolumeID = vol.ID
+	fresh.BootVolumeGB = vol.SizeInGBs
+	fresh.BootVolumeVpus = vol.VpusPerGB
+	if err := s.st.UpsertInstance(ctx, *fresh); err != nil {
+		return err
+	}
+	s.bus.Publish(Event{
+		Type: EventInstanceUpdated, InstanceID: instanceID,
+		AccountID: cached.AccountID, State: fresh.LifecycleState,
+	})
+	return nil
+}
+
 // Watch 启动对某台实例的状态轮询。重复调用是安全的——
 // 同一台机器同时只会有一个轮询协程。
 func (s *Service) Watch(instanceID string) {

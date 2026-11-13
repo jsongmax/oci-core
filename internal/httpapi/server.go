@@ -161,6 +161,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/instances/{id}/note", s.guard(s.requireAuth(s.handleSetInstanceNote)))
 	s.mux.HandleFunc("POST /api/instances/{id}/reshape", s.guard(s.requireAuth(s.danger(s.handleReshapeInstance))))
 	s.mux.HandleFunc("DELETE /api/instances/{id}", s.guard(s.requireAuth(s.danger(s.handleTerminateInstance))))
+	s.mux.HandleFunc("POST /api/instances/{id}/replace-boot-volume", s.guard(s.requireAuth(s.danger(s.handleReplaceBootVolume))))
 	s.mux.HandleFunc("POST /api/instances/{id}/dismiss-error", s.guard(s.requireAuth(s.handleDismissInstanceError)))
 
 	s.mux.HandleFunc("POST /api/instances/{id}/console", s.guard(s.requireAuth(s.handleCreateConsole)))

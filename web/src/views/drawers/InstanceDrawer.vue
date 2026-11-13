@@ -22,6 +22,7 @@ import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import StateBadge from '@/components/StateBadge.vue'
 import BootVolumeEditor from '@/components/BootVolumeEditor.vue'
+import ReplaceBootVolume from '@/components/ReplaceBootVolume.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
 import SwitchRow from '@/components/SwitchRow.vue'
 import type { MetricSeries } from '@/components/MetricChart.vue'
@@ -892,6 +893,7 @@ watch(metricHours, () => void loadMetrics())
       <template v-else-if="active === '存储'">
         <BootVolumeEditor :instance="inst" :account="account"
                           :boot-volume-id="detail?.bootVolume?.id" />
+        <ReplaceBootVolume :instance="inst" />
 
         <SectionCard title="附加块存储">
           <SkeletonRows v-if="detailLoading" :rows="2" />

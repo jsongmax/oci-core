@@ -684,6 +684,20 @@ on('POST', '/api/instances/{id}/reshape', (p, _, b) => {
       return { summary: `已改为 ${i.dto.ocpus} OCPU / ${i.dto.memoryGb} GB` }
     } })
 })
+on('POST', '/api/instances/{id}/replace-boot-volume', (p, _, b) => {
+  const i = instById(p.id)
+  if (b.confirm !== i.dto.displayName) fail(400, 'confirm_required', `替换引导卷需要回传实例名称 "${i.dto.displayName}"`)
+  const wasRunning = i.dto.lifecycleState === 'RUNNING'
+  return submit({ kind: 'instance.replace_boot_volume', title: '替换引导卷 · ' + i.dto.displayName,
+    accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: ['提交替换请求', '等待 Oracle 停机并换上新引导卷', '读取新引导卷信息'], ms: 5000,
+    run: () => {
+      if (b.bootVolumeGb) i.dto.bootVolumeGb = b.bootVolumeGb
+      if (wasRunning) transition(i, 'STOPPING', 'RUNNING', 3000)
+      log('instance_replace_boot_volume', i.dto.displayName, i.dto.accountId, b.preserveBootVolume ? '旧引导卷保留' : '旧引导卷删除')
+      return { summary: `已换上新引导卷 · ${i.dto.bootVolumeGb} GB` }
+    } })
+})
 on('DELETE', '/api/instances/{id}', (p, q) => {
   const i = instById(p.id)
   if (!settings.allowTerminate) fail(403, 'terminate_disabled', '终止实例功能已在设置中禁用')

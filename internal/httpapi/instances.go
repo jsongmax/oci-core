@@ -251,6 +251,128 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type replaceBootVolumeRequest struct {
+	ImageID      string `json:"imageId"`
+	BootVolumeGB int64  `json:"bootVolumeGb"`
+	// PreserveBootVolume 决定旧引导卷是否保留。
+	PreserveBootVolume bool   `json:"preserveBootVolume"`
+	SSHPublicKey       string `json:"sshPublicKey"`
+	CloudInit          string `json:"cloudInit"`
+	// Confirm 必须等于实例名：重装会抹掉系统盘上的全部数据。
+	Confirm string `json:"confirm"`
+}
+
+// handleReplaceBootVolume 用新镜像替换引导卷，即重装系统。L3 级危险操作。
+//
+// 和终止一样由服务端校验确认串。实例本身保留，所以不受「允许终止」开关约束。
+func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request) {
+	var req replaceBootVolumeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.ImageID) == "" {
+		writeError(w, http.StatusBadRequest, "missing_fields", "请选择镜像")
+		return
+	}
+	if req.BootVolumeGB != 0 && req.BootVolumeGB < instancesvc.MinBootVolumeGB {
+		writeError(w, http.StatusBadRequest, "invalid_input",
+			fmt.Sprintf("引导卷至少 %d GB", instancesvc.MinBootVolumeGB))
+		return
+	}
+
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeInstanceError(w, err)
+		return
+	}
+	if strings.TrimSpace(req.Confirm) != inst.DisplayName {
+		writeError(w, http.StatusBadRequest, "confirm_required",
+			"替换引导卷需要回传实例名称 "+strconv.Quote(inst.DisplayName))
+		return
+	}
+	if ociclient.IsTransitionalState(inst.LifecycleState) {
+		writeInstanceError(w, instancesvc.ErrInstanceBusy)
+		return
+	}
+
+	detail := "旧引导卷删除"
+	if req.PreserveBootVolume {
+		detail = "旧引导卷保留"
+	}
+	userData := ""
+	if ci := strings.TrimSpace(req.CloudInit); ci != "" {
+		userData = buildMetadata("", ci)["user_data"]
+	}
+	who := s.actorOf(r)
+	wasRunning := inst.LifecycleState == ociclient.LifecycleRunning
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobReplaceBoot, Title: "替换引导卷 · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 30 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("提交替换请求（" + detail + "）")
+		updated, err := s.instances.ReplaceBootVolume(ctx, inst.ID, instancesvc.ReplaceBootVolumeRequest{
+			ImageID:      req.ImageID,
+			BootVolumeGB: req.BootVolumeGB,
+			PreserveOld:  req.PreserveBootVolume,
+			SSHPublicKey: req.SSHPublicKey,
+			UserData:     userData,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		osName := updated.ImageOS
+		if osName == "" {
+			osName = req.ImageID
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_replace_boot_volume", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: osName + "，" + detail,
+		})
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event: notify.EventDangerOperation,
+			Title: "实例 " + inst.DisplayName + " 已提交替换引导卷",
+			Fields: map[string]string{
+				"实例":   inst.DisplayName,
+				"区域":   inst.Region,
+				"新系统":  osName,
+				"旧引导卷": detail,
+				"操作者":  who.username,
+				"来源":   who.ip,
+			},
+		})
+		p.Set(15)
+
+		// Oracle 受理后要过一会才开始停机换盘，缓存一开始可能还是原状态。
+		p.Step("等待 Oracle 停机并换上新引导卷")
+		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 15, 70, 3*time.Minute)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		if final == nil {
+			return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+		}
+		// 运行中的实例会经过 STOPPED 再开回来，中途那一下 STOPPED 不算落定。
+		if wasRunning && final.LifecycleState == ociclient.LifecycleStopped {
+			p.Step("新引导卷已换上，等待实例重新开机")
+			final, err = s.waitInstanceSettled(ctx, p, inst.ID, 70, 95, 5*time.Minute)
+			if err != nil {
+				return jobsvc.Outcome{}, err
+			}
+			if final == nil {
+				return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+			}
+		}
+
+		p.Step("读取新引导卷信息")
+		if err := s.instances.RefreshBootVolume(ctx, inst.ID); err != nil {
+			// 不影响结果：下一轮同步会补上。
+			p.Step("暂时没读到新引导卷：" + err.Error() + "，下一轮同步会补上")
+		}
+		return jobsvc.Outcome{Summary: fmt.Sprintf("已换成 %s，当前 %s，%s", osName, final.LifecycleState, detail)}, nil
+	})
+}
+
 // handleTerminateInstance 终止实例。这是 L3 级危险操作。
 //
 // 服务端必须自己校验确认串：前端的输名确认框可以被绕过。

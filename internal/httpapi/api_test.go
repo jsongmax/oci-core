@@ -292,6 +292,56 @@ func TestTerminateRequiresInstanceName(t *testing.T) {
 	resp.Body.Close()
 }
 
+// 替换引导卷会抹掉系统盘，和终止一样要在服务端校验输名确认；
+// 过渡态与过小的容量也必须在提交到 Oracle 之前拦下。
+func TestReplaceBootVolumeGuards(t *testing.T) {
+	h := newHarness(t)
+	h.setupAndLogin()
+
+	acc, err := h.store.CreateAccount(t.Context(), storeTestAccount(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []store.Instance{
+		{ID: "i-1", AccountID: acc.ID, Region: "ap-tokyo-1", DisplayName: "web-01", LifecycleState: "RUNNING"},
+		{ID: "i-2", AccountID: acc.ID, Region: "ap-tokyo-1", DisplayName: "web-02", LifecycleState: "STOPPING"},
+	} {
+		if err := h.store.UpsertInstance(t.Context(), row); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name, path string
+		body       map[string]any
+		status     int
+		code       string
+	}{
+		{"缺镜像", "/api/instances/i-1/replace-boot-volume",
+			map[string]any{"confirm": "web-01"}, http.StatusBadRequest, "missing_fields"},
+		{"容量过小", "/api/instances/i-1/replace-boot-volume",
+			map[string]any{"imageId": "img", "bootVolumeGb": 20, "confirm": "web-01"}, http.StatusBadRequest, "invalid_input"},
+		{"没回传实例名", "/api/instances/i-1/replace-boot-volume",
+			map[string]any{"imageId": "img"}, http.StatusBadRequest, "confirm_required"},
+		{"实例名不对", "/api/instances/i-1/replace-boot-volume",
+			map[string]any{"imageId": "img", "confirm": "web-02"}, http.StatusBadRequest, "confirm_required"},
+		{"卡在过渡态", "/api/instances/i-2/replace-boot-volume",
+			map[string]any{"imageId": "img", "confirm": "web-02"}, http.StatusConflict, ""},
+	}
+	for _, tc := range cases {
+		resp := h.post(tc.path, tc.body)
+		if resp.StatusCode != tc.status {
+			t.Errorf("%s：状态码 = %d，期望 %d", tc.name, resp.StatusCode, tc.status)
+			resp.Body.Close()
+			continue
+		}
+		body := decode[errorBody](t, resp)
+		if tc.code != "" && body.Code != tc.code {
+			t.Errorf("%s：错误码 = %q，期望 %q", tc.name, body.Code, tc.code)
+		}
+	}
+}
+
 // 强制关机/重启会直接拔电源，必须显式带 force=true。
 func TestForcefulActionRequiresFlag(t *testing.T) {
 	h := newHarness(t)
