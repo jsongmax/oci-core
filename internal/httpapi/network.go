@@ -243,8 +243,9 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleChangePublicIP 更换实例的公网 IP。这是 L2 级操作。
+// handleChangePublicIP 更换实例某张网卡的公网 IP。这是 L2 级操作。
 //
+// 查询参数 vnicId 可选，留空为主网卡。网卡上还没有公网 IP 时就是直接分配一个。
 // 确认与凭据在请求里校验，换 IP 本身（删旧地址、等释放、申请新地址）
 // 交给后台任务。
 func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +256,12 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if inst.VnicID == "" {
+	vnicID := strings.TrimSpace(r.URL.Query().Get("vnicId"))
+	primary := vnicID == "" || vnicID == inst.VnicID
+	if primary {
+		vnicID = inst.VnicID
+	}
+	if vnicID == "" {
 		writeError(w, http.StatusBadRequest, "no_vnic",
 			"尚未同步到该实例的网卡信息，请先执行一次同步")
 		return
@@ -263,10 +269,13 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 
 	// L2 门槛：原 IP 不可找回，SSH 会立刻中断，必须显式确认。
 	if r.URL.Query().Get("confirm") != "true" {
+		msg := "更换后原公网 IP 不可找回，用它的连接会中断。"
+		if primary && inst.PublicIP != "" {
+			msg = "更换后原 IP " + inst.PublicIP + " 不可找回，当前 SSH 连接会中断。"
+		}
 		writeJSON(w, http.StatusBadRequest, errorBody{
-			Code: "confirm_required",
-			Message: "更换后原 IP " + inst.PublicIP + " 不可找回，当前 SSH 连接会中断。" +
-				"如确认要执行，请附带 confirm=true。",
+			Code:    "confirm_required",
+			Message: msg + "如确认要执行，请附带 confirm=true。",
 		})
 		return
 	}
@@ -278,35 +287,57 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 	}
 	who := s.actorOf(r)
 
+	title := "更换公网 IP · " + inst.DisplayName
+	if !primary {
+		title += "（附属网卡）"
+	}
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobChangeIP, Title: "更换公网 IP · " + inst.DisplayName,
+		Kind: jobChangeIP, Title: title,
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		if inst.PublicIP != "" {
+		where := "主网卡"
+		if !primary {
+			p.Step("确认网卡属于该实例")
+			vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+			if err != nil {
+				return jobsvc.Outcome{}, err
+			}
+			where = vnicLabel(vnic)
+		}
+		if primary && inst.PublicIP != "" {
 			p.Step("释放原公网 IP " + inst.PublicIP + " 并申请新地址")
 		} else {
-			p.Step("申请新的公网 IP")
+			p.Step("为" + where + "申请公网 IP（已有临时 IP 则先释放）")
 		}
 		p.Set(20)
 
-		result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, inst.VnicID, acc.CompartmentOCID)
+		result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, vnicID, acc.CompartmentOCID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
 		p.Step("新地址 " + result.NewIP + " 已分配")
 
-		// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。重新读一次：
-		// 任务排队期间这一行可能已被同步改过，不能拿请求时的旧快照覆盖。
-		if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
-			fresh.PublicIP = result.NewIP
-			if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
-				s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+		if primary {
+			// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。重新读一次：
+			// 任务排队期间这一行可能已被同步改过，不能拿请求时的旧快照覆盖。
+			if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+				fresh.PublicIP = result.NewIP
+				if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+					s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+				}
 			}
+		} else {
+			// 附属网卡的地址记在 secondary 列里，整体重读一次网络信息。
+			_ = s.instances.RefreshNetwork(ctx, inst.ID)
 		}
 
+		change := result.OldIP + " → " + result.NewIP
+		if result.OldIP == "" {
+			change = "新分配 " + result.NewIP
+		}
 		s.audit(who, store.AuditEntry{
 			Action: "instance_change_ip", AccountID: inst.AccountID,
-			Target: inst.DisplayName, Detail: result.OldIP + " → " + result.NewIP,
+			Target: inst.DisplayName, Detail: where + " · " + change,
 		})
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventDangerOperation,
@@ -375,6 +406,81 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 		})
 		return jobsvc.Outcome{Summary: "已分配 IPv6 " + result.Address, Result: result}, nil
 	})
+}
+
+// findInstanceVnic 确认网卡确实挂在这台实例上并取回它。
+//
+// 网卡 OCID 来自客户端，不校验的话，凭一个 OCID 就能改同账号里别的实例的地址。
+func findInstanceVnic(ctx context.Context, client *ociclient.Client, inst *store.Instance,
+	compartmentID, vnicID string) (*ociclient.Vnic, error) {
+	atts, err := client.ListVnicAttachments(ctx, inst.Region, compartmentID, inst.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range atts {
+		if a.VnicID == vnicID && a.LifecycleState == "ATTACHED" {
+			return client.GetVnic(ctx, inst.Region, vnicID)
+		}
+	}
+	return nil, errors.New("这张网卡不在该实例上，或已经分离")
+}
+
+// handleAddIPv6 给实例的某张网卡（主网卡或附属网卡）再分配一个 IPv6 地址。
+//
+// 与 enable-ipv6 不同，网卡已有地址时照样新分配一个。子网、VCN 没开通 IPv6 时
+// 一并开通——VCN 开通后关不掉，所以和 enable-ipv6 一样走 danger。
+func (s *Server) handleAddIPv6(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	vnicID := r.PathValue("vnicId")
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+	who := s.actorOf(r)
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobAddIPv6, Title: "添加 IPv6 · " + inst.DisplayName,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		p.Step("确认网卡属于该实例")
+		vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		p.Set(20)
+		p.Step("检查子网的 IPv6 前缀并分配地址")
+		result, err := netsvc.AddIPv6(ctx, client, inst.Region, vnic.ID, vnic.SubnetID)
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		for _, step := range result.Steps {
+			p.Step(step)
+		}
+		_ = s.instances.RefreshNetwork(ctx, inst.ID)
+
+		s.audit(who, store.AuditEntry{
+			Action: "instance_add_ipv6", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: vnicLabel(vnic) + " · " + result.Address,
+		})
+		return jobsvc.Outcome{Summary: "已分配 IPv6 " + result.Address, Result: result}, nil
+	})
+}
+
+// vnicLabel 是审计与任务里称呼一张网卡的方式。
+func vnicLabel(v *ociclient.Vnic) string {
+	kind := "附属网卡"
+	if v.IsPrimary {
+		kind = "主网卡"
+	}
+	if v.DisplayName != "" {
+		return kind + " " + v.DisplayName
+	}
+	return kind
 }
 
 // vnicSettleTimeout 比 instancesvc 里等网卡落定的上限略长，让那边先给出结论。

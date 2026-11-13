@@ -203,6 +203,8 @@ export interface VnicInfoDTO {
   publicIpType?: string
   privateIpId?: string
   ipv6: string[] | null
+  /** 与 ipv6 一一对应，多带创建时间（旧后端没有这个字段） */
+  ipv6Info?: { address: string; timeCreated?: string }[] | null
   macAddress: string
   subnetId: string
   subnetName?: string

@@ -3,6 +3,7 @@ package instancesvc
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -26,11 +27,20 @@ type VnicInfo struct {
 	PublicIPType string   `json:"publicIpType,omitempty"`
 	PrivateIPID  string   `json:"privateIpId,omitempty"`
 	IPv6         []string `json:"ipv6"`
-	MacAddress   string   `json:"macAddress"`
-	SubnetID     string   `json:"subnetId"`
-	SubnetName   string   `json:"subnetName,omitempty"`
-	VcnID        string   `json:"vcnId,omitempty"`
-	VcnName      string   `json:"vcnName,omitempty"`
+	// IPv6Info 与 IPv6 一一对应，多带创建时间。保留 IPv6 是为了不打断已有调用方。
+	IPv6Info   []IPv6Entry `json:"ipv6Info"`
+	MacAddress string      `json:"macAddress"`
+	SubnetID   string      `json:"subnetId"`
+	SubnetName string      `json:"subnetName,omitempty"`
+	VcnID      string      `json:"vcnId,omitempty"`
+	VcnName    string      `json:"vcnName,omitempty"`
+}
+
+// IPv6Entry 是网卡上的一个 IPv6 地址。
+type IPv6Entry struct {
+	Address string `json:"address"`
+	// TimeCreated 取不到时为空，前端不显示。
+	TimeCreated *time.Time `json:"timeCreated,omitempty"`
 }
 
 // VolumeInfo 是挂载在实例上的块存储卷。
@@ -225,8 +235,16 @@ func (s *Service) collectVnicDetail(ctx context.Context, client *ociclient.Clien
 		}
 
 		if v6s, err := client.ListIpv6s(ctx, cached.Region, vnic.ID); err == nil {
+			// 按分配时间排：多出来的地址排在后面，一眼能看出是哪次加的。
+			sort.SliceStable(v6s, func(i, j int) bool { return v6s[i].TimeCreated.Before(v6s[j].TimeCreated) })
 			for _, v6 := range v6s {
 				info.IPv6 = append(info.IPv6, v6.IPAddress)
+				entry := IPv6Entry{Address: v6.IPAddress}
+				if !v6.TimeCreated.IsZero() {
+					t := v6.TimeCreated
+					entry.TimeCreated = &t
+				}
+				info.IPv6Info = append(info.IPv6Info, entry)
 			}
 		}
 

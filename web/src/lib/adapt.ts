@@ -221,6 +221,24 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
   }
 }
 
+/**
+ * IPv6 增删之后系统里多久能看到变化。
+ *
+ * Oracle 那边是即时的，但系统里的地址靠 DHCPv6 拿：新地址要等续租才出现，
+ * 删掉的要等租约到期才消失。用户不知道这一层，很容易以为操作没生效。
+ * 只有 Ubuntu（netplan）给出命令：其它系统的网络栈各不相同，给错了命令比不给更糟。
+ */
+export function ipv6LeaseHint(os: OsFamily, added: boolean, primary: boolean): { note: string; command?: string } {
+  if (added && !primary) {
+    return { note: '多数系统不会自动启用附属网卡，要先在系统里配置这张网卡，新地址才能使用。' }
+  }
+  const note = added
+    ? '系统里要等 DHCPv6 续租后才会出现新地址。'
+    : '系统里的旧地址要等 DHCPv6 租约到期才会消失，这期间看到它不代表删除没生效。'
+  if (os === 'ubuntu') return { note: note + '想立即生效，可在实例里执行：', command: 'sudo netplan apply' }
+  return { note: note + '想立即生效，可在实例里重新应用网络配置。' }
+}
+
 export function osFamilyOf(imageOs: string | undefined): OsFamily {
   const os = (imageOs ?? '').toLowerCase()
   if (os.includes('ubuntu')) return 'ubuntu'

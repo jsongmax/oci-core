@@ -4,7 +4,7 @@ import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
 import { acctColor, byteScale, formatBytes, formatBitRate, formatBits, formatPercent } from '@/lib/format'
-import { relativeTime, instanceUptime } from '@/lib/adapt'
+import { relativeTime, instanceUptime, ipv6LeaseHint } from '@/lib/adapt'
 import {
   instances as instancesApi, insights, storage, network, errorText,
   type AuditEntryDTO, type InstanceDetailDTO, type MetricsDTO, type InstanceTrafficDTO
@@ -87,17 +87,30 @@ const secondaryVnics = computed(() =>
  * IPv6 每个地址单占一行。原先拼成一串显示，既不能逐个复制，
  * 也没法走 ip 打码——maskIP 只认单个地址。
  */
-function ipv6Items(ipv6: string[] | null | undefined): KvItem[] {
+function ipv6Items(v: D.VnicInfoDTO): KvItem[] {
+  const ipv6 = v.ipv6
   if (!ipv6?.length) return [{ k: 'IPv6', v: '未启用', tone: 'var(--text-secondary)' }]
-  return ipv6.map((ip, n) => ({
-    k: ipv6.length > 1 ? `IPv6 #${n + 1}` : 'IPv6',
-    v: ip, mono: true, copyable: true, secret: 'ip' as const,
-    action: {
-      label: removingIpv6.value === ip ? '移除中…' : '移除', tone: 'warning' as const,
-      disabled: locked.value || !!removingIpv6.value, onClick: () => removeIpv6(ip)
+  // 后端按创建时间排好了；旧后端没有 ipv6Info，就只显示地址。
+  const created = new Map((v.ipv6Info ?? []).map(e => [e.address, e.timeCreated]))
+  return ipv6.map((ip, n) => {
+    const at = created.get(ip)
+    const date = at ? new Date(at) : null
+    const base = ipv6.length > 1 ? `IPv6 #${n + 1}` : 'IPv6'
+    return {
+      // 日期直接写在标签上：批量分配的异常要扫一眼就能看出来，靠悬停一个个看太慢。
+      k: date ? `${base} · ${shortDate(date)}` : base,
+      title: date ? `创建于 ${date.toLocaleString('zh-CN', { hour12: false })}` : undefined,
+      v: ip, mono: true, copyable: true, secret: 'ip' as const,
+      action: {
+        label: removingIpv6.value === ip ? '移除中…' : '移除', tone: 'warning' as const,
+        disabled: locked.value || !!removingIpv6.value, onClick: () => removeIpv6(ip, v.isPrimary)
+      }
     }
-  }))
+  })
 }
+
+const shortDate = (d: Date) =>
+  `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 /* ---------- 移除 IPv6 ---------- */
 
@@ -105,7 +118,7 @@ function ipv6Items(ipv6: string[] | null | undefined): KvItem[] {
 const removingIpv6 = ref('')
 
 /** 与「开启 IPv6」对称：删掉的地址不可找回，用它的连接会断。确认框里的地址按隐私模式打码。 */
-function removeIpv6(address: string) {
+function removeIpv6(address: string, primary: boolean) {
   const i = inst.value
   if (!i) return
   const shown = state.privacyMode ? mask(address, 'ip') : address
@@ -113,16 +126,20 @@ function removeIpv6(address: string) {
     level: 2,
     title: `移除 ${i.name} 的 IPv6`,
     body: `删除 ${shown} 后这个地址不可找回，正在用它的连接会中断，指向它的 DNS 记录需要手动更新。` +
-      '子网与 VCN 的 IPv6 前缀保持不变，之后可以再开启。',
+      '子网与 VCN 的 IPv6 前缀保持不变，之后可以再添加。',
     okLabel: '移除 IPv6',
     onConfirm: async () => {
       removingIpv6.value = address
       try {
         const { job } = await instancesApi.removeIpv6(i.id, address)
         const id = i.id
+        // 提交时就算好提示：任务结束时抽屉可能已经换了一台。
+        const hint = ipv6LeaseHint(i.osFamily, false, primary)
         trackJob(job, {
           onSuccess: done => {
-            toast({ tone: 'success', title: done.summary || '已移除 IPv6' })
+            // 带命令时一直留着，要复制到实例里去跑。
+            toast({ tone: 'success', title: done.summary || '已移除 IPv6', body: hint.note, command: hint.command },
+              hint.command ? 0 : 10000)
             if (props.id === id) void loadDetail()
           }
         })
@@ -141,44 +158,54 @@ function vnicItems(v: D.VnicInfoDTO): KvItem[] {
     { k: '公网 IPv4', v: v.publicIp || '未分配', mono: true, copyable: !!v.publicIp, secret: 'ip' },
     ...(v.publicIp ? [{ k: '类型', v: v.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' }] : []),
     { k: '私网 IPv4', v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
-    ...ipv6Items(v.ipv6),
+    ...ipv6Items(v),
     { k: 'VCN', v: v.vcnName || '—', mono: true },
     { k: '子网', v: v.subnetName || '—', mono: true },
     { k: 'MAC', v: v.macAddress || '—', mono: true }
   ]
 }
 
-/* ---------- 更换主网卡公网 IP ---------- */
+/* ---------- 更换 / 分配公网 IP ---------- */
 
-const changingIp = ref(false)
+/** 正在换 IP 的网卡 OCID；同一时刻只允许一张。 */
+const changingIpVnic = ref('')
 
 /**
- * 与行内 ⋯ 菜单、网络页走同一个接口；放在这里是因为用户看着 IP 时最自然想换的就是它。
+ * 主网卡、附属网卡共用。网卡还没有公网 IP 时就是新分配一个。
+ * 与行内 ⋯ 菜单、网络页走同一个接口（那两处只管主网卡）。
  * 确认框里的原 IP 按隐私模式打码——确认框同样会被截图。
  */
-function changePrimaryIp() {
+function changeIp(v: D.VnicInfoDTO) {
   const i = inst.value
-  const v = primaryVnic.value
-  if (!i || !v?.publicIp) return
-  const ip = state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
+  if (!i) return
+  const assign = !v.publicIp
+  const where = v.isPrimary ? '主网卡' : `附属网卡 ${v.displayName || ''}`.trim()
+  const ip = v.publicIp && state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
   ask({
     level: 2,
-    title: `更换 ${i.name} 的公网 IP`,
-    body: `更换后原 IP ${ip} 不可找回，当前 SSH 连接将中断，DNS 记录需要手动更新。附属网卡的 IP 不受影响。`,
-    okLabel: '更换 IP',
+    title: assign ? `为 ${i.name} 的${where} 分配公网 IP` : `更换 ${i.name} ${where} 的公网 IP`,
+    body: assign
+      ? '会申请一个临时公网 IPv4，绑在这张网卡的主私网 IP 上。子网禁止公网 IP 时 Oracle 会拒绝。'
+      : `更换后原 IP ${ip} 不可找回，用它的连接会中断，DNS 记录需要手动更新。其它网卡的 IP 不受影响。`,
+    okLabel: assign ? '分配 IP' : '更换 IP',
     onConfirm: async () => {
-      changingIp.value = true
+      changingIpVnic.value = v.vnicId
       try {
-        const { job } = await instancesApi.changeIp(i.id)
-        trackJob(job)
+        const { job } = await instancesApi.changeIp(i.id, v.isPrimary ? undefined : v.vnicId)
+        const id = i.id
+        trackJob(job, { onSuccess: () => { if (props.id === id) void loadDetail() } })
       } catch (err) {
-        toastError('更换 IP 失败', err)
+        toastError(assign ? '分配公网 IP 失败' : '更换 IP 失败', err)
       } finally {
-        changingIp.value = false
+        changingIpVnic.value = ''
       }
     }
   })
 }
+
+const ipButtonTitle = (v: D.VnicInfoDTO) =>
+  v.publicIpType === 'RESERVED' ? '保留 IP 不提供更换：释放后就永久失去这个地址'
+    : v.publicIp ? '释放当前临时 IP 并申请一个新的' : '给这张网卡申请一个临时公网 IPv4'
 
 /* ---------- 附属网卡增删 ---------- */
 
@@ -280,41 +307,49 @@ watch(() => state.networkChanged, c => { if (c.id === props.id) void loadDetail(
 
 /* ---------- IPv6 ---------- */
 
-const enablingIpv6 = ref(false)
+/** 正在添加 IPv6 的网卡 OCID；同一时刻只允许一张。 */
+const addingIpv6Vnic = ref('')
 
 /**
- * 为已有实例开启 IPv6。子网和 VCN 没开通时后端会一并开通，
- * 并照 IPv4 的配置补 ::/0 路由与出站规则——和创建实例时勾选 IPv6 走同一套逻辑。
+ * 给某张网卡再分配一个 IPv6。已有地址也照样新分配（多个地址是合法用法）。
+ * 子网和 VCN 没开通时后端会一并开通，并照 IPv4 的配置补 ::/0 路由与出站规则——
+ * 和创建实例时勾选 IPv6 走同一套逻辑。
  */
-function enableIpv6() {
+function addIpv6(v: D.VnicInfoDTO) {
   const i = inst.value
   if (!i) return
+  const first = !v.ipv6?.length
+  const where = v.isPrimary ? '主网卡' : `附属网卡 ${v.displayName || ''}`.trim()
   ask({
-    level: 2, title: `为 ${i.name} 开启 IPv6`,
-    body: '子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭；会照 IPv4 的配置补上 ::/0 路由和出站规则。' +
-      '入站规则不会自动添加，想用 IPv6 登录需要到网络页自己加。',
-    okLabel: '开启 IPv6',
+    level: 2, title: `为 ${i.name} 的${where} 添加 IPv6`,
+    body: (first
+      ? '子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭；会照 IPv4 的配置补上 ::/0 路由和出站规则。' +
+        '入站规则不会自动添加，想用 IPv6 登录需要到网络页自己加。'
+      : `这张网卡已有 ${v.ipv6!.length} 个 IPv6，会再分配一个新地址，原有地址不受影响。`),
+    okLabel: '添加 IPv6',
     onConfirm: async () => {
-      enablingIpv6.value = true
+      addingIpv6Vnic.value = v.vnicId
       try {
-        const { job } = await instancesApi.enableIpv6(i.id)
+        const { job } = await instancesApi.addIpv6(i.id, v.vnicId)
         const id = i.id
         const name = i.name
+        const hint = ipv6LeaseHint(i.osFamily, true, v.isPrimary)
         trackJob(job, {
           onSuccess: done => {
             const result = done.result as D.EnableIpv6DTO | undefined
             toast({
               tone: 'success', title: `${name} 已分配 IPv6`,
-              body: [result?.address, ...(result?.steps ?? [])].filter(Boolean).join('\n')
+              body: [result?.address, ...(result?.steps ?? []), hint.note].filter(Boolean).join('\n'),
+              command: hint.command
             }, 0)
             // 抽屉可能已经关了或换了一台，只在还开着这台时重拉。
             if (props.id === id) void loadDetail()
           }
         })
       } catch (err) {
-        toastError('开启 IPv6 失败', err)
+        toastError('添加 IPv6 失败', err)
       } finally {
-        enablingIpv6.value = false
+        addingIpv6Vnic.value = ''
       }
     }
   })
@@ -831,15 +866,14 @@ watch(metricHours, () => void loadMetrics())
                        :note="`nic ${primaryVnic.nicIndex}`">
             <template #action>
               <span class="card-actions">
-                <button v-if="!primaryVnic.ipv6?.length" class="btn btn--sm"
-                        :disabled="enablingIpv6 || locked" @click="enableIpv6()">
-                  {{ enablingIpv6 ? '开启中…' : '开启 IPv6' }}
+                <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(primaryVnic)">
+                  {{ addingIpv6Vnic === primaryVnic.vnicId ? '添加中…' : primaryVnic.ipv6?.length ? '添加 IPv6' : '开启 IPv6' }}
                 </button>
-                <button v-if="primaryVnic.publicIp" class="btn btn--sm btn--warning"
-                        :disabled="changingIp || locked || primaryVnic.publicIpType === 'RESERVED'"
-                        :title="primaryVnic.publicIpType === 'RESERVED'
-                          ? '保留 IP 不提供更换：释放后就永久失去这个地址' : '释放当前临时 IP 并申请一个新的'"
-                        @click="changePrimaryIp()">{{ changingIp ? '更换中…' : '更换公网 IP' }}</button>
+                <button class="btn btn--sm" :class="{ 'btn--warning': primaryVnic.publicIp }"
+                        :disabled="!!changingIpVnic || locked || primaryVnic.publicIpType === 'RESERVED'"
+                        :title="ipButtonTitle(primaryVnic)" @click="changeIp(primaryVnic)">
+                  {{ changingIpVnic === primaryVnic.vnicId ? '处理中…' : primaryVnic.publicIp ? '更换公网 IP' : '分配公网 IP' }}
+                </button>
               </span>
             </template>
             <KeyValueList :items="vnicItems(primaryVnic)" />
@@ -848,7 +882,17 @@ watch(metricHours, () => void loadMetrics())
           <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
                        :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
             <template #action>
-              <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
+              <span class="card-actions">
+                <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(v)">
+                  {{ addingIpv6Vnic === v.vnicId ? '添加中…' : '添加 IPv6' }}
+                </button>
+                <button class="btn btn--sm" :class="{ 'btn--warning': v.publicIp }"
+                        :disabled="!!changingIpVnic || locked || v.publicIpType === 'RESERVED'"
+                        :title="ipButtonTitle(v)" @click="changeIp(v)">
+                  {{ changingIpVnic === v.vnicId ? '处理中…' : v.publicIp ? '更换公网 IP' : '分配公网 IP' }}
+                </button>
+                <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
+              </span>
             </template>
             <KeyValueList :items="vnicItems(v)" />
           </SectionCard>
@@ -884,7 +928,7 @@ watch(metricHours, () => void loadMetrics())
             <CheckList :items="[
               { tone: 'info', text: '附属网卡会带来一个额外的私网 IP，可选再配公网 IPv4 / IPv6；原有的 IP 不受影响。' },
               { tone: 'warn', text: '多数系统镜像不会自动启用新网卡，要在系统里配置后它才能收发流量（Oracle Linux 可用 oci-utils 的 oci-network-config）。' },
-              { tone: 'info', text: '更换公网 IP、开启 IPv6 只作用于主网卡。' }
+              { tone: 'info', text: '每张网卡的公网 IP、IPv6 都可以在它自己的卡片上单独更换或添加。' }
             ]" />
           </SectionCard>
         </template>
@@ -1129,7 +1173,7 @@ watch(metricHours, () => void loadMetrics())
 </template>
 
 <style scoped>
-.card-actions { display: flex; gap: 6px; }
+.card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .vnic-form { display: flex; flex-direction: column; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
 .vnic-form__actions { display: flex; gap: 8px; }
 .rule { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }

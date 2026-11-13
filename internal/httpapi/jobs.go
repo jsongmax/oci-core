@@ -21,6 +21,7 @@ const (
 	jobReplaceBoot  = "instance.replace_boot_volume"
 	jobEnableIPv6   = "instance.enable_ipv6"
 	jobRemoveIPv6   = "instance.remove_ipv6"
+	jobAddIPv6      = "instance.add_ipv6"
 	jobAttachVnic   = "instance.attach_vnic"
 	jobDetachVnic   = "instance.detach_vnic"
 	jobBulkAction   = "instance.bulk"

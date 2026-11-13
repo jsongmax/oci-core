@@ -192,6 +192,8 @@ type Ipv6 struct {
 	IPAddress      string `json:"ipAddress"`
 	CompartmentID  string `json:"compartmentId"`
 	LifecycleState string `json:"lifecycleState"`
+	// TimeCreated 用来在详情里标出每个地址是什么时候分的，便于发现异常的批量分配。
+	TimeCreated time.Time `json:"timeCreated"`
 }
 
 // ---- VCN ----

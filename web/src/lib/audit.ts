@@ -18,7 +18,7 @@ const ACTION_LABEL: Record<string, string> = {
   instance_rename: '重命名', instance_reshape: '改配置', instance_replace_boot_volume: '替换引导卷',
   instance_attach_vnic: '添加网卡', instance_detach_vnic: '分离网卡',
   instance_terminate: '终止实例', instance_launch: '创建实例',
-  instance_change_ip: '更换公网 IP', instance_enable_ipv6: '启用 IPv6', instance_remove_ipv6: '移除 IPv6',
+  instance_change_ip: '更换公网 IP', instance_enable_ipv6: '启用 IPv6', instance_add_ipv6: '添加 IPv6',instance_remove_ipv6: '移除 IPv6',
   boot_volume_update: '修改引导卷', boot_volume_detach: '分离引导卷', boot_volume_attach: '挂载引导卷',
   volume_update: '修改块存储', volume_attach: '挂载块存储', volume_detach: '分离块存储', volume_delete: '删除卷',
   reserved_ip_release: '释放保留 IP',

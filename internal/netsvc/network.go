@@ -291,6 +291,31 @@ func EnableIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, s
 	return result, nil
 }
 
+// AddIPv6 给网卡再分配一个 IPv6 地址，不管它已经有几个。
+//
+// 与 EnableIPv6 的区别只在这里：那个是「确保有」，重复调用不产生新地址；
+// 这个是用户明确要多一个。前缀没开通时同样会先补齐。
+func AddIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, subnetID string) (*EnableIPv6Result, error) {
+	result := &EnableIPv6Result{}
+
+	prep, err := PrepareIPv6(ctx, client, region, subnetID)
+	if err != nil {
+		return nil, err
+	}
+	result.Steps = append(result.Steps, prep.Steps...)
+	for _, w := range prep.Warnings {
+		result.Steps = append(result.Steps, "⚠ "+w)
+	}
+
+	ipv6, err := client.CreateIpv6(ctx, region, vnicID)
+	if err != nil {
+		return nil, fmt.Errorf("分配 IPv6 地址失败: %w", err)
+	}
+	result.Address = ipv6.IPAddress
+	result.Steps = append(result.Steps, "已分配 IPv6 地址 "+ipv6.IPAddress)
+	return result, nil
+}
+
 // 规则方向。
 const (
 	DirIngress = "ingress"

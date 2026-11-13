@@ -487,10 +487,15 @@ function resourcesFor(a: Acct, region?: string): D.AccountResourcesDTO {
   }
 }
 
+/** 演示站里新分配的 IPv6 的创建时间 */
+const v6Created = new Map<string, string>()
+
 function detailFor(i: Inst): D.InstanceDetailDTO {
   return {
     instance: structuredClone(i.dto),
-    vnics: structuredClone(i.vnics),
+    // IPv6 的创建时间：演示站新加的地址记了时间，种子数据一律当作和实例同一天分配。
+    vnics: structuredClone(i.vnics).map(v => ({ ...v,
+      ipv6Info: (v.ipv6 ?? []).map(address => ({ address, timeCreated: v6Created.get(address) ?? i.dto.timeCreated })) })),
     bootVolume: { id: i.dto.bootVolumeId, compartmentId: i.dto.compartmentId, displayName: `${i.dto.displayName} (Boot Volume)`,
       availabilityDomain: i.dto.availabilityDomain, sizeInGBs: i.dto.bootVolumeGb, vpusPerGB: i.dto.bootVolumeVpus,
       lifecycleState: 'AVAILABLE', imageId: i.dto.imageId, isHydrated: true, timeCreated: i.dto.timeCreated },
@@ -711,15 +716,30 @@ on('DELETE', '/api/instances/{id}', (p, q) => {
       return { summary: '实例已终止' }
     } })
 })
-on('POST', '/api/instances/{id}/change-ip', p => {
+on('POST', '/api/instances/{id}/change-ip', (p, q) => {
   const i = instById(p.id)
-  return submit({ kind: 'instance.change_ip', title: '更换公网 IP · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['释放旧的临时 IP', '申请新的临时 IP'], ms: 3500,
+  const v = q.vnicId ? i.vnics.find(x => x.vnicId === q.vnicId) ?? fail(404, 'not_found', '这张网卡不在该实例上') : i.vnics[0]
+  return submit({ kind: 'instance.change_ip', title: '更换公网 IP · ' + i.dto.displayName + (v.isPrimary ? '' : '（附属网卡）'),
+    accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: v.publicIp ? ['释放旧的临时 IP', '申请新的临时 IP'] : ['申请临时公网 IP'], ms: 3500,
     run: () => {
-      const oldIp = i.vnics[0].publicIp
-      i.vnics[0].publicIp = freshIp(); syncSecondary(i)
-      log('instance_change_ip', i.dto.displayName, i.dto.accountId, `${oldIp} → ${i.vnics[0].publicIp}`)
-      return { summary: '新 IP 已生效', result: { oldIp, newIp: i.vnics[0].publicIp } }
+      const oldIp = v.publicIp
+      v.publicIp = freshIp(); v.publicIpType = 'EPHEMERAL'; syncSecondary(i)
+      log('instance_change_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${v.publicIp}` : `新分配 ${v.publicIp}`)
+      return { summary: oldIp ? '新 IP 已生效' : '新 IP ' + v.publicIp, result: { oldIp, newIp: v.publicIp } }
+    } })
+})
+on('POST', '/api/instances/{id}/vnics/{vnicId}/ipv6', p => {
+  const i = instById(p.id)
+  const v = i.vnics.find(x => x.vnicId === p.vnicId) ?? fail(404, 'not_found', '这张网卡不在该实例上')
+  return submit({ kind: 'instance.add_ipv6', title: '添加 IPv6 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: ['确认网卡属于该实例', '检查子网的 IPv6 前缀并分配地址'], ms: 3000,
+    run: () => {
+      const address = freshV6()
+      v6Created.set(address, iso(Date.now()))
+      v.ipv6 = [...(v.ipv6 ?? []), address]; syncSecondary(i)
+      log('instance_add_ipv6', i.dto.displayName, i.dto.accountId, address)
+      return { summary: '已分配 IPv6 ' + address, result: { address, steps: ['子网已有 IPv6 前缀', '已分配 IPv6 地址 ' + address] } }
     } })
 })
 on('POST', '/api/instances/{id}/enable-ipv6', p => {

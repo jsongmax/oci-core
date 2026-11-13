@@ -189,6 +189,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/instances/{id}/change-ip", s.guard(s.requireAuth(s.danger(s.handleChangePublicIP))))
 	s.mux.HandleFunc("POST /api/instances/{id}/enable-ipv6", s.guard(s.requireAuth(s.danger(s.handleEnableIPv6))))
 	s.mux.HandleFunc("DELETE /api/instances/{id}/ipv6", s.guard(s.requireAuth(s.danger(s.handleRemoveIPv6))))
+	s.mux.HandleFunc("POST /api/instances/{id}/vnics/{vnicId}/ipv6", s.guard(s.requireAuth(s.danger(s.handleAddIPv6))))
 	// 添加附属网卡只是多分配资源，不走 danger；分离会释放网卡上的公网 IP，不可找回，走 danger。
 	s.mux.HandleFunc("POST /api/instances/{id}/vnics", s.guard(s.requireAuth(s.handleAttachVnic)))
 	s.mux.HandleFunc("DELETE /api/instances/{id}/vnics/{attachmentId}", s.guard(s.requireAuth(s.danger(s.handleDetachVnic))))

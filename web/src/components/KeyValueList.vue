@@ -23,10 +23,10 @@ async function onCopy(item: KvItem) {
 <template>
   <dl class="kv">
     <template v-for="item in props.items" :key="item.k">
-      <dt>{{ item.k }}</dt>
+      <dt :title="item.title" :class="{ 'has-title': item.title }">{{ item.k }}</dt>
       <!-- 带 secret 的走 MaskedText：它自己管打码与展开，
            复制也由它处理，所以这里不再挂 click -->
-      <dd v-if="item.secret" :class="{ mono: item.mono, 'has-action': item.action }"
+      <dd v-if="item.secret" :class="{ mono: item.mono, 'has-action': item.action }" :title="item.title"
           :style="{ color: item.tone ?? 'var(--text-primary)' }">
         <MaskedText :value="item.v" :kind="item.secret" :copyable="item.copyable" />
         <button v-if="item.action" class="kv__act" :class="{ 'is-warning': item.action.tone === 'warning' }"
@@ -49,6 +49,7 @@ dt, dd {
   font-size: 12px; align-self: baseline; word-break: break-all;
 }
 dt { color: var(--text-secondary); }
+dt.has-title { cursor: help; }
 dd.is-copyable { cursor: copy; }
 dd.is-copyable:hover { color: var(--accent); }
 dd a { color: var(--accent); text-decoration: none; }
