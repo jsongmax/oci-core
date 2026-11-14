@@ -6,6 +6,7 @@
  * 界面不再干等。这里集中看它们的进度、每一步做了什么、失败原因。
  * 数据全部来自 store：首屏加载一次，之后靠 SSE 的 job.updated 实时更新。
  */
+import { t, intlLocale } from '@/i18n'
 import { computed, ref } from 'vue'
 import { useStore } from '@/store'
 import { relativeTime } from '@/lib/adapt'
@@ -23,10 +24,6 @@ const {
 type Filter = 'all' | 'active' | 'failed' | 'done'
 const filter = ref<Filter>('all')
 
-const STATUS_LABEL: Record<JobStatus, string> = {
-  queued: '排队中', running: '进行中', succeeded: '已完成',
-  failed: '失败', canceled: '已取消', interrupted: '已中断'
-}
 const STATUS_TONE: Record<JobStatus, string> = {
   queued: 'var(--text-tertiary)', running: 'var(--accent)', succeeded: 'var(--success)',
   failed: 'var(--danger)', canceled: 'var(--text-tertiary)', interrupted: 'var(--warning)'
@@ -76,14 +73,14 @@ function duration(j: JobDTO): string {
   if (!j.startedAt) return ''
   const end = j.finishedAt ? Date.parse(j.finishedAt) : Math.max(now.value, Date.now())
   const sec = Math.max(0, Math.round((end - Date.parse(j.startedAt)) / 1000))
-  if (sec < 60) return `${sec} 秒`
+  if (sec < 60) return t.jobsPage.durS(sec)
   const min = Math.floor(sec / 60)
-  return `${min} 分 ${sec % 60} 秒`
+  return t.jobsPage.durMS(min, sec % 60)
 }
 
 function stepTime(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleTimeString('zh-CN', { hour12: false })
+  return d.toLocaleTimeString(intlLocale(), { hour12: false })
 }
 
 function canOpenInstance(j: JobDTO): boolean {
@@ -93,9 +90,9 @@ function canOpenInstance(j: JobDTO): boolean {
 function askClear() {
   ask({
     level: 2,
-    title: '清除已结束的任务',
-    body: `将从列表中移除 ${finishedCount.value} 条已结束的任务。操作本身已记在审计日志里，不受影响。`,
-    okLabel: '清除',
+    title: t.jobsPage.clearTitle,
+    body: t.jobsPage.clearBody(finishedCount.value),
+    okLabel: t.jobsPage.clear,
     onConfirm: () => clearFinishedJobs()
   })
 }
@@ -105,21 +102,20 @@ function askClear() {
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">任务</h1>
+        <h1 class="page-title">{{ t.jobsPage.title }}</h1>
         <p class="page-sub">
-          长耗时操作在后台执行，关掉页面也会跑完 ·
-          {{ counts.active }} 个进行中，共 {{ counts.all }} 条
+          {{ t.jobsPage.subtitle(counts.active, counts.all) }}
         </p>
       </div>
       <div class="head-actions">
-        <button class="btn" @click="loadJobs()">刷新</button>
-        <button class="btn" :disabled="finishedCount === 0" @click="askClear()">清除已结束</button>
+        <button class="btn" @click="loadJobs()">{{ t.common.refresh }}</button>
+        <button class="btn" :disabled="finishedCount === 0" @click="askClear()">{{ t.jobsPage.clearFinished }}</button>
       </div>
     </header>
 
     <div class="filters" role="tablist">
       <button v-for="f in ([
-        ['all', '全部'], ['active', '进行中'], ['failed', '失败'], ['done', '已完成']
+        ['all', t.jobsPage.filterAll], ['active', t.jobsPage.filterActive], ['failed', t.jobsPage.filterFailed], ['done', t.jobsPage.filterDone]
       ] as [Filter, string][])" :key="f[0]" role="tab"
               class="filter" :class="{ 'is-on': filter === f[0] }" :aria-selected="filter === f[0]"
               @click="filter = f[0]">
@@ -127,11 +123,11 @@ function askClear() {
       </button>
     </div>
 
-    <SectionCard title="任务列表" note="最多保留最近 300 条已结束的任务">
+    <SectionCard :title="t.jobsPage.listTitle" :note="t.jobsPage.listNote">
       <SkeletonRows v-if="!state.jobsLoaded" :rows="4" :height="52" />
       <EmptyState v-else-if="list.length === 0" icon="◷"
-                  :title="state.jobs.length === 0 ? '还没有后台任务' : '这个分类下没有任务'"
-                  sub="创建实例、更换公网 IP、修改配置等操作提交后会出现在这里。" />
+                  :title="state.jobs.length === 0 ? t.jobsPage.emptyNone : t.jobsPage.emptyFiltered"
+                  :sub="t.jobsPage.emptySub" />
 
       <div v-for="(j, n) in list" :key="j.id" class="job reveal" :class="{ 'is-active': isActive(j) }"
            :style="{ '--i': Math.min(n, 8) }">
@@ -148,10 +144,10 @@ function askClear() {
             </span>
             <span class="job__line2">
               <span class="t-2xs job__status" :style="{ color: STATUS_TONE[j.status] }">
-                ● {{ STATUS_LABEL[j.status] }}
+                ● {{ t.jobsPage.status[j.status] }}
               </span>
-              <span class="mono t-2xs dim-3">{{ relativeTime(j.createdAt) }}提交</span>
-              <span v-if="j.startedAt" class="mono t-2xs dim-3">用时 {{ duration(j) }}</span>
+              <span class="mono t-2xs dim-3">{{ t.jobsPage.submitted(relativeTime(j.createdAt)) }}</span>
+              <span v-if="j.startedAt" class="mono t-2xs dim-3">{{ t.jobsPage.took(duration(j)) }}</span>
               <span v-if="j.summary && j.status === 'succeeded'" class="t-2xs job__summary">{{ j.summary }}</span>
               <span v-if="j.error" class="t-2xs job__error" :title="j.error">{{ j.error }}</span>
             </span>
@@ -175,19 +171,19 @@ function askClear() {
             </li>
           </ol>
           <p v-else class="t-xs dim-3 job__empty">
-            {{ j.status === 'queued' ? '等待前面的任务完成（同一台实例上的操作按顺序执行）' : '还没有进度记录' }}
+            {{ j.status === 'queued' ? t.jobsPage.waitingQueue : t.jobsPage.noSteps }}
           </p>
 
           <p v-if="j.error" class="job__errbox">{{ j.error }}</p>
           <p v-if="j.status === 'interrupted'" class="t-xs dim-3">
-            请求可能已经发到 Oracle，请到对应页面确认实际状态，再决定是否重做。
+            {{ t.jobsPage.interruptedHint }}
           </p>
 
           <div class="job__actions">
             <button v-if="canOpenInstance(j)" class="btn btn--sm"
-                    @click="openDrawer({ kind: 'instance', id: j.instanceId! })">查看实例</button>
-            <button v-if="j.status === 'queued'" class="btn btn--sm" @click="cancelJob(j.id)">取消</button>
-            <button v-if="!isActive(j)" class="btn btn--sm btn--ghost" @click="removeJob(j.id)">移除</button>
+                    @click="openDrawer({ kind: 'instance', id: j.instanceId! })">{{ t.common.viewInstance }}</button>
+            <button v-if="j.status === 'queued'" class="btn btn--sm" @click="cancelJob(j.id)">{{ t.common.cancel }}</button>
+            <button v-if="!isActive(j)" class="btn btn--sm btn--ghost" @click="removeJob(j.id)">{{ t.jobsPage.remove }}</button>
           </div>
         </div>
       </div>

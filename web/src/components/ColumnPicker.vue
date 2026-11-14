@@ -5,6 +5,7 @@
  * 和 SelectMenu 一样 Teleport 到 body：所在的 toolbar 有 overflow 裁剪，
  * 面板留在原地会被切掉一半。定位用 fixed + 手算坐标，滚动和缩放时重算。
  */
+import { t } from '@/i18n'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ColumnState } from '@/lib/columns'
 
@@ -85,7 +86,7 @@ watch(open, v => {
 <template>
   <button ref="triggerEl" class="pill" :class="{ 'is-active': open || hiddenCount > 0 }"
           :aria-expanded="open" aria-haspopup="true" @click="toggleOpen()">
-    列<span v-if="hiddenCount > 0" class="mono cp__badge">−{{ hiddenCount }}</span>
+    {{ t.ui.columns }}<span v-if="hiddenCount > 0" class="mono cp__badge">−{{ hiddenCount }}</span>
   </button>
 
   <Teleport to="body">
@@ -93,7 +94,7 @@ watch(open, v => {
       <div class="cp__scrim" @click="open = false" />
       <div ref="panelEl" class="cp__panel"
            :style="{ top: pos.top + 'px', left: pos.left + 'px', width: PANEL_W + 'px' }"
-           role="group" aria-label="选择显示的列并调整顺序">
+           role="group" :aria-label="t.ui.columnsGroup">
         <div v-for="(c, i) in columns.ordered.value" :key="c.key" class="cp__row"
              :class="{ 'is-dragging': dragging === c.key }" draggable="true"
              @dragstart="dragging = c.key" @dragend="dragging = ''"
@@ -103,20 +104,20 @@ watch(open, v => {
             <input type="checkbox" :checked="columns.isOn(c.key)" @change="columns.toggle(c.key)" />
             <span class="t-xs">{{ c.label }}</span>
           </label>
-          <button class="cp__step" :disabled="i === 0" :aria-label="`${c.label} 上移`"
+          <button class="cp__step" :disabled="i === 0" :aria-label="t.ui.moveUp(c.label)"
                   @click="step(c.key, -1)">↑</button>
           <button class="cp__step" :disabled="i === columns.ordered.value.length - 1"
-                  :aria-label="`${c.label} 下移`" @click="step(c.key, 1)">↓</button>
+                  :aria-label="t.ui.moveDown(c.label)" @click="step(c.key, 1)">↓</button>
         </div>
 
         <!-- 勾了却没出现的列必须解释，否则看起来就是开关失灵 -->
         <p v-if="columns.suppressed.value.length" class="cp__note t-2xs dim-3">
           {{ columns.suppressed.value.map(c => c.label).join('、') }}
-          因窗口太窄暂时隐藏，拉宽即可显示。
+          {{ t.ui.columnsHiddenNarrow }}
         </p>
 
         <div class="cp__foot">
-          <button class="btn btn--xs" @click="columns.reset()">恢复默认</button>
+          <button class="btn btn--xs" @click="columns.reset()">{{ t.ui.resetDefault }}</button>
         </div>
       </div>
     </template>

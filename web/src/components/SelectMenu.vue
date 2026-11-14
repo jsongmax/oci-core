@@ -10,6 +10,7 @@
  * overflow: hidden，绝对定位会被整齐地裁掉，而且裁得看不出痕迹
  * （这个坑本项目已经踩过一次，见 InstanceRowActions）。
  */
+import { t } from '@/i18n'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 export interface SelectOption {
@@ -32,7 +33,7 @@ const props = withDefaults(defineProps<{
   minWidth?: number
   /** 无障碍名称。触发器是 button 而不是 select，<label for> 挂不上去。 */
   ariaLabel?: string
-}>(), { placeholder: '请选择', disabled: false, minWidth: 240, ariaLabel: '' })
+}>(), { placeholder: '', disabled: false, minWidth: 240, ariaLabel: '' })
 
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
@@ -132,7 +133,7 @@ onBeforeUnmount(() => {
           aria-haspopup="listbox" :aria-expanded="open" @click="toggle()">
     <span v-if="selected?.dot" class="sm__dot" :style="{ background: selected.dot }" />
     <span class="sm__label" :class="{ 'is-placeholder': !selected }">
-      {{ selected?.label ?? placeholder }}
+      {{ selected?.label ?? (placeholder || t.ui.selectPlaceholder) }}
     </span>
     <span class="sm__caret" aria-hidden="true">▾</span>
   </button>
@@ -153,7 +154,7 @@ onBeforeUnmount(() => {
           <span v-if="o.value === modelValue" class="sm__check">✓</span>
         </button>
       </template>
-      <p v-if="flat.length === 0" class="sm__empty">没有可选项</p>
+      <p v-if="flat.length === 0" class="sm__empty">{{ t.ui.noOptions }}</p>
     </div>
   </Teleport>
 </template>

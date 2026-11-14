@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.6 CredentialField —— 私钥输入：失焦立即打码，无显示/导出入口 */
+import { t } from '@/i18n'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{ modelValue: string; fingerprint?: string; existing?: boolean }>()
@@ -32,22 +33,22 @@ async function onFile(event: Event) {
 
   // 私钥文件只有几 KB。明显超标的多半是选错了文件。
   if (file.size > 64 * 1024) {
-    fileError.value = `文件有 ${Math.round(file.size / 1024)} KB，不像是私钥，请确认选对了文件`
+    fileError.value = t.ui.pemTooLarge(Math.round(file.size / 1024))
     return
   }
 
   const text = (await file.text()).trim()
 
   if (!text.includes('-----BEGIN')) {
-    fileError.value = '文件里没有找到 PEM 区块，请选择 .pem 私钥文件'
+    fileError.value = t.ui.pemNoBlock
     return
   }
   if (text.includes('PUBLIC KEY')) {
-    fileError.value = '这是公钥文件。需要的是私钥（oci_api_key.pem）'
+    fileError.value = t.ui.pemIsPublic
     return
   }
   if (text.includes('ENCRYPTED')) {
-    fileError.value = '该私钥带口令，本工具不支持。请先解密：' +
+    fileError.value = t.ui.pemEncrypted +
       'openssl rsa -in oci_api_key.pem -out oci_api_key_plain.pem'
     return
   }
@@ -60,9 +61,9 @@ async function onFile(event: Event) {
 <template>
   <div class="field">
     <div class="cred__label">
-      <label for="pem">API 私钥（PEM）</label>
+      <label for="pem">{{ t.ui.pemLabel }}</label>
       <button type="button" class="cred__upload" @click="fileInput?.click()">
-        从文件读取
+        {{ t.ui.pemFromFile }}
       </button>
       <input ref="fileInput" type="file" class="cred__file"
              accept=".pem,.key,application/x-pem-file,text/plain"
@@ -72,7 +73,7 @@ async function onFile(event: Event) {
     <textarea id="pem" class="textarea cred" :class="{ 'is-filled': filled && !focused }"
               :style="{ height: focused ? '140px' : '44px' }"
               :value="shown"
-              :placeholder="existing ? '留空则不修改' : '-----BEGIN PRIVATE KEY-----'"
+              :placeholder="existing ? t.ui.pemKeepEmpty : '-----BEGIN PRIVATE KEY-----'"
               spellcheck="false" autocomplete="off"
               @focus="focused = true" @blur="focused = false"
               @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)" />
@@ -80,8 +81,8 @@ async function onFile(event: Event) {
     <span v-if="fileError" class="cred__note is-err">{{ fileError }}</span>
     <span v-else class="cred__note" :class="{ 'is-ok': filled }">
       {{ filled
-        ? `已加密存储 · 指纹 ${fingerprint || '待校验'}${fileName ? ` · 来自 ${fileName}` : ''}`
-        : '失焦后立即打码，界面上不存在显示或导出入口' }}
+        ? t.ui.pemStored(fingerprint ?? '', fileName)
+        : t.ui.pemMaskedNote }}
     </span>
   </div>
 </template>

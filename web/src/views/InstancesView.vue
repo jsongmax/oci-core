@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.4.1 实例列表：跨账号聚合表格 · 筛选 · 分组 · 密度 · 批量条 */
+import { t } from '@/i18n'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useStore, type StateFilter } from '@/store'
 import { acctColor, copy } from '@/lib/format'
@@ -54,7 +55,7 @@ async function saveNote(i: Instance) {
     await api.setNote(i.id, next)
   } catch (err) {
     i.note = before
-    toastError('保存备注失败', err)
+    toastError(t.instancesPage.noteFailed, err)
   }
 }
 
@@ -90,10 +91,10 @@ async function saveName(i: Instance) {
   try {
     const { instances: api } = await import('@/api')
     await api.rename(i.id, next)
-    toast({ tone: 'accent', title: '已重命名', body: `${before} → ${next}` })
+    toast({ tone: 'accent', title: t.instancesPage.renamed, body: `${before} → ${next}` })
   } catch (err) {
     i.name = before
-    toastError('重命名失败', err)
+    toastError(t.instancesPage.renameFailed, err)
   }
 }
 
@@ -126,15 +127,15 @@ function ipTitle(i: Instance): string {
     if (!ips.length) return
     lines.push(label, ...ips.map(ip => '  ' + show(ip)))
   }
-  group('主网卡 IPv6', i.ipv6)
-  group('附属网卡 IPv4', i.secondaryIpv4)
-  group('附属网卡 IPv6', i.secondaryIpv6)
+  group(t.instancesPage.primaryV6, i.ipv6)
+  group(t.instancesPage.secondaryV4, i.secondaryIpv4)
+  group(t.instancesPage.secondaryV6, i.secondaryIpv6)
   return lines.join('\n')
 }
 
 /** 复制公网 IP。整行是可点的，按钮必须 @click.stop 才不会顺手打开抽屉。 */
 function copyIp(ip: string) {
-  void copy(ip).then(() => toast({ tone: 'accent', title: '已复制公网 IP', body: ip }))
+  void copy(ip).then(() => toast({ tone: 'accent', title: t.instancesPage.ipCopied, body: ip }))
 }
 
 const collapsedGroups = ref<Set<string>>(new Set())
@@ -147,19 +148,19 @@ const collapsedGroups = ref<Set<string>>(new Set())
  * 不会出现「CSS 藏了一列但 grid 模板还留着那一格」导致整行错位。
  */
 const INSTANCE_COLUMNS: ColumnDef[] = [
-  { key: 'check',   label: '选择',     width: '40px',                 fixed: true, minWidth: 0 },
-  { key: 'state',   label: '状态',     width: '104px',                fixed: true },
-  { key: 'name',    label: '名称',     width: 'minmax(180px, 1.5fr)', fixed: true, minWidth: 120 },
-  { key: 'account', label: '账号',     width: '78px' },
-  { key: 'region',  label: '区域 · AD', width: '158px',               minViewport: 1024 },
-  { key: 'shape',   label: '规格',     width: 'minmax(170px, 1.2fr)', minViewport: 1024 },
+  { key: 'check', get label() { return t.instancesPage.col.check },     width: '40px',                 fixed: true, minWidth: 0 },
+  { key: 'state', get label() { return t.instancesPage.col.state },     width: '104px',                fixed: true },
+  { key: 'name', get label() { return t.instancesPage.col.name },     width: 'minmax(180px, 1.5fr)', fixed: true, minWidth: 120 },
+  { key: 'account', get label() { return t.instancesPage.col.account },     width: '78px' },
+  { key: 'region', get label() { return t.instancesPage.col.region }, width: '158px',               minViewport: 1024 },
+  { key: 'shape', get label() { return t.instancesPage.col.shape },     width: 'minmax(170px, 1.2fr)', minViewport: 1024 },
   // 172px 放得下最长的 IPv4（15 位）+ 展开按钮 + 复制按钮。
   // 原来 132px 时 xxx.xxx.xxx.xxx 一展开就被截成省略号。
-  { key: 'ip',      label: '公网 IP',  width: '172px' },
-  { key: 'boot',    label: '引导卷',   width: '84px',                 minViewport: 1280 },
-  { key: 'note',    label: '备注',     width: 'minmax(110px, 1fr)',   minViewport: 1280 },
-  { key: 'uptime',  label: '运行时长', width: '88px',                 minViewport: 1600 },
-  { key: 'actions', label: '操作',     width: '132px',                fixed: true, minWidth: 0 }
+  { key: 'ip', get label() { return t.instancesPage.col.ip },  width: '172px' },
+  { key: 'boot', get label() { return t.instancesPage.col.boot },   width: '84px',                 minViewport: 1280 },
+  { key: 'note', get label() { return t.instancesPage.col.note },     width: 'minmax(110px, 1fr)',   minViewport: 1280 },
+  { key: 'uptime', get label() { return t.instancesPage.col.uptime }, width: '88px',                 minViewport: 1600 },
+  { key: 'actions', get label() { return t.instancesPage.col.actions },     width: '132px',                fixed: true, minWidth: 0 }
 ]
 
 const cols = useColumns('oci.cols.instances', INSTANCE_COLUMNS)
@@ -202,14 +203,7 @@ function startResize(e: PointerEvent, key: string) {
   handle.addEventListener('pointercancel', onUp)
 }
 
-const filters: { key: StateFilter; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'running', label: '运行中' },
-  { key: 'stopped', label: '已停止' },
-  { key: 'transition', label: '转换中' },
-  { key: 'anomaly', label: '异常' },
-  { key: 'terminated', label: '已终止' }
-]
+const filters: StateFilter[] = ['all', 'running', 'stopped', 'transition', 'anomaly', 'terminated']
 
 const rowHeight = computed(() => (state.density === 'comfy' ? 56 : 44))
 
@@ -316,9 +310,9 @@ function toggleGroup(id: string) {
 
 const subtitle = computed(() => {
   const scope = state.accountFilter.size === state.accounts.length
-    ? `跨 ${state.accounts.length} 个账号聚合`
-    : `${state.accountFilter.size} 个账号`
-  return `${scope} · 共 ${filteredInstances.value.length} 台`
+    ? t.instancesPage.scopeAll(state.accounts.length)
+    : t.instancesPage.scopeSome(state.accountFilter.size)
+  return t.instancesPage.subtitle(scope, filteredInstances.value.length)
 })
 
 const bootTone = (i: Instance) =>
@@ -329,15 +323,15 @@ const bootTone = (i: Instance) =>
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">实例</h1>
+        <h1 class="page-title">{{ t.instancesPage.title }}</h1>
         <p class="page-sub">{{ subtitle }}</p>
       </div>
       <div class="head-actions">
-        <span v-if="!state.live" class="offline" title="实时连接已断开，状态可能不是最新的">离线</span>
+        <span v-if="!state.live" class="offline" :title="t.instancesPage.offlineTitle">{{ t.instancesPage.offline }}</span>
         <button class="btn" :disabled="state.syncing" @click="syncNow()">
-          <span v-if="state.syncing" class="btn-spin" aria-hidden="true" />{{ state.syncing ? '同步中' : '同步' }}
+          <span v-if="state.syncing" class="btn-spin" aria-hidden="true" />{{ state.syncing ? t.instancesPage.syncing : t.instancesPage.sync }}
         </button>
-        <button class="btn btn--primary" @click="openDrawer({ kind: 'create-instance' })">创建实例</button>
+        <button class="btn btn--primary" @click="openDrawer({ kind: 'create-instance' })">{{ t.instancesPage.create }}</button>
       </div>
     </header>
     <!-- 同步要去 OCI 逐个区域查，可能几十秒；列表照常可用，只在页头下走一条进度 -->
@@ -346,19 +340,19 @@ const bootTone = (i: Instance) =>
     <p v-if="state.loadError" class="load-err">{{ state.loadError }}</p>
 
     <div class="toolbar">
-      <button v-for="f in filters" :key="f.key" class="pill"
-              :class="{ 'is-active': state.stateFilter === f.key }" @click="state.stateFilter = f.key">
-        {{ f.label }}<span class="mono toolbar__count">{{ countByFilter(f.key) }}</span>
+      <button v-for="f in filters" :key="f" class="pill"
+              :class="{ 'is-active': state.stateFilter === f }" @click="state.stateFilter = f">
+        {{ t.instancesPage.filter[f] }}<span class="mono toolbar__count">{{ countByFilter(f) }}</span>
       </button>
       <span class="toolbar__spacer" />
       <!-- 隐私模式关着时 IP 本来就是明文，按钮没有意义 -->
       <button v-if="state.privacyMode" class="pill" :class="{ 'is-active': ipsRevealed }"
-              :title="ipsRevealed ? '重新给公网 IP 打码' : '显示全部公网 IP 原文'"
-              @click="ipsRevealed = !ipsRevealed">{{ ipsRevealed ? '隐藏 IP' : '显示 IP' }}</button>
+              :title="ipsRevealed ? t.instancesPage.maskIps : t.instancesPage.revealIps"
+              @click="ipsRevealed = !ipsRevealed">{{ ipsRevealed ? t.instancesPage.hideIp : t.instancesPage.showIp }}</button>
       <button class="pill" :class="{ 'is-active': state.groupByAccount }"
-              @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
+              @click="state.groupByAccount = !state.groupByAccount">{{ t.instancesPage.groupByAccount }}</button>
       <button class="pill" @click="state.density = state.density === 'comfy' ? 'compact' : 'comfy'">
-        {{ state.density === 'comfy' ? '舒适 56px' : '紧凑 44px' }}
+        {{ state.density === 'comfy' ? t.instancesPage.comfy : t.instancesPage.compact }}
       </button>
       <ColumnPicker :columns="cols" />
     </div>
@@ -369,15 +363,15 @@ const bootTone = (i: Instance) =>
               :class="{ table__right: c.key === 'actions' }"
               :aria-sort="SORTABLE.has(c.key) ? ariaSort(c.key as SortKey) : undefined">
           <template v-if="c.key === 'check'" />
-          <template v-else-if="c.key === 'actions'">操作</template>
+          <template v-else-if="c.key === 'actions'">{{ c.label }}</template>
           <template v-else-if="!SORTABLE.has(c.key)">{{ c.label }}</template>
           <button v-else class="th-sort" :class="{ 'is-on': sort?.key === c.key }"
-                  :title="`按${c.label}排序`" @click="toggleSort(c.key as SortKey)">
+                  :title="t.instancesPage.sortBy(c.label)" @click="toggleSort(c.key as SortKey)">
             {{ c.label }}<span class="th-sort__dir">{{ sort?.key === c.key ? (sort.dir === 1 ? '↑' : '↓') : '↕' }}</span>
           </button>
           <span v-if="cols.resizable(c.key)" class="th__resize" :class="{ 'is-active': resizing === c.key }"
-                role="separator" aria-orientation="vertical" :aria-label="`调整${c.label}列宽`"
-                title="拖动调整列宽，双击恢复默认"
+                role="separator" aria-orientation="vertical" :aria-label="t.instancesPage.resizeCol(c.label)"
+                :title="t.instancesPage.resizeHint"
                 @pointerdown="startResize($event, c.key)" @dblclick.stop="cols.resetWidth(c.key)" />
         </span>
       </div>
@@ -392,8 +386,7 @@ const bootTone = (i: Instance) =>
           <span class="t-xs">{{ g.account.alias }}</span>
           <span class="group__spacer" />
           <span class="mono t-2xs dim-3">
-            {{ g.rows.length }} 台 · 运行 {{ g.rows.filter(i => i.state === 'RUNNING').length }} ·
-            停止 {{ g.rows.filter(i => i.state === 'STOPPED').length }}
+            {{ t.instancesPage.groupStats(g.rows.length, g.rows.filter(i => i.state === 'RUNNING').length, g.rows.filter(i => i.state === 'STOPPED').length) }}
           </span>
         </button>
 
@@ -406,7 +399,7 @@ const bootTone = (i: Instance) =>
 
             <label class="cell cell--check" :style="{ order: cols.pos('check') }">
               <input type="checkbox" :checked="state.selection.has(i.id)" @change="toggleSelection(i.id)"
-                     :aria-label="`选择 ${i.name}`" />
+                     :aria-label="t.instancesPage.select(i.name)" />
             </label>
 
             <span class="cell" :style="{ order: cols.pos('state') }">
@@ -423,9 +416,9 @@ const bootTone = (i: Instance) =>
                      @blur="saveName(i)" />
               <span v-else class="name-row">
                 <button class="name" :class="{ 'is-terminated': i.state === 'TERMINATED' }"
-                        @click="openDrawer({ kind: 'instance', id: i.id, tab: '概览' })">{{ i.name }}</button>
+                        @click="openDrawer({ kind: 'instance', id: i.id, tab: 'overview' })">{{ i.name }}</button>
                 <button v-if="canRename(i)" class="name__edit"
-                        title="重命名（仅改显示名称，不改系统主机名）" aria-label="重命名"
+                        :title="t.instancesPage.renameTitle" :aria-label="t.instancesPage.rename"
                         @click.stop="startRename(i)">✎</button>
               </span>
               <span class="mono t-2xs dim-3">ocid1…{{ i.ocidTail }}</span>
@@ -443,7 +436,7 @@ const bootTone = (i: Instance) =>
                   :class="{ 'is-fresh': i.settledAt, 'is-changed': i.previousIp }">
               <span class="ip__v">
                 <MaskedText :value="i.publicIp" kind="ip" :plain="ipsRevealed" />
-                <span v-if="i.previousIp" class="ip__old t-2xs">原 <MaskedText :value="i.previousIp" kind="ip" :plain="ipsRevealed" /></span>
+                <span v-if="i.previousIp" class="ip__old t-2xs">{{ t.instancesPage.previous }} <MaskedText :value="i.previousIp" kind="ip" :plain="ipsRevealed" /></span>
                 <!-- IPv6 动辄 39 个字符，列宽放不下全部：显示第一个，其余数量标在后面，
                      悬停看全部 -->
                 <span v-if="i.ipv6.length || extraIpCount(i)" class="ip__v6 t-2xs" :title="ipTitle(i)">
@@ -451,7 +444,7 @@ const bootTone = (i: Instance) =>
                   <span v-if="extraIpCount(i)" class="ip__v6-more">+{{ extraIpCount(i) }}</span>
                 </span>
               </span>
-              <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" title="复制公网 IP"
+              <button v-if="i.publicIp && i.publicIp !== '—'" class="ip__copy" :title="t.instancesPage.copyIp"
                       @click.stop="copyIp(i.publicIp)">⧉</button>
             </span>
 
@@ -461,7 +454,7 @@ const bootTone = (i: Instance) =>
                 <span class="mono t-xs" :style="{ color: bootTone(i) }">{{ i.bootGb }} GB</span>
                 <span class="mono t-2xs dim-3">VPU {{ i.vpu }}</span>
               </template>
-              <span v-else class="mono t-xs dim-3" title="引导卷信息读取中">—</span>
+              <span v-else class="mono t-xs dim-3" :title="t.instancesPage.bootLoading">—</span>
             </span>
 
             <span v-if="cols.has('note')" class="cell col-note" :style="{ order: cols.pos('note') }">
@@ -472,14 +465,14 @@ const bootTone = (i: Instance) =>
                      @keydown.esc.stop.prevent="editingNote = ''"
                      @blur="saveNote(i)" />
               <button v-else class="note-view" :class="{ 'is-empty': !i.note }"
-                      :title="i.note || '点击添加备注'" @click.stop="startNote(i)">
+                      :title="i.note || t.instancesPage.addNote" @click.stop="startNote(i)">
                 {{ i.note || '＋' }}
               </button>
             </span>
             <span v-if="cols.has('uptime')" class="cell mono t-xs dim col-uptime" :style="{ order: cols.pos('uptime') }"
                   :title="instanceUptime(i).approx
-                    ? '面板未观测到本次开机（首次同步时它已在运行），这里显示的是创建至今的时长'
-                    : '自面板观测到本次开机起'">
+                    ? t.instancesPage.uptimeApprox
+                    : t.instancesPage.uptimeExact">
               <template v-if="instanceUptime(i).approx">~</template>{{ instanceUptime(i).text }}
             </span>
 
@@ -493,19 +486,19 @@ const bootTone = (i: Instance) =>
         </TransitionGroup>
       </template>
 
-      <EmptyState v-if="!filteredInstances.length" title="没有符合筛选条件的实例"
-                  action-label="清除筛选" @action="state.stateFilter = 'all'" />
+      <EmptyState v-if="!filteredInstances.length" :title="t.instancesPage.emptyFiltered"
+                  :action-label="t.instancesPage.clearFilter" @action="state.stateFilter = 'all'" />
     </div>
 
     <!-- 批量操作条：批量终止不提供（§4.4.1） -->
     <Transition name="scrim">
       <div v-if="state.selection.size && state.options.allowBulk" class="bulk glass">
-        <span class="t-sm"><span class="mono bulk__n">{{ state.selection.size }}</span> 台已选</span>
+        <span class="t-sm"><span class="mono bulk__n">{{ state.selection.size }}</span> {{ t.instancesPage.selected }}</span>
         <span class="bulk__sep" />
-        <button class="btn btn--sm" @click="bulk('start')">批量开机</button>
-        <button class="btn btn--sm" @click="bulk('stop')">批量关机</button>
-        <button class="btn btn--sm" @click="bulk('restart')">批量重启</button>
-        <span class="t-2xs dim-3">批量终止不提供，需逐台执行</span>
+        <button class="btn btn--sm" @click="bulk('start')">{{ t.instancesPage.bulkStart }}</button>
+        <button class="btn btn--sm" @click="bulk('stop')">{{ t.instancesPage.bulkStop }}</button>
+        <button class="btn btn--sm" @click="bulk('restart')">{{ t.instancesPage.bulkRestart }}</button>
+        <span class="t-2xs dim-3">{{ t.instancesPage.noBulkTerminate }}</span>
         <button class="bulk__close" @click="state.selection.clear()">✕</button>
       </div>
     </Transition>

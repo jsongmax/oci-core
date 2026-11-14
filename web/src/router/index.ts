@@ -1,25 +1,27 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { watch } from 'vue'
 import { useStore } from '@/store'
+import { locale, t } from '@/i18n'
 
 /** hash 路由：Go 单二进制内嵌静态资源时无需服务端 rewrite */
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: '/', redirect: '/overview' },
-    { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { bare: true, title: '登录' } },
-    { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: '总览' } },
-    { path: '/accounts', name: 'accounts', component: () => import('@/views/AccountsView.vue'), meta: { title: '账号' } },
-    { path: '/instances', name: 'instances', component: () => import('@/views/InstancesView.vue'), meta: { title: '实例' } },
-    { path: '/network', name: 'network', component: () => import('@/views/NetworkView.vue'), meta: { title: '网络' } },
-    { path: '/jobs', name: 'jobs', component: () => import('@/views/JobsView.vue'), meta: { title: '任务' } },
-    { path: '/hunt', name: 'hunt', component: () => import('@/views/HuntView.vue'), meta: { title: '容量守候' } },
-    { path: '/capacity', name: 'capacity', component: () => import('@/views/CapacityView.vue'), meta: { title: '容量监控' } },
-    { path: '/storage', name: 'storage', component: () => import('@/views/StorageView.vue'), meta: { title: '存储' } },
-    { path: '/resources', name: 'resources', component: () => import('@/views/ResourcesView.vue'), meta: { title: '资源' } },
-    { path: '/billing', name: 'billing', component: () => import('@/views/BillingView.vue'), meta: { title: '账单' } },
-    { path: '/proxies', name: 'proxies', component: () => import('@/views/ProxiesView.vue'), meta: { title: '代理' } },
-    { path: '/notifications', name: 'notifications', component: () => import('@/views/NotificationsView.vue'), meta: { title: '通知' } },
-    { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '设置' } },
+    { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { bare: true } },
+    { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue') },
+    { path: '/accounts', name: 'accounts', component: () => import('@/views/AccountsView.vue') },
+    { path: '/instances', name: 'instances', component: () => import('@/views/InstancesView.vue') },
+    { path: '/network', name: 'network', component: () => import('@/views/NetworkView.vue') },
+    { path: '/jobs', name: 'jobs', component: () => import('@/views/JobsView.vue') },
+    { path: '/hunt', name: 'hunt', component: () => import('@/views/HuntView.vue') },
+    { path: '/capacity', name: 'capacity', component: () => import('@/views/CapacityView.vue') },
+    { path: '/storage', name: 'storage', component: () => import('@/views/StorageView.vue') },
+    { path: '/resources', name: 'resources', component: () => import('@/views/ResourcesView.vue') },
+    { path: '/billing', name: 'billing', component: () => import('@/views/BillingView.vue') },
+    { path: '/proxies', name: 'proxies', component: () => import('@/views/ProxiesView.vue') },
+    { path: '/notifications', name: 'notifications', component: () => import('@/views/NotificationsView.vue') },
+    { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue') },
     // 兜底。移除移动端路由（/m/*）后，旧书签会匹配不到任何路由，
     // 渲染出一个只有外壳、内容区空白的页面——看起来像界面崩了。
     { path: '/:pathMatch(.*)*', redirect: '/overview' }
@@ -56,9 +58,18 @@ router.beforeEach(async (to) => {
   return { name: 'login' }
 })
 
-router.afterEach((to) => {
-  const title = (to.meta.title as string) ?? ''
+/** 页面名取自路由名，按当前语言显示。 */
+export function pageTitle(name: unknown): string {
+  return typeof name === 'string' ? (t.nav.pages[name] ?? '') : ''
+}
+
+function applyTitle(): void {
+  const title = pageTitle(router.currentRoute.value.name)
   document.title = title ? `${title} · OCI Core` : 'OCI Core'
-})
+}
+
+router.afterEach(() => applyTitle())
+// 切换语言时标签页标题也要跟着变，不必等下一次跳转。
+watch(locale, () => applyTitle())
 
 export default router

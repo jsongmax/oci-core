@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §3.3 全局搜索：跨账号搜实例名 / OCID / IP / 账号别名，结果带身份色条 */
+import { t } from '@/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -52,15 +53,15 @@ function goAccount(id: string) {
 <template>
   <Transition name="scrim">
     <div v-if="state.paletteOpen" class="scrim" @click.self="state.paletteOpen = false">
-      <div class="pal" role="dialog" aria-modal="true" aria-label="全局搜索">
+      <div class="pal" role="dialog" aria-modal="true" :aria-label="t.ui.paletteLabel">
         <div class="pal__head">
           <span class="dim-3">⌕</span>
-          <input ref="input" v-model="query" class="pal__input" placeholder="搜索实例名 · OCID · IP · 账号别名" />
+          <input ref="input" v-model="query" class="pal__input" :placeholder="t.ui.palettePlaceholder" />
           <span class="pal__kbd mono">ESC</span>
         </div>
         <div class="pal__body">
           <template v-if="instanceHits.length">
-            <p class="pal__group">实例</p>
+            <p class="pal__group">{{ t.ui.paletteInstances }}</p>
             <button v-for="i in instanceHits" :key="i.id" class="pal__row" @click="goInstance(i.id)">
               <span class="pal__bar" :style="{ background: acctColor(accountById(i.accountId).colorIndex) }" />
               <span class="pal__title">{{ i.name }}</span>
@@ -71,7 +72,7 @@ function goAccount(id: string) {
             </button>
           </template>
           <template v-if="accountHits.length">
-            <p class="pal__group">账号</p>
+            <p class="pal__group">{{ t.ui.paletteAccounts }}</p>
             <button v-for="a in accountHits" :key="a.id" class="pal__row" @click="goAccount(a.id)">
               <span class="pal__bar" :style="{ background: acctColor(a.colorIndex) }" />
               <span class="pal__title">{{ a.alias }}</span>
@@ -80,7 +81,7 @@ function goAccount(id: string) {
             </button>
           </template>
           <p v-if="!instanceHits.length && !accountHits.length" class="pal__empty">
-            没有匹配的实例或账号
+            {{ t.ui.paletteEmpty }}
           </p>
         </div>
       </div>

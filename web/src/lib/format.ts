@@ -1,3 +1,5 @@
+import { intlLocale } from '@/i18n'
+
 /** 配额/容量的语义色：≥90% warning，=100% danger（§6.7） */
 export function usageTone(used: number, limit: number): string {
   if (!limit) return 'var(--text-tertiary)'
@@ -64,7 +66,7 @@ export function formatBytes(bytes: number): string {
     v /= 1024
     i++
   }
-  return `${v.toLocaleString('zh-CN', { maximumFractionDigits: v < 10 ? 2 : 1 })} ${units[i]}`
+  return `${v.toLocaleString(intlLocale(), { maximumFractionDigits: v < 10 ? 2 : 1 })} ${units[i]}`
 }
 
 /** 以 GB 计的流量，复用 formatBytes 的单位选择。 */
@@ -92,12 +94,12 @@ export function formatBits(bitsPerSec: number): string {
     v /= 1000
     i++
   }
-  return `${v.toLocaleString('zh-CN', { maximumFractionDigits: v < 10 ? 2 : 1 })} ${units[i]}`
+  return `${v.toLocaleString(intlLocale(), { maximumFractionDigits: v < 10 ? 2 : 1 })} ${units[i]}`
 }
 
 /** 百分比，保留一位小数。 */
 export const formatPercent = (v: number) =>
-  `${(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%`
+  `${(v || 0).toLocaleString(intlLocale(), { maximumFractionDigits: 1 })}%`
 
 /**
  * 为一组字节数挑一个统一的显示单位。
@@ -113,6 +115,6 @@ export function byteScale(maxBytes: number): { factor: number; unit: string; for
   return {
     factor: 1024 ** i,
     unit,
-    format: (v: number) => `${(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ${unit}`
+    format: (v: number) => `${(v || 0).toLocaleString(intlLocale(), { maximumFractionDigits: 2 })} ${unit}`
   }
 }

@@ -1,7 +1,9 @@
 import type { LifecycleState } from '@/types'
+import { t } from '@/i18n'
 
 interface StateMeta {
-  label: string
+  /** 按当前语言取，读的时候才求值 */
+  readonly label: string
   /** CSS 变量名 */
   color: string
   /** 实心灯 = 稳定运行/过渡中，空心 = 已停止/已终止（§10.2 第二重编码） */
@@ -11,13 +13,13 @@ interface StateMeta {
 }
 
 export const LIFECYCLE: Record<LifecycleState, StateMeta> = {
-  RUNNING:      { label: '运行中', color: 'var(--success)',    solid: true,  transitional: false },
-  STOPPED:      { label: '已停止', color: 'var(--neutral)',    solid: false, transitional: false },
-  PROVISIONING: { label: '创建中', color: 'var(--info)',       solid: true,  transitional: true },
-  STARTING:     { label: '启动中', color: 'var(--accent)',     solid: true,  transitional: true },
-  STOPPING:     { label: '关机中', color: 'var(--accent)',     solid: true,  transitional: true },
-  TERMINATING:  { label: '终止中', color: 'var(--warning)',    solid: true,  transitional: true },
-  TERMINATED:   { label: '已终止', color: 'var(--text-tertiary)', solid: false, transitional: false }
+  RUNNING:      { get label() { return t.enums.lifecycle.RUNNING }, color: 'var(--success)',    solid: true,  transitional: false },
+  STOPPED:      { get label() { return t.enums.lifecycle.STOPPED }, color: 'var(--neutral)',    solid: false, transitional: false },
+  PROVISIONING: { get label() { return t.enums.lifecycle.PROVISIONING }, color: 'var(--info)',       solid: true,  transitional: true },
+  STARTING:     { get label() { return t.enums.lifecycle.STARTING }, color: 'var(--accent)',     solid: true,  transitional: true },
+  STOPPING:     { get label() { return t.enums.lifecycle.STOPPING }, color: 'var(--accent)',     solid: true,  transitional: true },
+  TERMINATING:  { get label() { return t.enums.lifecycle.TERMINATING }, color: 'var(--warning)',    solid: true,  transitional: true },
+  TERMINATED:   { get label() { return t.enums.lifecycle.TERMINATED }, color: 'var(--text-tertiary)', solid: false, transitional: false }
 }
 
 export const isTransitional = (s: LifecycleState) => LIFECYCLE[s].transitional

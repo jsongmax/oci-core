@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
+import { pageTitle } from '@/router'
 import AccountChip from './AccountChip.vue'
 
 const route = useRoute()
@@ -17,10 +19,10 @@ const popOpen = ref(false)
 const regionOpen = ref(false)
 const userOpen = ref(false)
 
-const crumb = computed(() => (route.meta.title as string) ?? '')
+const crumb = computed(() => pageTitle(route.name))
 const allSelected = computed(() => state.accountFilter.size === state.accounts.length)
 const filterLabel = computed(() =>
-  allSelected.value ? '全部账号' : `${state.accountFilter.size} 个账号`
+  allSelected.value ? t.ui.allAccounts : t.ui.nAccounts(state.accountFilter.size)
 )
 const dots = computed(() =>
   state.accounts.filter(a => state.accountFilter.has(a.id)).map(a => acctColor(a.colorIndex))
@@ -28,7 +30,7 @@ const dots = computed(() =>
 
 /** 区域筛选：空集即"全部区域"。 */
 const regionLabel = computed(() =>
-  state.regionFilter.size === 0 ? '全部区域' : `${state.regionFilter.size} 个区域`
+  state.regionFilter.size === 0 ? t.ui.allRegions : t.ui.nRegions(state.regionFilter.size)
 )
 
 const initial = computed(() => (state.username || 'A').charAt(0).toUpperCase())
@@ -42,7 +44,7 @@ async function doLogout() {
 
 <template>
   <header class="top glass">
-    <nav class="top__crumbs" aria-label="面包屑">
+    <nav class="top__crumbs" :aria-label="t.ui.breadcrumb">
       <span class="dim">OCI Core</span>
       <span class="dim-3">/</span>
       <span class="top__here">{{ crumb }}</span>
@@ -50,7 +52,7 @@ async function doLogout() {
 
     <button class="top__search" @click="state.paletteOpen = true">
       <span>⌕</span>
-      <span class="top__search-label">搜索实例 · OCID · IP</span>
+      <span class="top__search-label">{{ t.ui.searchHint }}</span>
       <span class="top__kbd mono">⌘K</span>
     </button>
 
@@ -68,7 +70,7 @@ async function doLogout() {
 
       <div v-if="popOpen" class="top__scrim" @click="popOpen = false" />
       <div v-if="popOpen" class="top__pop" role="listbox">
-        <button class="top__pop-all" @click="selectAllAccounts()">全选 <span class="mono">{{ state.accounts.length }}</span></button>
+        <button class="top__pop-all" @click="selectAllAccounts()">{{ t.ui.selectAll }} <span class="mono">{{ state.accounts.length }}</span></button>
         <hr />
         <button v-for="a in state.accounts" :key="a.id" class="top__pop-row"
                 role="option" :aria-selected="state.accountFilter.has(a.id)"
@@ -88,7 +90,7 @@ async function doLogout() {
       <div v-if="regionOpen" class="top__scrim" @click="regionOpen = false" />
       <div v-if="regionOpen" class="top__pop" role="listbox">
         <button class="top__pop-all" @click="clearRegionFilter()">
-          全部区域 <span class="mono">{{ allRegions.length }}</span>
+          {{ t.ui.allRegions }} <span class="mono">{{ allRegions.length }}</span>
         </button>
         <hr />
         <button v-for="r in allRegions" :key="r" class="top__pop-row"
@@ -103,7 +105,7 @@ async function doLogout() {
     <button v-if="transitioning.length" class="top__transitions" @click="router.push('/instances')">
       <span class="top__pulse"><span /></span>
       <span class="mono">{{ transitioning.length }}</span>
-      <span>台正在转换</span>
+      <span>{{ t.ui.transitioning }}</span>
     </button>
 
     <span class="top__sep" />
@@ -116,10 +118,10 @@ async function doLogout() {
       </button>
       <div v-if="userOpen" class="top__scrim" @click="userOpen = false" />
       <div v-if="userOpen" class="top__pop top__pop--user">
-        <p class="top__user">{{ state.username || '未登录' }}</p>
+        <p class="top__user">{{ state.username || t.ui.notSignedIn }}</p>
         <hr />
-        <button class="top__pop-row" @click="userOpen = false; router.push('/settings')">设置</button>
-        <button class="top__pop-row" @click="doLogout()">退出登录</button>
+        <button class="top__pop-row" @click="userOpen = false; router.push('/settings')">{{ t.ui.settings }}</button>
+        <button class="top__pop-row" @click="doLogout()">{{ t.ui.signOut }}</button>
       </div>
     </div>
   </header>

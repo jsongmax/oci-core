@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.4.3 实例详情抽屉（720）：概览 / 网络 / 存储 / 监控 / 控制台 / 操作记录 */
+import { t, fmtDateTime } from '@/i18n'
 import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
@@ -42,8 +43,8 @@ const runningJobs = computed(() => activeJobsFor(props.id))
 // 任务结束后详情（网卡、IP、配置）可能变了，重拉一次。
 watch(() => runningJobs.value.length, (n, old) => { if (n < old) void loadDetail() })
 
-const TABS = ['概览', '网络', '存储', '监控', '控制台', '操作记录']
-const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : '概览')
+const TABS = ['overview', 'network', 'storage', 'metrics', 'console', 'history']
+const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : 'overview')
 
 const inst = computed(() => state.instances.find(i => i.id === props.id))
 
@@ -52,7 +53,7 @@ const uptimeDetail = computed(() => {
   const i = inst.value
   if (!i) return '—'
   const u = instanceUptime(i)
-  return u.approx && u.text !== '—' ? `${u.text}（创建至今，未观测到本次开机）` : u.text
+  return u.approx && u.text !== '—' ? t.instDrawer.uptimeApprox(u.text) : u.text
 })
 const account = computed(() => (inst.value ? accountById(inst.value.accountId) : undefined))
 const color = computed(() => (account.value ? acctColor(account.value.colorIndex) : 'var(--border-default)'))
@@ -89,7 +90,7 @@ const secondaryVnics = computed(() =>
  */
 function ipv6Items(v: D.VnicInfoDTO): KvItem[] {
   const ipv6 = v.ipv6
-  if (!ipv6?.length) return [{ k: 'IPv6', v: '未启用', tone: 'var(--text-secondary)' }]
+  if (!ipv6?.length) return [{ k: 'IPv6', v: t.instDrawer.notEnabled, tone: 'var(--text-secondary)' }]
   // 后端按创建时间排好了；旧后端没有 ipv6Info，就只显示地址。
   const created = new Map((v.ipv6Info ?? []).map(e => [e.address, e.timeCreated]))
   return ipv6.map((ip, n) => {
@@ -99,10 +100,10 @@ function ipv6Items(v: D.VnicInfoDTO): KvItem[] {
     return {
       // 日期直接写在标签上：批量分配的异常要扫一眼就能看出来，靠悬停一个个看太慢。
       k: date ? `${base} · ${shortDate(date)}` : base,
-      title: date ? `创建于 ${date.toLocaleString('zh-CN', { hour12: false })}` : undefined,
+      title: date ? t.instDrawer.createdAt(fmtDateTime(date)) : undefined,
       v: ip, mono: true, copyable: true, secret: 'ip' as const,
       action: {
-        label: removingIpv6.value === ip ? '移除中…' : '移除', tone: 'warning' as const,
+        label: removingIpv6.value === ip ? t.instDrawer.removing : t.instDrawer.remove, tone: 'warning' as const,
         disabled: locked.value || !!removingIpv6.value, onClick: () => removeIpv6(ip, v.isPrimary)
       }
     }
@@ -124,10 +125,9 @@ function removeIpv6(address: string, primary: boolean) {
   const shown = state.privacyMode ? mask(address, 'ip') : address
   ask({
     level: 2,
-    title: `移除 ${i.name} 的 IPv6`,
-    body: `删除 ${shown} 后这个地址不可找回，正在用它的连接会中断，指向它的 DNS 记录需要手动更新。` +
-      '子网与 VCN 的 IPv6 前缀保持不变，之后可以再添加。',
-    okLabel: '移除 IPv6',
+    title: t.instDrawer.removeV6Title(i.name),
+    body: t.instDrawer.removeV6Body(shown),
+    okLabel: t.instDrawer.removeV6,
     onConfirm: async () => {
       removingIpv6.value = address
       try {
@@ -138,13 +138,13 @@ function removeIpv6(address: string, primary: boolean) {
         trackJob(job, {
           onSuccess: done => {
             // 带命令时一直留着，要复制到实例里去跑。
-            toast({ tone: 'success', title: done.summary || '已移除 IPv6', body: hint.note, command: hint.command },
+            toast({ tone: 'success', title: done.summary || t.instDrawer.v6Removed, body: hint.note, command: hint.command },
               hint.command ? 0 : 10000)
             if (props.id === id) void loadDetail()
           }
         })
       } catch (err) {
-        toastError('移除 IPv6 失败', err)
+        toastError(t.instDrawer.removeV6Failed, err)
       } finally {
         removingIpv6.value = ''
       }
@@ -155,12 +155,12 @@ function removeIpv6(address: string, primary: boolean) {
 /** 一张网卡的地址与所在网络。主网卡与附属网卡共用，保持两边的行一致。 */
 function vnicItems(v: D.VnicInfoDTO): KvItem[] {
   return [
-    { k: '公网 IPv4', v: v.publicIp || '未分配', mono: true, copyable: !!v.publicIp, secret: 'ip' },
-    ...(v.publicIp ? [{ k: '类型', v: v.publicIpType === 'RESERVED' ? '保留 IP' : '临时 IP' }] : []),
-    { k: '私网 IPv4', v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
+    { k: t.instDrawer.publicV4, v: v.publicIp || t.instDrawer.unassigned, mono: true, copyable: !!v.publicIp, secret: 'ip' },
+    ...(v.publicIp ? [{ k: t.instDrawer.type, v: v.publicIpType === 'RESERVED' ? t.instDrawer.reservedIp : t.instDrawer.ephemeralIp }] : []),
+    { k: t.instDrawer.privateV4, v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
     ...ipv6Items(v),
     { k: 'VCN', v: v.vcnName || '—', mono: true },
-    { k: '子网', v: v.subnetName || '—', mono: true },
+    { k: t.instDrawer.subnet, v: v.subnetName || '—', mono: true },
     { k: 'MAC', v: v.macAddress || '—', mono: true }
   ]
 }
@@ -179,15 +179,15 @@ function changeIp(v: D.VnicInfoDTO) {
   const i = inst.value
   if (!i) return
   const assign = !v.publicIp
-  const where = v.isPrimary ? '主网卡' : `附属网卡 ${v.displayName || ''}`.trim()
+  const where = v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || '')
   const ip = v.publicIp && state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
   ask({
     level: 2,
-    title: assign ? `为 ${i.name} 的${where} 分配公网 IP` : `更换 ${i.name} ${where} 的公网 IP`,
+    title: assign ? t.instDrawer.assignIpTitle(i.name, where) : t.instDrawer.changeIpTitle(i.name, where),
     body: assign
-      ? '会申请一个临时公网 IPv4，绑在这张网卡的主私网 IP 上。子网禁止公网 IP 时 Oracle 会拒绝。'
-      : `更换后原 IP ${ip} 不可找回，用它的连接会中断，DNS 记录需要手动更新。其它网卡的 IP 不受影响。`,
-    okLabel: assign ? '分配 IP' : '更换 IP',
+      ? t.instDrawer.assignIpBody
+      : t.instDrawer.changeIpBody(ip),
+    okLabel: assign ? t.instDrawer.assignIp : t.instDrawer.changeIp,
     onConfirm: async () => {
       changingIpVnic.value = v.vnicId
       try {
@@ -195,7 +195,7 @@ function changeIp(v: D.VnicInfoDTO) {
         const id = i.id
         trackJob(job, { onSuccess: () => { if (props.id === id) void loadDetail() } })
       } catch (err) {
-        toastError(assign ? '分配公网 IP 失败' : '更换 IP 失败', err)
+        toastError(assign ? t.instDrawer.assignIpFailed : t.instDrawer.changeIpFailed, err)
       } finally {
         changingIpVnic.value = ''
       }
@@ -204,8 +204,8 @@ function changeIp(v: D.VnicInfoDTO) {
 }
 
 const ipButtonTitle = (v: D.VnicInfoDTO) =>
-  v.publicIpType === 'RESERVED' ? '保留 IP 不提供更换：释放后就永久失去这个地址'
-    : v.publicIp ? '释放当前临时 IP 并申请一个新的' : '给这张网卡申请一个临时公网 IPv4'
+  v.publicIpType === 'RESERVED' ? t.instDrawer.reservedNoChange
+    : v.publicIp ? t.instDrawer.changeIpHint : t.instDrawer.assignIpHint
 
 /* ---------- 附属网卡增删 ---------- */
 
@@ -225,7 +225,7 @@ const vnicSubnetGroups = computed(() => [{
   label: '',
   options: vnicSubnets.value.map(sn => ({
     value: sn.id,
-    label: `${sn.displayName} · ${sn.cidrBlock}${sn.prohibitPublicIpOnVnic ? ' · 禁公网 IP' : ''}`
+    label: `${sn.displayName} · ${sn.cidrBlock}${sn.prohibitPublicIpOnVnic ? t.instDrawer.noPublicIpTag : ''}`
   }))
 }])
 // 选中禁公网 IP 的子网时自动关掉开关，而不是等提交时被后端拒。
@@ -252,7 +252,7 @@ async function openAddVnic() {
       vnicForm.subnetId = vnicSubnets.value[0]?.id ?? ''
     }
   } catch (err) {
-    toastError('读取子网失败', err)
+    toastError(t.instDrawer.subnetsFailed, err)
   } finally {
     vnicSubnetsLoading.value = false
   }
@@ -273,7 +273,7 @@ async function submitVnic() {
     // 通常十几秒到一分钟；落定后 instance.network 会让这里自动刷新。
     trackJob(job)
   } catch (err) {
-    toastError('添加网卡失败', err)
+    toastError(t.instDrawer.addVnicFailed, err)
   } finally {
     attachingVnic.value = false
   }
@@ -283,20 +283,20 @@ async function submitVnic() {
 function detachVnic(v: D.VnicInfoDTO) {
   const i = inst.value
   if (!i) return
-  const name = v.displayName || '未命名网卡'
+  const name = v.displayName || t.instDrawer.unnamedVnic
   const ip = v.publicIp && state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
   ask({
     level: 2,
-    title: `分离附属网卡 ${name}`,
-    body: (ip ? `这张网卡上的公网 IP ${ip} 会被释放，不可找回。` : '') +
-      '如果已在系统里配置过这张网卡，建议先在系统里停用它。',
-    okLabel: '分离',
+    title: t.instDrawer.detachVnicTitle(name),
+    body: (ip ? t.instDrawer.detachVnicIp(ip) : '') +
+      t.instDrawer.detachVnicBody,
+    okLabel: t.instDrawer.detach,
     onConfirm: async () => {
       try {
         const { job } = await instancesApi.detachVnic(i.id, v.attachmentId)
         trackJob(job)
       } catch (err) {
-        toastError('分离网卡失败', err)
+        toastError(t.instDrawer.detachVnicFailed, err)
       }
     }
   })
@@ -319,14 +319,13 @@ function addIpv6(v: D.VnicInfoDTO) {
   const i = inst.value
   if (!i) return
   const first = !v.ipv6?.length
-  const where = v.isPrimary ? '主网卡' : `附属网卡 ${v.displayName || ''}`.trim()
+  const where = v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || '')
   ask({
-    level: 2, title: `为 ${i.name} 的${where} 添加 IPv6`,
+    level: 2, title: t.instDrawer.addV6Title(i.name, where),
     body: (first
-      ? '子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭；会照 IPv4 的配置补上 ::/0 路由和出站规则。' +
-        '入站规则不会自动添加，想用 IPv6 登录需要到网络页自己加。'
-      : `这张网卡已有 ${v.ipv6!.length} 个 IPv6，会再分配一个新地址，原有地址不受影响。`),
-    okLabel: '添加 IPv6',
+      ? t.instDrawer.addV6First
+      : t.instDrawer.addV6More(v.ipv6!.length)),
+    okLabel: t.instDrawer.addV6,
     onConfirm: async () => {
       addingIpv6Vnic.value = v.vnicId
       try {
@@ -338,7 +337,7 @@ function addIpv6(v: D.VnicInfoDTO) {
           onSuccess: done => {
             const result = done.result as D.EnableIpv6DTO | undefined
             toast({
-              tone: 'success', title: `${name} 已分配 IPv6`,
+              tone: 'success', title: t.instDrawer.v6Assigned(name),
               body: [result?.address, ...(result?.steps ?? []), hint.note].filter(Boolean).join('\n'),
               command: hint.command
             }, 0)
@@ -347,7 +346,7 @@ function addIpv6(v: D.VnicInfoDTO) {
           }
         })
       } catch (err) {
-        toastError('添加 IPv6 失败', err)
+        toastError(t.instDrawer.addV6Failed, err)
       } finally {
         addingIpv6Vnic.value = ''
       }
@@ -384,7 +383,7 @@ async function loadMetrics() {
     const res = await instancesApi.metrics(props.id, metricHours.value)
     if (seq === metricsSeq) metrics.value = res
   } catch (err) {
-    if (seq === metricsSeq) toastError('读取监控数据失败', err)
+    if (seq === metricsSeq) toastError(t.instDrawer.metricsFailed, err)
   } finally {
     if (seq === metricsSeq) metricsLoading.value = false
   }
@@ -432,13 +431,13 @@ const HIGH_USAGE = 90
 
 const rateSeries = computed<MetricSeries[]>(() => [
   // 指标是每秒字节数，图表用每秒比特，刻度才落在整数 Mbps 上。
-  { name: '出站', data: chartData('NetworksBytesOut', 8) },
-  { name: '入站', data: chartData('NetworksBytesIn', 8) }
+  { name: t.instDrawer.outbound, data: chartData('NetworksBytesOut', 8) },
+  { name: t.instDrawer.inbound, data: chartData('NetworksBytesIn', 8) }
 ])
 
 const usageSeries = computed<MetricSeries[]>(() => [
   { name: 'CPU', data: chartData('CpuUtilization') },
-  { name: '内存', data: chartData('MemoryUtilization') }
+  { name: t.instDrawer.memory, data: chartData('MemoryUtilization') }
 ])
 
 /** 粒度说明，例如「每 5 分钟一个点」。 */
@@ -447,12 +446,12 @@ const resolutionText = computed(() => {
   if (!r) return ''
   const m = /^(\d+)([mhd])$/.exec(r)
   if (!m) return r
-  const unit = { m: '分钟', h: '小时', d: '天' }[m[2] as 'm' | 'h' | 'd']
-  return `每 ${m[1]} ${unit}一个点`
+  const unit = { m: t.instDrawer.unitMin, h: t.instDrawer.unitHour, d: t.instDrawer.unitDay }[m[2] as 'm' | 'h' | 'd']
+  return t.instDrawer.perPoint(m[1], unit)
 })
 
 const rangeText = computed(() =>
-  metricHours.value < 24 ? `最近 ${metricHours.value} 小时` : `最近 ${metricHours.value / 24} 天`)
+  metricHours.value < 24 ? t.instDrawer.lastHours(metricHours.value) : t.instDrawer.lastDays(metricHours.value / 24))
 
 /** 单条指标查询失败时后端会带上错误；部分失败也要让人看见。 */
 const metricErrors = computed(() =>
@@ -491,8 +490,8 @@ const trafficScale = computed(() => byteScale(
 const trafficSeries = computed<MetricSeries[]>(() => {
   const f = trafficScale.value.factor
   return [
-    { name: '出站', data: (traffic.value?.series ?? []).map(d => d.outBytes / f) },
-    { name: '入站', data: (traffic.value?.series ?? []).map(d => d.inBytes / f) }
+    { name: t.instDrawer.outbound, data: (traffic.value?.series ?? []).map(d => d.outBytes / f) },
+    { name: t.instDrawer.inbound, data: (traffic.value?.series ?? []).map(d => d.inBytes / f) }
   ]
 })
 
@@ -510,15 +509,15 @@ const consoleResult = ref<{ serialConsoleCommand: string; vncConsoleCommand: str
 async function createConsole() {
   const key = sshPublicKey.value.trim()
   if (!key) {
-    toast({ tone: 'warning', title: '请先填入 SSH 公钥' })
+    toast({ tone: 'warning', title: t.instDrawer.needSshKey })
     return
   }
   // 本地先拦一次，省掉一次注定失败的往返。
   if (!key.startsWith('ssh-rsa')) {
     toast({
       tone: 'warning',
-      title: 'Oracle 的串行控制台只接受 RSA 公钥',
-      body: '不支持 ed25519 / ecdsa。另生成一把 RSA 即可，实例登录用的密钥不受影响。',
+      title: t.instDrawer.rsaOnlyTitle,
+      body: t.instDrawer.rsaOnlyBody,
       command: 'ssh-keygen -t rsa -b 4096 -f ~/.ssh/oci_console'
     })
     return
@@ -527,9 +526,9 @@ async function createConsole() {
   try {
     const result = await instancesApi.console(props.id, key)
     consoleResult.value = result
-    toast({ tone: 'success', title: '控制台连接已建立', body: result.notice })
+    toast({ tone: 'success', title: t.instDrawer.consoleCreated, body: result.notice })
   } catch (err) {
-    toastError('建立控制台连接失败', err)
+    toastError(t.instDrawer.consoleFailed, err)
   } finally {
     consoleCreating.value = false
   }
@@ -560,16 +559,16 @@ async function detachBoot() {
 
   ask({
     level: 2,
-    title: `分离 ${inst_.name} 的引导卷`,
-    body: '实例必须先关机。分离后该实例无法启动，直到重新挂载引导卷。这是「救援模式」的第一步。',
-    okLabel: '分离引导卷',
+    title: t.instDrawer.detachBootTitle(inst_.name),
+    body: t.instDrawer.detachBootBody,
+    okLabel: t.instDrawer.detachBoot,
     onConfirm: async () => {
       try {
         await storage.detachBootVolume(attachmentId, inst_.accountId, inst_.region)
-        toast({ tone: 'warning', title: '引导卷已分离', body: '可以把它挂到另一台实例上修复' })
+        toast({ tone: 'warning', title: t.instDrawer.bootDetached, body: t.instDrawer.bootDetachedBody })
         await loadDetail()
       } catch (err) {
-        toastError('分离引导卷失败', err)
+        toastError(t.instDrawer.detachBootFailed, err)
       }
     }
   })
@@ -620,7 +619,7 @@ async function loadLooseVolumes() {
 watch(bootDetached, on => { if (on) loadLooseVolumes() }, { immediate: true })
 
 const looseVolumeGroups = computed(() => [{
-  label: `${inst.value?.ad ?? ''} 的引导卷`,
+  label: t.instDrawer.bootsOf(inst.value?.ad ?? ''),
   options: looseVolumes.value.map(v => ({
     value: v.id, label: `${v.displayName} · ${v.sizeInGBs} GB`
   }))
@@ -656,32 +655,32 @@ const rescueBusy = ref(false)
  * 14/15/16 分别是 BIOS boot、EFI 和 /boot，挂错了会找不到 home 目录。
  */
 const rescueSteps = computed(() => [
-  '# 1. 找到新挂上来的盘（看 SIZE 对得上、且没有挂载点的那块）',
+  t.instDrawer.rescue1,
   'lsblk',
   '',
-  '# 2. 挂载它的根分区（把 sdb 换成上一步看到的名字）',
+  t.instDrawer.rescue2,
   'DEV=/dev/sdb',
   'sudo mkdir -p /mnt/rescue',
   'sudo mount ${DEV}1 /mnt/rescue',
-  'ls /mnt/rescue/home        # 确认用户名：Ubuntu 是 ubuntu，Oracle Linux 是 opc',
+  t.instDrawer.rescueUser,
   '',
-  '# 3. 补上 SSH 公钥（USER 换成上一步看到的用户名）',
+  t.instDrawer.rescue3,
   'USER=ubuntu',
   'sudo mkdir -p /mnt/rescue/home/$USER/.ssh',
-  "echo '你的公钥内容' | sudo tee -a /mnt/rescue/home/$USER/.ssh/authorized_keys",
+  t.instDrawer.rescueKey,
   'sudo chmod 700 /mnt/rescue/home/$USER/.ssh',
   'sudo chmod 600 /mnt/rescue/home/$USER/.ssh/authorized_keys',
-  '# 属主按盘里的 UID 设，不能用救援机的用户名——两台机器的 UID 未必一样',
+  t.instDrawer.rescueUid,
   'sudo chown -R 1000:1000 /mnt/rescue/home/$USER/.ssh',
   '',
-  '# 4. 卸载。不 umount 就分离，刚写的东西可能还在页缓存里没落盘',
+  t.instDrawer.rescue4,
   'sudo umount /mnt/rescue'
 ].join('\n'))
 
 const rescueTargetGroups = computed(() => [{
-  label: '同可用域的运行中实例',
-  options: rescueTargets.value.map(t => ({
-    value: t.id, label: `${t.name} · ${t.publicIp || '无公网 IP'}`
+  label: t.instDrawer.sameAdRunning,
+  options: rescueTargets.value.map(x => ({
+    value: x.id, label: `${x.name} · ${x.publicIp || t.instDrawer.noPublicIp}`
   }))
 }])
 
@@ -694,19 +693,18 @@ async function attachToRescue() {
 
   ask({
     level: 2,
-    title: `把 ${i.name} 的系统盘挂到 ${target.name}`,
-    body: `挂上去之后登录 ${target.name}，用 lsblk 找到新增的设备（通常是 /dev/sdb），`
-      + '挂载它的根分区就能改里面的文件。改完记得先 umount 再回来分离。',
-    okLabel: '挂为数据盘',
+    title: t.instDrawer.attachRescueTitle(i.name, target.name),
+    body: t.instDrawer.attachRescueBody(target.name),
+    okLabel: t.instDrawer.attachAsData,
     onConfirm: async () => {
       rescueBusy.value = true
       try {
         const res = await storage.attachVolume(
           i.accountId, i.region, target.id, volumeId, `rescue-${i.name}`)
-        toast({ tone: 'success', title: '已挂载到 ' + target.name, body: res.notice })
+        toast({ tone: 'success', title: t.instDrawer.attachedTo(target.name), body: res.notice })
         await loadDetail()
       } catch (err) {
-        toastError('挂载失败', err)
+        toastError(t.instDrawer.attachFailed, err)
       } finally {
         rescueBusy.value = false
       }
@@ -720,16 +718,16 @@ async function detachData(attachmentId: string, name: string) {
   if (!i) return
   ask({
     level: 2,
-    title: `分离 ${name}`,
-    body: '分离前先在实例里 umount，否则卷上可能有没落盘的写入。',
-    okLabel: '分离',
+    title: t.instDrawer.detachTitle(name),
+    body: t.instDrawer.detachBody,
+    okLabel: t.instDrawer.detach,
     onConfirm: async () => {
       try {
         const res = await storage.detachVolume(attachmentId, i.accountId, i.region)
-        toast({ tone: 'success', title: '已分离', body: res.notice })
+        toast({ tone: 'success', title: t.instDrawer.detached, body: res.notice })
         await loadDetail()
       } catch (err) {
-        toastError('分离失败', err)
+        toastError(t.instDrawer.detachFailed, err)
       }
     }
   })
@@ -742,17 +740,17 @@ async function reattachBoot() {
   if (!i || !volumeId) return
   ask({
     level: 2,
-    title: `把引导卷挂回 ${i.name}`,
-    body: '挂回之前必须先在救援机上分离这块卷——一块卷同一时刻只能挂在一处。挂回后即可开机。',
-    okLabel: '挂回引导卷',
+    title: t.instDrawer.reattachTitle(i.name),
+    body: t.instDrawer.reattachBody,
+    okLabel: t.instDrawer.reattach,
     onConfirm: async () => {
       rescueBusy.value = true
       try {
         await storage.attachBootVolume(i.accountId, i.region, i.id, volumeId)
-        toast({ tone: 'success', title: '引导卷已挂回', body: '现在可以启动实例了' })
+        toast({ tone: 'success', title: t.instDrawer.reattached, body: t.instDrawer.reattachedBody })
         await loadDetail()
       } catch (err) {
-        toastError('挂回引导卷失败', err)
+        toastError(t.instDrawer.reattachFailed, err)
       } finally {
         rescueBusy.value = false
       }
@@ -764,15 +762,15 @@ function askTerminate() {
   const i = inst.value
   if (!i) return
   ask({
-    level: 3, title: `终止实例 ${i.name}`,
-    body: '该操作会立即销毁实例与其挂载的引导卷。',
-    noun: i.name, nounLabel: '实例名称',
+    level: 3, title: t.instDrawer.terminateTitle(i.name),
+    body: t.instDrawer.terminateBody,
+    noun: i.name, nounLabel: t.rowActions.instanceName,
     losses: [
-      '实例本身及其全部系统数据',
-      `引导卷（${i.bootGb} GB）`,
-      i.publicIp !== '—' ? `临时公网 IP ${i.publicIp}` : '该实例的网络配置'
+      t.rowActions.lossInstance,
+      t.instDrawer.lossBoot(i.bootGb),
+      i.publicIp !== '—' ? t.rowActions.lossIp(i.publicIp) : t.instDrawer.lossNet
     ],
-    okLabel: '永久终止',
+    okLabel: t.rowActions.terminatePermanently,
     onConfirm: () => { closeDrawer(); terminate(i.id) }
   })
 }
@@ -781,13 +779,13 @@ onMounted(() => {
   void loadDetail()
   void loadAudit()
   // 直接以「监控」页打开抽屉时 watch(active) 不会触发，这里补一次。
-  if (active.value === '监控') refreshMonitoring()
+  if (active.value === 'metrics') refreshMonitoring()
 })
 
 watch(active, tab => {
-  if (tab === '监控' && !metrics.value) void loadMetrics()
-  if (tab === '监控' && !traffic.value) void loadTraffic()
-  if (tab === '操作记录') void loadAudit()
+  if (tab === 'metrics' && !metrics.value) void loadMetrics()
+  if (tab === 'metrics' && !traffic.value) void loadTraffic()
+  if (tab === 'history') void loadAudit()
 })
 
 watch(metricHours, () => void loadMetrics())
@@ -804,21 +802,21 @@ watch(metricHours, () => void loadMetrics())
       <template #actions>
         <button v-if="inst.state === 'STOPPED'" class="btn btn--sm"
                 style="border-color: var(--success); color: var(--success)"
-                :disabled="locked" @click="start(inst.id)">开机</button>
-        <button v-else class="btn btn--sm" :disabled="locked" @click="stop(inst.id)">关机</button>
-        <button class="btn btn--sm" :disabled="locked" @click="restart(inst.id)">软重启</button>
+                :disabled="locked" @click="start(inst.id)">{{ t.instDrawer.start }}</button>
+        <button v-else class="btn btn--sm" :disabled="locked" @click="stop(inst.id)">{{ t.instDrawer.stop }}</button>
+        <button class="btn btn--sm" :disabled="locked" @click="restart(inst.id)">{{ t.instDrawer.softReboot }}</button>
         <button class="btn btn--sm btn--danger" :disabled="locked || !state.options.allowTerminate"
-                :title="state.options.allowTerminate ? '' : '已在设置中禁用'"
-                @click="askTerminate()">终止</button>
+                :title="state.options.allowTerminate ? '' : t.rowActions.disabledInSettings"
+                @click="askTerminate()">{{ t.instDrawer.terminate }}</button>
       </template>
     </DrawerHeader>
 
-    <DrawerTabs :tabs="TABS" v-model:active="active" />
+    <DrawerTabs :tabs="TABS" :labels="t.instDrawer.tabs" v-model:active="active" />
 
     <DrawerBody>
       <RouterLink v-for="j in runningJobs" :key="j.id" to="/jobs" class="job-banner" @click="closeDrawer()">
         <span class="job-banner__spin" />
-        <span class="job-banner__text">{{ j.status === 'queued' ? '排队中' : '后台进行中' }}：{{ j.title }}</span>
+        <span class="job-banner__text">{{ j.status === 'queued' ? t.instDrawer.queued : t.instDrawer.running }}: {{ j.title }}</span>
         <span class="mono job-banner__pct">{{ j.progress }}%</span>
       </RouterLink>
       <p v-if="inst.lastError" class="err">{{ inst.lastError }}</p>
@@ -828,51 +826,51 @@ watch(metricHours, () => void loadMetrics())
       <!-- 切标签时内容淡入淡出：外层按标签换 key，Transition 需要单一子元素 -->
       <Transition name="swap" mode="out-in">
       <div :key="active">
-      <template v-if="active === '概览'">
-        <SectionCard title="基本信息">
+      <template v-if="active === 'overview'">
+        <SectionCard :title="t.instDrawer.basicInfo">
           <KeyValueList :items="[
             { k: 'OCID', v: inst.id, mono: true, copyable: true },
-            { k: '状态', v: inst.state, mono: true },
-            { k: '区域 · AD', v: `${inst.region} · ${inst.ad}`, mono: true },
-            { k: '运行时长', v: uptimeDetail, mono: true },
-            { k: '账号', v: `${account.alias} · ${account.code}`, tone: color }
+            { k: t.instDrawer.kState, v: t.enums.lifecycle[inst.state] ?? inst.state, mono: true },
+            { k: t.instDrawer.kRegionAd, v: `${inst.region} · ${inst.ad}`, mono: true },
+            { k: t.instDrawer.kUptime, v: uptimeDetail, mono: true },
+            { k: t.instDrawer.kAccount, v: `${account.alias} · ${account.code}`, tone: color }
           ]" />
         </SectionCard>
 
-        <SectionCard title="计算配置">
+        <SectionCard :title="t.instDrawer.computeConfig">
           <KeyValueList :items="[
             { k: 'Shape', v: inst.shape, mono: true },
             { k: 'OCPU', v: String(inst.ocpu), mono: true },
-            { k: '内存', v: `${inst.memGb} GB`, mono: true },
-            { k: '引导卷', v: `${inst.bootGb} GB · VPU ${inst.vpu}`, mono: true }
+            { k: t.instDrawer.kMemory, v: `${inst.memGb} GB`, mono: true },
+            { k: t.instDrawer.kBoot, v: `${inst.bootGb} GB · VPU ${inst.vpu}`, mono: true }
           ]" />
         </SectionCard>
 
-        <SectionCard v-if="sshKeys" title="SSH 公钥" note="创建时注入">
+        <SectionCard v-if="sshKeys" :title="t.instDrawer.sshKeys" :note="t.instDrawer.injected">
           <CodeBlock :code="sshKeys" />
         </SectionCard>
 
-        <SectionCard v-if="cloudInit" title="cloud-init 元数据" note="创建时注入，不可修改">
+        <SectionCard v-if="cloudInit" :title="t.instDrawer.cloudInitMeta" :note="t.instDrawer.injectedReadonly">
           <CodeBlock :code="cloudInit" />
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '网络'">
+      <template v-else-if="active === 'network'">
         <SkeletonRows v-if="detailLoading" :rows="4" />
         <template v-else>
           <!-- 网卡放在一起：主网卡在前、附属网卡随后，增删网卡的入口放最下面。
                主网卡的两项操作（换 IP、开 IPv6）直接挂在卡片头上，不再让人去行内菜单找。 -->
-          <SectionCard v-if="primaryVnic" :title="`主网卡 · ${primaryVnic.displayName || '未命名'}`"
+          <SectionCard v-if="primaryVnic" :title="t.instDrawer.primaryCard(primaryVnic.displayName || t.common.unnamed)"
                        :note="`nic ${primaryVnic.nicIndex}`">
             <template #action>
               <span class="card-actions">
                 <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(primaryVnic)">
-                  {{ addingIpv6Vnic === primaryVnic.vnicId ? '添加中…' : primaryVnic.ipv6?.length ? '添加 IPv6' : '开启 IPv6' }}
+                  {{ addingIpv6Vnic === primaryVnic.vnicId ? t.instDrawer.adding : primaryVnic.ipv6?.length ? t.instDrawer.addV6 : t.instDrawer.enableV6 }}
                 </button>
                 <button class="btn btn--sm" :class="{ 'btn--warning': primaryVnic.publicIp }"
                         :disabled="!!changingIpVnic || locked || primaryVnic.publicIpType === 'RESERVED'"
                         :title="ipButtonTitle(primaryVnic)" @click="changeIp(primaryVnic)">
-                  {{ changingIpVnic === primaryVnic.vnicId ? '处理中…' : primaryVnic.publicIp ? '更换公网 IP' : '分配公网 IP' }}
+                  {{ changingIpVnic === primaryVnic.vnicId ? t.instDrawer.processing : primaryVnic.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignPublicIp }}
                 </button>
               </span>
             </template>
@@ -880,66 +878,66 @@ watch(metricHours, () => void loadMetrics())
           </SectionCard>
 
           <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
-                       :title="`附属网卡 · ${v.displayName || '未命名'}`" :note="`nic ${v.nicIndex}`">
+                       :title="t.instDrawer.secondaryCard(v.displayName || t.common.unnamed)" :note="`nic ${v.nicIndex}`">
             <template #action>
               <span class="card-actions">
                 <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(v)">
-                  {{ addingIpv6Vnic === v.vnicId ? '添加中…' : '添加 IPv6' }}
+                  {{ addingIpv6Vnic === v.vnicId ? t.instDrawer.adding : t.instDrawer.addV6 }}
                 </button>
                 <button class="btn btn--sm" :class="{ 'btn--warning': v.publicIp }"
                         :disabled="!!changingIpVnic || locked || v.publicIpType === 'RESERVED'"
                         :title="ipButtonTitle(v)" @click="changeIp(v)">
-                  {{ changingIpVnic === v.vnicId ? '处理中…' : v.publicIp ? '更换公网 IP' : '分配公网 IP' }}
+                  {{ changingIpVnic === v.vnicId ? t.instDrawer.processing : v.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignPublicIp }}
                 </button>
-                <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">分离</button>
+                <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">{{ t.instDrawer.detach }}</button>
               </span>
             </template>
             <KeyValueList :items="vnicItems(v)" />
           </SectionCard>
 
-          <SectionCard title="添加附属网卡"
-                       :note="maxVnics ? `已用 ${vnicCount} / ${maxVnics} 张（含主网卡）` : ''">
+          <SectionCard :title="t.instDrawer.addVnicTitle"
+                       :note="maxVnics ? t.instDrawer.vnicUsage(vnicCount, maxVnics) : ''">
             <template #action>
               <button v-if="!addingVnic" class="btn btn--sm" :disabled="locked || vnicFull"
-                      :title="vnicFull ? '已达到该规格的网卡数上限' : ''" @click="openAddVnic()">添加网卡</button>
+                      :title="vnicFull ? t.instDrawer.vnicLimit : ''" @click="openAddVnic()">{{ t.instDrawer.addVnic }}</button>
             </template>
             <div v-if="addingVnic" class="pad vnic-form">
               <div class="field">
-                <label>子网</label>
+                <label>{{ t.instDrawer.subnet }}</label>
                 <SelectMenu v-model="vnicForm.subnetId" :groups="vnicSubnetGroups"
-                            :placeholder="vnicSubnetsLoading ? '读取中…' : '选择子网'" aria-label="附属网卡的子网" />
+                            :placeholder="vnicSubnetsLoading ? t.common.loading : t.instDrawer.pickSubnet" :aria-label="t.instDrawer.vnicSubnet" />
               </div>
               <div class="field">
-                <label for="vnicname">名称（可选）</label>
+                <label for="vnicname">{{ t.instDrawer.vnicName }}</label>
                 <input id="vnicname" v-model="vnicForm.name" class="input mono" maxlength="255"
-                       placeholder="留空由 Oracle 生成" />
+                       :placeholder="t.instDrawer.vnicNamePlaceholder" />
               </div>
-              <SwitchRow v-model="vnicForm.publicIp" title="分配公网 IPv4"
-                         :sub="vnicSubnet?.prohibitPublicIpOnVnic ? '该子网禁止公网 IP，请换子网' : '临时 IP，分离网卡时一并释放'" />
-              <SwitchRow v-model="vnicForm.ipv6" title="分配 IPv6"
-                         sub="子网没有 IPv6 时会自动开通，所在 VCN 开通后无法关闭" />
+              <SwitchRow v-model="vnicForm.publicIp" :title="t.createInst.assignV4"
+                         :sub="vnicSubnet?.prohibitPublicIpOnVnic ? t.instDrawer.subnetNoPublic : t.instDrawer.vnicV4Sub" />
+              <SwitchRow v-model="vnicForm.ipv6" :title="t.instDrawer.assignV6"
+                         :sub="t.instDrawer.assignV6Sub" />
               <div class="vnic-form__actions">
                 <button class="btn btn--sm btn--primary"
                         :disabled="attachingVnic || !vnicForm.subnetId || (vnicForm.publicIp && !!vnicSubnet?.prohibitPublicIpOnVnic)"
-                        @click="submitVnic()">{{ attachingVnic ? '添加中…' : '添加' }}</button>
-                <button class="btn btn--sm" :disabled="attachingVnic" @click="addingVnic = false">取消</button>
+                        @click="submitVnic()">{{ attachingVnic ? t.instDrawer.adding : t.instDrawer.add }}</button>
+                <button class="btn btn--sm" :disabled="attachingVnic" @click="addingVnic = false">{{ t.common.cancel }}</button>
               </div>
             </div>
             <CheckList :items="[
-              { tone: 'info', text: '附属网卡会带来一个额外的私网 IP，可选再配公网 IPv4 / IPv6；原有的 IP 不受影响。' },
-              { tone: 'warn', text: '多数系统镜像不会自动启用新网卡，要在系统里配置后它才能收发流量（Oracle Linux 可用 oci-utils 的 oci-network-config）。' },
-              { tone: 'info', text: '每张网卡的公网 IP、IPv6 都可以在它自己的卡片上单独更换或添加。' }
+              { tone: 'info', text: t.instDrawer.vnicInfo1 },
+              { tone: 'warn', text: t.instDrawer.vnicInfo2 },
+              { tone: 'info', text: t.instDrawer.vnicInfo3 }
             ]" />
           </SectionCard>
         </template>
       </template>
 
-      <template v-else-if="active === '存储'">
+      <template v-else-if="active === 'storage'">
         <BootVolumeEditor :instance="inst" :account="account"
                           :boot-volume-id="detail?.bootVolume?.id" />
         <ReplaceBootVolume :instance="inst" />
 
-        <SectionCard title="附加块存储">
+        <SectionCard :title="t.instDrawer.blockVolumes">
           <SkeletonRows v-if="detailLoading" :rows="2" />
           <template v-else-if="(detail?.blockVolumes?.length ?? 0) > 0">
             <div v-for="v in detail?.blockVolumes ?? []" :key="v.volumeId" class="rule">
@@ -947,215 +945,213 @@ watch(metricHours, () => void loadMetrics())
               <span class="mono t-xs">{{ v.displayName }} · {{ v.sizeInGbs }} GB · VPU {{ v.vpusPerGb }}</span>
               <span class="rule__desc mono t-2xs dim-3">{{ v.device || v.state }}</span>
               <button v-if="v.attachmentId" class="btn btn--xs btn--warning"
-                      @click="detachData(v.attachmentId, v.displayName)">分离</button>
+                      @click="detachData(v.attachmentId, v.displayName)">{{ t.instDrawer.detach }}</button>
             </div>
           </template>
-          <CheckList v-else :items="[{ tone: 'info', text: '未附加块存储' }]" />
+          <CheckList v-else :items="[{ tone: 'info', text: t.instDrawer.noBlockVolumes }]" />
         </SectionCard>
 
-        <SectionCard title="救援模式" note="把系统盘卸下来挂到另一台机器上修">
+        <SectionCard :title="t.instDrawer.rescueMode" :note="t.instDrawer.rescueNote">
           <!-- 第一步：引导卷还挂着 -->
           <div v-if="!bootDetached" class="pad">
             <CheckList :items="[
               { tone: inst.state === 'STOPPED' ? 'ok' : 'warn',
                 text: inst.state === 'STOPPED'
-                  ? '实例已关机，可以分离引导卷。'
-                  : '分离引导卷需要先关机。' },
-              { tone: 'info', text: '分离后该实例无法启动，直到重新挂载。适合补 SSH 公钥、修坏掉的 fstab。' }
+                  ? t.instDrawer.canDetach
+                  : t.instDrawer.needStop },
+              { tone: 'info', text: t.instDrawer.rescueUse }
             ]" />
             <button class="btn btn--sm btn--warning"
                     :disabled="inst.state !== 'STOPPED' || !detail?.bootVolumeAttachmentId"
-                    @click="detachBoot()">分离引导卷</button>
+                    @click="detachBoot()">{{ t.instDrawer.detachBoot }}</button>
           </div>
 
           <!-- 第二步：已分离，挂到救援机 -->
           <div v-else class="pad">
             <CheckList :items="[
-              { tone: 'warn', text: '引导卷已分离，该实例现在无法启动。' },
+              { tone: 'warn', text: t.instDrawer.detachedWarn },
               ...(rescueTargets.length
                 ? [{ tone: 'info' as const,
-                     text: `可挂载到 ${rescueTargets.length} 台同可用域（${inst.ad}）的运行中实例。` }]
+                     text: t.instDrawer.rescueTargets(rescueTargets.length, inst.ad) }]
                 : [{ tone: 'warn' as const,
-                     text: `${inst.region} 的 ${inst.ad} 里没有其它运行中的实例。卷不能跨可用域挂载——`
-                       + '需要先在同一个可用域开一台能 SSH 的机器。' }])
+                     text: t.instDrawer.noRescueTargets(inst.region, inst.ad) }])
             ]" />
 
             <!-- 卷分离之后就「无主」了，缓存里的 BootVolumeID 也被同步清掉，
                  所以得让人从本可用域的引导卷里认一下是哪块。默认按同名猜。 -->
             <div class="rescue">
-              <span class="t-2xs dim-3">要救的卷</span>
+              <span class="t-2xs dim-3">{{ t.instDrawer.volumeToRescue }}</span>
               <SelectMenu v-model="chosenVolume" :groups="looseVolumeGroups"
-                          :placeholder="looseLoading ? '读取中…' : '选择引导卷'"
-                          aria-label="要救援的引导卷" />
-              <button class="btn btn--xs" :disabled="looseLoading" @click="loadLooseVolumes()">重新读取</button>
+                          :placeholder="looseLoading ? t.common.loading : t.instDrawer.pickBoot"
+                          :aria-label="t.instDrawer.bootToRescue" />
+              <button class="btn btn--xs" :disabled="looseLoading" @click="loadLooseVolumes()">{{ t.instDrawer.reread }}</button>
             </div>
             <CheckList v-if="looseError"
-                       :items="[{ tone: 'fail', text: '读取引导卷列表失败：' + looseError }]" />
+                       :items="[{ tone: 'fail', text: t.instDrawer.looseFailed(looseError) }]" />
             <CheckList v-else-if="!looseLoading && !looseVolumes.length"
                        :items="[{ tone: 'warn',
-                                  text: `${inst.ad} 里没有读到任何引导卷。分离后的卷仍会留在原可用域，`
-                                    + '若这里为空，多半是账号的区域或分区选择不对。' }]" />
+                                  text: t.instDrawer.noLoose(inst.ad) }]" />
 
             <div v-if="rescueTargets.length" class="rescue">
-              <span class="t-2xs dim-3">挂到</span>
+              <span class="t-2xs dim-3">{{ t.instDrawer.attachTo }}</span>
               <SelectMenu v-model="rescueTarget" :groups="rescueTargetGroups"
-                          placeholder="选择救援机" aria-label="救援目标实例" />
+                          :placeholder="t.instDrawer.pickRescue" :aria-label="t.instDrawer.rescueTarget" />
               <button class="btn btn--sm btn--primary"
                       :disabled="!rescueTarget || !chosenVolume || rescueBusy"
-                      @click="attachToRescue()">挂为数据盘</button>
+                      @click="attachToRescue()">{{ t.instDrawer.attachAsData }}</button>
             </div>
 
             <details class="rescue__how">
-              <summary class="t-xs dim-2">挂上去之后怎么改</summary>
+              <summary class="t-xs dim-2">{{ t.instDrawer.howToFix }}</summary>
               <CodeBlock :code="rescueSteps" />
             </details>
 
             <div class="rescue__back">
-              <span class="t-2xs dim-3">修完、并在救援机上分离之后：</span>
+              <span class="t-2xs dim-3">{{ t.instDrawer.afterFix }}</span>
               <button class="btn btn--sm" :disabled="rescueBusy || !chosenVolume"
-                      @click="reattachBoot()">挂回引导卷</button>
+                      @click="reattachBoot()">{{ t.instDrawer.reattach }}</button>
             </div>
           </div>
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '监控'">
-        <SectionCard title="时间范围">
+      <template v-else-if="active === 'metrics'">
+        <SectionCard :title="t.instDrawer.timeRange">
           <div class="pad pad--row">
             <div class="range">
               <button v-for="h in [6, 24, 72, 168]" :key="h" class="btn btn--sm"
                       :class="{ 'is-on': metricHours === h }" @click="metricHours = h">
-                {{ h < 24 ? `${h} 小时` : `${h / 24} 天` }}
+                {{ h < 24 ? t.instDrawer.hours(h) : t.instDrawer.days(h / 24) }}
               </button>
             </div>
             <button class="btn btn--sm" :disabled="metricsLoading || trafficLoading" @click="refreshMonitoring()">
-              {{ metricsLoading || trafficLoading ? '加载中…' : '刷新' }}
+              {{ metricsLoading || trafficLoading ? t.instDrawer.loading : t.common.refresh }}
             </button>
           </div>
         </SectionCard>
 
         <CheckList v-if="noMetricData"
-                   :items="[{ tone: 'warn', text: metrics?.notice ?? '暂无监控数据' }]" />
+                   :items="[{ tone: 'warn', text: metrics?.notice ?? t.instDrawer.noMetrics }]" />
         <CheckList v-else-if="metricErrors.length"
                    :items="metricErrors.map(text => ({ tone: 'warn' as const, text }))" />
 
         <!-- 概况：先给结论，图表负责细节 -->
         <div v-if="metrics" class="tiles">
           <div class="tile">
-            <span class="tile__k">CPU 使用率 · 最新</span>
+            <span class="tile__k">{{ t.instDrawer.cpuLatest }}</span>
             <span class="tile__v mono" :class="{ 'is-high': (cpuStats?.last ?? 0) >= HIGH_USAGE }">
               {{ cpuStats ? formatPercent(cpuStats.last) : '—' }}
             </span>
             <span v-if="cpuStats" class="tile__sub mono">
-              平均 {{ formatPercent(cpuStats.avg) }} · 峰值 {{ formatPercent(cpuStats.peak) }}
+              {{ t.instDrawer.avgPeak(formatPercent(cpuStats.avg), formatPercent(cpuStats.peak)) }}
             </span>
-            <span v-if="(cpuStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">▲ 偏高</span>
+            <span v-if="(cpuStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">{{ t.instDrawer.high }}</span>
           </div>
           <div class="tile">
-            <span class="tile__k">内存使用率 · 最新</span>
+            <span class="tile__k">{{ t.instDrawer.memLatest }}</span>
             <span class="tile__v mono" :class="{ 'is-high': (memStats?.last ?? 0) >= HIGH_USAGE }">
               {{ memStats ? formatPercent(memStats.last) : '—' }}
             </span>
             <span v-if="memStats" class="tile__sub mono">
-              <template v-if="memUsedGb !== null">约 {{ memUsedGb }} / {{ inst.memGb }} GB · </template>峰值 {{ formatPercent(memStats.peak) }}
+              <template v-if="memUsedGb !== null">{{ t.instDrawer.memApprox(memUsedGb, inst.memGb) }}</template>{{ t.instDrawer.peak(formatPercent(memStats.peak)) }}
             </span>
-            <span v-if="(memStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">▲ 偏高</span>
+            <span v-if="(memStats?.last ?? 0) >= HIGH_USAGE" class="tile__flag">{{ t.instDrawer.high }}</span>
           </div>
           <div class="tile">
-            <span class="tile__k"><i class="dot dot--1" />出站速率 · 最新</span>
+            <span class="tile__k"><i class="dot dot--1" />{{ t.instDrawer.outLatest }}</span>
             <span class="tile__v mono">{{ outStats ? formatBitRate(outStats.last) : '—' }}</span>
             <span v-if="outStats" class="tile__sub mono">
-              平均 {{ formatBitRate(outStats.avg) }} · 峰值 {{ formatBitRate(outStats.peak) }}
+              {{ t.instDrawer.avgPeak(formatBitRate(outStats.avg), formatBitRate(outStats.peak)) }}
             </span>
           </div>
           <div class="tile">
-            <span class="tile__k"><i class="dot dot--2" />入站速率 · 最新</span>
+            <span class="tile__k"><i class="dot dot--2" />{{ t.instDrawer.inLatest }}</span>
             <span class="tile__v mono">{{ inStats ? formatBitRate(inStats.last) : '—' }}</span>
             <span v-if="inStats" class="tile__sub mono">
-              平均 {{ formatBitRate(inStats.avg) }} · 峰值 {{ formatBitRate(inStats.peak) }}
+              {{ t.instDrawer.avgPeak(formatBitRate(inStats.avg), formatBitRate(inStats.peak)) }}
             </span>
           </div>
         </div>
         <p v-if="metrics" class="t-2xs dim-3 tiles__foot">
-          {{ rangeText }}的统计{{ resolutionText ? ' · ' + resolutionText : '' }} · 数据来自 Oracle Cloud Agent
+          {{ t.instDrawer.statsOf(rangeText) }}{{ resolutionText ? ' · ' + resolutionText : '' }}{{ t.instDrawer.agentSource }}
         </p>
 
-        <SectionCard title="网络速率" :note="`${rangeText} · 单位随数值自动切换`">
+        <SectionCard :title="t.instDrawer.netRate" :note="t.instDrawer.netRateNote(rangeText)">
           <SkeletonRows v-if="metricsLoading && !metrics" :rows="3" />
           <MetricChart v-else :series="rateSeries" :format="formatBits" :height="220"
-                       empty-text="暂无流量数据" />
+                       :empty-text="t.instDrawer.noTraffic" />
         </SectionCard>
 
-        <SectionCard title="CPU 与内存使用率" :note="`${rangeText} · 纵轴固定 0–100%`">
+        <SectionCard :title="t.instDrawer.cpuMem" :note="t.instDrawer.cpuMemNote(rangeText)">
           <SkeletonRows v-if="metricsLoading && !metrics" :rows="3" />
           <MetricChart v-else :series="usageSeries" :format="formatPercent" :y-max="100" :height="220"
-                       empty-text="暂无 CPU / 内存数据" />
+                       :empty-text="t.instDrawer.noCpuMem" />
         </SectionCard>
 
-        <SectionCard title="本月已用流量"
-                     :note="traffic ? `${traffic.month}（UTC）· ${traffic.vnics} 块网卡 · 不受时间范围影响` : 'VCN 网卡统计'">
+        <SectionCard :title="t.instDrawer.monthTraffic"
+                     :note="traffic ? t.instDrawer.monthTrafficNote(traffic.month, traffic.vnics) : t.instDrawer.vcnVnicStats">
           <SkeletonRows v-if="trafficLoading && !traffic" :rows="2" />
           <p v-else-if="trafficError" class="pad t-xs traffic__err">{{ trafficError }}</p>
           <template v-else-if="traffic">
             <div class="tiles tiles--inset">
               <div class="tile">
-                <span class="tile__k"><i class="dot dot--1" />出站 · 本月累计</span>
+                <span class="tile__k"><i class="dot dot--1" />{{ t.instDrawer.outMonth }}</span>
                 <span class="tile__v mono">{{ formatBytes(traffic.outBytes) }}</span>
-                <span class="tile__sub mono">近 24 小时 {{ formatBytes(traffic.last24hOutBytes) }}</span>
+                <span class="tile__sub mono">{{ t.instDrawer.last24h(formatBytes(traffic.last24hOutBytes)) }}</span>
               </div>
               <div class="tile">
-                <span class="tile__k"><i class="dot dot--2" />入站 · 本月累计</span>
+                <span class="tile__k"><i class="dot dot--2" />{{ t.instDrawer.inMonth }}</span>
                 <span class="tile__v mono">{{ formatBytes(traffic.inBytes) }}</span>
-                <span class="tile__sub mono">近 24 小时 {{ formatBytes(traffic.last24hInBytes) }}</span>
+                <span class="tile__sub mono">{{ t.instDrawer.last24h(formatBytes(traffic.last24hInBytes)) }}</span>
               </div>
             </div>
             <MetricChart type="bar" :categories="trafficDays" :series="trafficSeries"
-                         :format="trafficScale.format" :height="200" empty-text="本月暂无流量数据" />
+                         :format="trafficScale.format" :height="200" :empty-text="t.instDrawer.noMonthTraffic" />
             <div class="pad pad--tight">
-              <p v-if="traffic.error" class="t-2xs traffic__err">部分网卡查询失败：{{ traffic.error }}</p>
+              <p v-if="traffic.error" class="t-2xs traffic__err">{{ t.instDrawer.partialVnics(traffic.error) }}</p>
               <p class="t-2xs dim-3 traffic__note">{{ traffic.notice }}</p>
             </div>
           </template>
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '控制台'">
-        <SectionCard title="串行控制台" note="不依赖网络配置，SSH 连不上时用它排障">
+      <template v-else-if="active === 'console'">
+        <SectionCard :title="t.instDrawer.serialConsole" :note="t.instDrawer.serialNote">
           <CheckList :items="[
-            { tone: 'info', text: '改坏 fstab、防火墙把自己关在门外、忘了开 SSH —— 这些都能靠串行控制台救回来。' },
-            { tone: 'info', text: 'Oracle 用你的 SSH 公钥鉴权，本工具不会代管你的私钥。' }
+            { tone: 'info', text: t.instDrawer.serialInfo1 },
+            { tone: 'info', text: t.instDrawer.serialInfo2 }
           ]" />
         </SectionCard>
 
-        <SectionCard title="建立连接">
+        <SectionCard :title="t.instDrawer.createConn">
           <div class="pad">
             <div class="field">
-              <label for="conkey">SSH 公钥（必须是 RSA）</label>
+              <label for="conkey">{{ t.instDrawer.rsaKey }}</label>
               <textarea id="conkey" v-model="sshPublicKey" class="textarea" style="height: 68px"
                         spellcheck="false" placeholder="ssh-rsa AAAAB3NzaC1yc2E…" />
               <p class="hint">
-                Oracle 的串行控制台只接受 RSA，不支持 ed25519。没有的话生成一把：
+                {{ t.instDrawer.rsaHint }}
                 <code>ssh-keygen -t rsa -b 4096 -f ~/.ssh/oci_console</code>
               </p>
             </div>
             <button class="btn btn--sm" :disabled="consoleCreating" @click="createConsole()">
-              {{ consoleCreating ? '建立中…' : '建立控制台连接' }}
+              {{ consoleCreating ? t.instDrawer.creating : t.instDrawer.createConsole }}
             </button>
           </div>
         </SectionCard>
 
         <template v-if="consoleResult">
-          <SectionCard title="串行控制台命令" note="在本机终端执行">
+          <SectionCard :title="t.instDrawer.serialCmd" :note="t.instDrawer.runLocally">
             <CodeBlock copyable :code="consoleResult.serialConsoleCommand" />
           </SectionCard>
-          <SectionCard title="VNC 隧道命令" note="建好隧道后用 VNC 客户端连 localhost:5900">
+          <SectionCard :title="t.instDrawer.vncCmd" :note="t.instDrawer.vncNote">
             <CodeBlock copyable :code="consoleResult.vncConsoleCommand" />
           </SectionCard>
         </template>
       </template>
 
       <template v-else>
-        <SectionCard title="本实例操作审计" :note="`${auditRows.length} 条`">
+        <SectionCard :title="t.instDrawer.instanceAudit" :note="t.instDrawer.nRecords(auditRows.length)">
           <div v-for="r in auditRows" :key="r.id" class="rule">
             <span class="rule__bar"
                   :style="{ background: r.result === 'ok' ? 'var(--success)' : 'var(--danger)' }" />
@@ -1163,7 +1159,7 @@ watch(metricHours, () => void loadMetrics())
             <span class="rule__desc mono t-2xs dim-3">{{ relativeTime(r.createdAt) }}</span>
           </div>
           <CheckList v-if="auditRows.length === 0"
-                     :items="[{ tone: 'info', text: '该实例暂无操作记录' }]" />
+                     :items="[{ tone: 'info', text: t.instDrawer.noRecords }]" />
         </SectionCard>
       </template>
       </div>

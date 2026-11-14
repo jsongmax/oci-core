@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { copy } from '@/lib/format'
 import { useStore } from '@/store'
 
@@ -8,7 +9,7 @@ const { toast } = useStore()
 
 <template>
   <pre class="code mono" :class="{ 'is-copyable': copyable }"
-       @click="copyable && copy(props.code).then(() => toast({ tone: 'accent', title: '已复制' }))">{{ code }}</pre>
+       @click="copyable && copy(props.code).then(() => toast({ tone: 'accent', title: t.ui.copied }))">{{ code }}</pre>
 </template>
 
 <style scoped>

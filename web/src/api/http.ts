@@ -1,3 +1,5 @@
+import { locale, t } from '@/i18n'
+
 /**
  * HTTP 客户端。所有后端调用都走这里。
  *
@@ -11,6 +13,12 @@
 /** 后端约定的 CSRF 请求头。浏览器不允许跨源请求携带自定义头。 */
 const CSRF_HEADER = 'X-OCI-Tools'
 const CSRF_VALUE = '1'
+
+/**
+ * 界面语言。后端据此决定错误信息、任务步骤等文案用哪种语言写——
+ * 那些文字是后端生成的，前端拿到的已经是成品。
+ */
+const LANG_HEADER = 'Accept-Language'
 
 /** 401 时广播的事件名。 */
 export const AUTH_REQUIRED_EVENT = 'oci:auth-required'
@@ -44,7 +52,7 @@ export interface ApiErrorBody {
  * ApiError 保留后端给的全部错误信息。
  *
  * ociCode 是 Oracle 的原始错误码，UI 上必须原样展示且可复制——
- * 用户排障时要拿它去搜索。advice 是可直接显示的中文建议。
+ * 用户排障时要拿它去搜索。advice 是可直接显示的建议，已按界面语言写好。
  */
 export class ApiError extends Error {
   readonly status: number
@@ -53,7 +61,7 @@ export class ApiError extends Error {
   readonly advice?: string
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.message || `请求失败（HTTP ${status}）`)
+    super(body.message || t.http.failed(status))
     this.name = 'ApiError'
     this.status = status
     this.code = body.code || 'unknown'
@@ -124,7 +132,7 @@ async function send<T>(method: Method, path: string, opts: RequestOptions, dange
     return demoSend<T>(method, path, opts.query, opts.body)
   }
 
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json', [LANG_HEADER]: locale.value }
   if (dangerCode) headers[DANGER_CODE_HEADER] = dangerCode
 
   // 读操作不需要 CSRF 头，带上也无害，但保持与后端约定一致更清楚。
@@ -145,7 +153,7 @@ async function send<T>(method: Method, path: string, opts: RequestOptions, dange
   } catch (err) {
     // 网络层失败没有状态码。用 0 表示，让上层能与业务错误区分开。
     if ((err as Error)?.name === 'AbortError') throw err
-    throw new ApiError(0, { code: 'network', message: '无法连接到服务，请检查网络或后端是否在运行' })
+    throw new ApiError(0, { code: 'network', message: t.http.network })
   }
 
   if (response.status === 204) return undefined as T

@@ -11,6 +11,7 @@
  *  - 共用出口比不用代理更糟。两个账号配同一条代理，等于主动把它们绑在
  *    一个 IP 上，凭空制造一个本来不存在的关联信号。所以重复绑定是硬拒绝。
  */
+import { t } from '@/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
@@ -73,10 +74,6 @@ const preview = ref<ProxyImportResultDTO | null>(null)
 watch(importText, () => { preview.value = null })
 const importing = ref(false)
 
-const PLACEHOLDER = `1.2.3.4:8080
-1.2.3.4:8080:user:pass
-user:pass@1.2.3.4:8080
-socks5://user:pass@1.2.3.4:1080  # 香港节点`
 
 /** 先干跑一遍让用户核对。代理列表动辄十几行、格式又乱，直接写库会让人蒙。 */
 async function parsePreview() {
@@ -88,7 +85,7 @@ async function parsePreview() {
     // 解析期间文本又被改了：这份预览已经过期，丢掉。
     if (text === importText.value) preview.value = res
   } catch (err) {
-    toastError('解析失败', err)
+    toastError(t.addAcctProxy.px.parseFailed, err)
   } finally {
     importing.value = false
   }
@@ -100,17 +97,17 @@ async function confirmImport() {
     const res = await proxyApi.import(importText.value, false)
     toast({
       tone: res.failed > 0 ? 'warning' : 'success',
-      title: `导入完成：成功 ${res.ok} 条`,
+      title: t.addAcctProxy.px.imported(res.ok),
       body: [
-        res.skipped ? `跳过 ${res.skipped} 条（已存在）` : '',
-        res.failed ? `失败 ${res.failed} 条` : ''
+        res.skipped ? t.addAcctProxy.px.skipped(res.skipped) : '',
+        res.failed ? t.addAcctProxy.px.failedN(res.failed) : ''
       ].filter(Boolean).join(' · ') || undefined
     })
     importText.value = ''
     preview.value = null
     await load()
   } catch (err) {
-    toastError('导入失败', err)
+    toastError(t.addAcctProxy.px.importFailed, err)
   } finally {
     importing.value = false
   }
@@ -125,11 +122,11 @@ async function check(id?: string) {
     const ok = results.filter(r => r.status === 'ok').length
     toast({
       tone: ok === results.length ? 'success' : 'warning',
-      title: `检测完成：${ok} / ${results.length} 条可用`
+      title: t.addAcctProxy.px.checked(ok, results.length)
     })
     await load()
   } catch (err) {
-    toastError('检测失败', err)
+    toastError(t.addAcctProxy.px.checkFailed, err)
   } finally {
     checking.value = false
   }
@@ -151,12 +148,12 @@ function optionsFor(accountId: string) {
     return p.enabled && (!owner || owner === accountId)
   })
   return [{
-    label: '代理',
+    label: t.addAcctProxy.px.proxy,
     options: [
-      { value: '', label: '本机直连（不走代理）' },
+      { value: '', label: t.addAcctProxy.px.directLocal },
       ...free.map(p => ({
         value: p.id,
-        label: `${p.label || display(p)}${p.lastStatus === 'fail' ? ' · 不通' : ''}`,
+        label: `${p.label || display(p)}${p.lastStatus === 'fail' ? t.addAcctProxy.px.down : ''}`,
         dot: TONE[p.lastStatus]
       }))
     ]
@@ -166,10 +163,10 @@ function optionsFor(accountId: string) {
 async function bind(accountId: string, proxyId: string) {
   try {
     await proxyApi.bind(accountId, proxyId)
-    toast({ tone: 'success', title: proxyId ? '已绑定' : '已解绑，恢复本机直连' })
+    toast({ tone: 'success', title: proxyId ? t.addAcctProxy.px.bound : t.addAcctProxy.px.unbound })
     await load()
   } catch (err) {
-    toastError('绑定失败', err)
+    toastError(t.addAcctProxy.px.bindFailed, err)
     await load()
   }
 }
@@ -177,16 +174,16 @@ async function bind(accountId: string, proxyId: string) {
 function remove(p: ProxyDTO) {
   ask({
     level: 2,
-    title: `删除代理「${p.label || display(p)}」`,
-    body: '删除后这条代理从池子里消失。仍被账号绑定的代理无法删除，请先解绑。',
-    okLabel: '删除',
+    title: t.addAcctProxy.px.deleteTitle(p.label || display(p)),
+    body: t.addAcctProxy.px.deleteBody,
+    okLabel: t.common.delete,
     onConfirm: async () => {
       try {
         await proxyApi.remove(p.id)
-        toast({ tone: 'success', title: '已删除' })
+        toast({ tone: 'success', title: t.addAcctProxy.px.deleted })
         await load()
       } catch (err) {
-        toastError('删除失败', err)
+        toastError(t.addAcctProxy.px.deleteFailed, err)
       }
     }
   })
@@ -197,7 +194,7 @@ async function toggle(p: ProxyDTO) {
     await proxyApi.update(p.id, { enabled: !p.enabled })
     await load()
   } catch (err) {
-    toastError('操作失败', err)
+    toastError(t.addAcctProxy.px.actionFailed, err)
   }
 }
 
@@ -209,16 +206,13 @@ const TONE: Record<ProxyStatusDTO, string> = {
   unknown: 'var(--text-tertiary)'
 }
 
-const STATUS_TEXT: Record<ProxyStatusDTO, string> = {
-  ok: '可用', fail: '不通', unknown: '未检测'
-}
 
 const display = (p: ProxyDTO) =>
   `${p.scheme}://${p.username ? p.username + ':****@' : ''}${p.host}:${p.port}`
 
 function checkedText(p: ProxyDTO): string {
-  if (!p.lastCheckedAt || p.lastCheckedAt.startsWith('1970')) return '尚未检测'
-  return relativeTime(p.lastCheckedAt) + '检测'
+  if (!p.lastCheckedAt || p.lastCheckedAt.startsWith('1970')) return t.addAcctProxy.px.neverChecked
+  return t.addAcctProxy.px.checkedAt(relativeTime(p.lastCheckedAt))
 }
 
 /**
@@ -243,18 +237,17 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">代理</h1>
+        <h1 class="page-title">{{ t.addAcctProxy.px.title }}</h1>
         <p class="page-sub">
-          {{ list.length }} 条代理，{{ okCount }} 条可用 ·
-          {{ boundCount }} 个账号走代理，{{ directCount }} 个本机直连
+          {{ t.addAcctProxy.px.subtitle(list.length, okCount, boundCount, directCount) }}
         </p>
       </div>
       <div class="head-actions">
         <button class="btn" :disabled="checking || list.length === 0" @click="check()">
-          {{ checking ? '检测中…' : '全部检测' }}
+          {{ checking ? t.addAcctProxy.px.checkingAll : t.addAcctProxy.px.checkAll }}
         </button>
         <button class="btn" :disabled="refreshing" @click="refresh()">
-          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />刷新
+          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />{{ t.common.refresh }}
         </button>
       </div>
     </header>
@@ -263,31 +256,31 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
     <CheckList class="warn-box" :items="[
-      { tone: 'info', text: notice || '代理只改变出口 IP，不改变身份——每个请求仍带该账号的密钥签名。' },
+      { tone: 'info', text: notice || t.addAcctProxy.px.noteIdentity },
       { tone: 'warn',
-        text: '一条代理只能绑一个账号。两个账号共用同一出口，等于把它们绑在同一个 IP 上，反而制造了本来不存在的关联信号——那与网络隔离的目的正好相反。' },
+        text: t.addAcctProxy.px.noteOnePerAccount },
       { tone: 'info',
-        text: '检测走的是「通过该代理访问 OCI 端点」，不经任何第三方、不消耗配额、不产生费用。按该代理所绑账号的 home region 测——同一条代理连不同区域的延迟能差好几倍。' },
+        text: t.addAcctProxy.px.noteCheck },
       { tone: 'warn',
-        text: '检测不了「不同代理但同一出口 IP」。那需要把代理列表发给第三方回显服务，与本工具不向第三方上报数据的原则冲突。代理商给的多条 IP 是否真的独立，需要你自己验一次。' }
+        text: t.addAcctProxy.px.noteSameIp }
     ]" />
 
     <!-- 导入 -->
-    <SectionCard title="导入代理" note="每行一条，认得下面几种常见格式">
+    <SectionCard :title="t.addAcctProxy.px.importTitle" :note="t.addAcctProxy.px.importNote">
       <div class="pad">
         <!-- 用 .textarea 而不是 .input：.input 是固定 36px 高的单行控件，
              套在 textarea 上会把它压成一条缝，rows 属性完全不起作用。 -->
         <textarea v-model="importText" class="textarea imp__box"
                   style="height: 116px"
-                  :placeholder="PLACEHOLDER" spellcheck="false" />
+                  :placeholder="t.addAcctProxy.px.placeholder" spellcheck="false" />
         <div class="imp__actions">
           <button class="btn" :disabled="importing || !importText.trim()"
-                  @click="parsePreview()">{{ importing ? '解析中…' : '解析预览' }}</button>
+                  @click="parsePreview()">{{ importing ? t.addAcctProxy.px.parsing : t.addAcctProxy.px.preview }}</button>
           <button v-if="preview" class="btn btn--primary"
                   :disabled="importing || preview.ok === 0"
-                  @click="confirmImport()">确认导入 {{ preview.ok }} 条</button>
+                  @click="confirmImport()">{{ t.addAcctProxy.px.confirmImport(preview.ok) }}</button>
           <span v-if="preview" class="t-2xs dim-3">
-            解析成功 {{ preview.ok }} · 失败 {{ preview.failed }}
+            {{ t.addAcctProxy.px.previewStats(preview.ok, preview.failed) }}
           </span>
         </div>
 
@@ -299,25 +292,25 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
             <span v-if="row.label" class="t-2xs dim-3">{{ row.label }}</span>
             <span class="imp__spacer" />
             <span v-if="row.error" class="t-2xs imp__err">{{ row.error }}</span>
-            <span v-else-if="row.skipped" class="t-2xs dim-3">已存在，跳过</span>
-            <span v-else class="t-2xs" style="color: var(--success)">可导入</span>
+            <span v-else-if="row.skipped" class="t-2xs dim-3">{{ t.addAcctProxy.px.existsSkip }}</span>
+            <span v-else class="t-2xs" style="color: var(--success)">{{ t.addAcctProxy.px.importable }}</span>
           </div>
         </div>
       </div>
     </SectionCard>
 
     <!-- 代理列表 -->
-    <SectionCard title="代理池" :note="`${list.length} 条`" class="stale-able" :class="{ 'is-stale': refreshing && list.length > 0 }">
+    <SectionCard :title="t.addAcctProxy.px.poolTitle" :note="t.addAcctProxy.px.poolNote(list.length)" class="stale-able" :class="{ 'is-stale': refreshing && list.length > 0 }">
       <SkeletonRows v-if="loading && list.length === 0" :rows="3" />
 
-      <EmptyState v-else-if="list.length === 0" icon="⇄" title="代理池是空的"
-                  sub="在上面粘贴代理列表导入。不导入的话所有账号都走本机直连。" />
+      <EmptyState v-else-if="list.length === 0" icon="⇄" :title="t.addAcctProxy.px.poolEmpty"
+                  :sub="t.addAcctProxy.px.poolEmptySub" />
 
       <div v-for="(p, n) in list" v-else :key="p.id" class="px reveal" :class="{ 'is-off': !p.enabled }"
            :style="{ '--i': Math.min(n, 8) }">
         <span class="px__dot" :style="{ background: TONE[p.lastStatus] }" />
         <span class="px__status" :style="{ color: TONE[p.lastStatus] }">
-          {{ STATUS_TEXT[p.lastStatus] }}
+          {{ t.addAcctProxy.px.status[p.lastStatus] }}
         </span>
 
         <span class="px__label">{{ p.label || '—' }}</span>
@@ -331,29 +324,29 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
         <span v-if="boundTo[p.id]" class="px__bound">
           <AccountChip :account="accountById(boundTo[p.id])" />
         </span>
-        <span v-else class="t-2xs dim-3 px__bound">未绑定</span>
+        <span v-else class="t-2xs dim-3 px__bound">{{ t.addAcctProxy.px.unboundTag }}</span>
 
         <span class="px__spacer" />
 
         <span v-if="p.lastError" class="mono t-2xs px__err" :title="p.lastError">
           {{ p.lastError }}
         </span>
-        <span v-if="everWorked(p)" class="t-2xs dim-3" :title="`最近一次成功：${p.lastOkAt}`">
-          {{ relativeTime(p.lastOkAt) }}还是通的
+        <span v-if="everWorked(p)" class="t-2xs dim-3" :title="t.addAcctProxy.px.lastOk(p.lastOkAt)">
+          {{ t.addAcctProxy.px.stillWorked(relativeTime(p.lastOkAt)) }}
         </span>
         <span class="mono t-2xs dim-3 px__when">{{ checkedText(p) }}</span>
 
-        <button class="btn btn--xs" :disabled="checking" @click="check(p.id)">检测</button>
-        <button class="btn btn--xs" @click="toggle(p)">{{ p.enabled ? '停用' : '启用' }}</button>
-        <button class="btn btn--xs btn--warning" @click="remove(p)">删除</button>
+        <button class="btn btn--xs" :disabled="checking" @click="check(p.id)">{{ t.addAcctProxy.px.check }}</button>
+        <button class="btn btn--xs" @click="toggle(p)">{{ p.enabled ? t.addAcctProxy.px.disable : t.addAcctProxy.px.enable }}</button>
+        <button class="btn btn--xs btn--warning" @click="remove(p)">{{ t.common.delete }}</button>
       </div>
     </SectionCard>
 
     <!-- 分配矩阵 -->
-    <SectionCard title="账号分配"
-                 note="一屏看全谁走代理、谁直连。改动立刻生效，下一次调用就换路">
-      <EmptyState v-if="usableAccounts.length === 0" icon="⬡" title="还没有账号"
-                  sub="先在账号页接入 Oracle 账号。" />
+    <SectionCard :title="t.addAcctProxy.px.assignTitle"
+                 :note="t.addAcctProxy.px.assignNote">
+      <EmptyState v-if="usableAccounts.length === 0" icon="⬡" :title="t.addAcctProxy.px.noAccounts"
+                  :sub="t.addAcctProxy.px.noAccountsSub" />
 
       <div v-for="a in usableAccounts" v-else :key="a.id" class="asg">
         <span class="asg__bar" :style="{ background: acctColor(a.colorIndex) }" />
@@ -364,10 +357,10 @@ const directCount = computed(() => usableAccounts.value.length - boundCount.valu
         <span v-if="bindings[a.id]" class="mono t-2xs dim-3 asg__cur">
           {{ display(list.find(p => p.id === bindings[a.id])!) }}
         </span>
-        <span v-else class="t-2xs dim-3 asg__cur">本机直连</span>
+        <span v-else class="t-2xs dim-3 asg__cur">{{ t.addAcctProxy.px.directShort }}</span>
 
         <SelectMenu :model-value="bindings[a.id] ?? ''" :groups="optionsFor(a.id)"
-                    placeholder="选择代理" :aria-label="`${a.alias} 的代理`" :min-width="240"
+                    :placeholder="t.addAcctProxy.px.pickProxy" :aria-label="t.addAcctProxy.px.proxyOf(a.alias)" :min-width="240"
                     @update:model-value="v => bind(a.id, String(v))" />
       </div>
     </SectionCard>

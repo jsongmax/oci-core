@@ -5,6 +5,7 @@
  * 引导卷直接读实例缓存（同步时已带回容量与 VPU），块存储要按
  * （账号 × 区域）逐个拉——OCI 没有跨账号的卷列表接口。
  */
+import { t } from '@/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
@@ -19,8 +20,8 @@ import AccountGroupRow from '@/components/AccountGroupRow.vue'
 import { groupByAccount } from '@/lib/grouping'
 
 const { state, accountById, openDrawer, visibleInstances } = useStore()
-const TABS = ['引导卷', '块存储']
-const active = ref('引导卷')
+const TABS = ['boot', 'block']
+const active = ref('boot')
 
 /** 引导卷来自实例缓存：同步时已经把容量与 VPU 一并带回来了。 */
 const boots = computed(() => visibleInstances.value.filter(i => i.state !== 'TERMINATED'))
@@ -86,15 +87,15 @@ async function loadBlocks() {
 
 /** VPU 与预估性能的对应关系，来自 Oracle 的块存储性能档位说明。 */
 function iopsHint(vpu: number): string {
-  if (vpu === 0) return '低成本档'
-  if (vpu >= 30) return '超高性能'
-  if (vpu >= 20) return '约 25k IOPS'
-  return '约 3k IOPS'
+  if (vpu === 0) return t.storagePage.lowCost
+  if (vpu >= 30) return t.storagePage.ultraHigh
+  if (vpu >= 20) return t.storagePage.iops25k
+  return t.storagePage.iops3k
 }
 
 onMounted(loadBlocks)
 watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionFilter].join(',')].join('|'), () => {
-  if (active.value === '块存储') void loadBlocks()
+  if (active.value === 'block') void loadBlocks()
 })
 </script>
 
@@ -102,36 +103,36 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">存储</h1>
+        <h1 class="page-title">{{ t.storagePage.title }}</h1>
         <p class="page-sub">
-          跨账号聚合 · 引导卷 {{ boots.length }} · 块存储 {{ blocks.length }} · 引导卷合计 {{ totalGb }} GB
+          {{ t.storagePage.subtitle(boots.length, blocks.length, totalGb) }}
         </p>
       </div>
       <div class="st-actions">
         <button class="pill" :class="{ 'is-active': state.groupByAccount }"
-                @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
-        <button v-if="active === '块存储'" class="btn" :disabled="loading" @click="loadBlocks">
-          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '加载中' : '刷新' }}
+                @click="state.groupByAccount = !state.groupByAccount">{{ t.storagePage.groupByAccount }}</button>
+        <button v-if="active === 'block'" class="btn" :disabled="loading" @click="loadBlocks">
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? t.storagePage.loadingShort : t.common.refresh }}
         </button>
       </div>
     </header>
 
-    <LoadingBar :active="loading && blocks.length > 0 && active === '块存储'" />
-    <PageTabs :tabs="TABS" v-model:active="active" />
+    <LoadingBar :active="loading && blocks.length > 0 && active === 'block'" />
+    <PageTabs :tabs="TABS" :labels="t.storagePage.tabs" v-model:active="active" />
 
-    <p v-if="loadError && active === '块存储'" class="warn">{{ loadError }}</p>
+    <p v-if="loadError && active === 'block'" class="warn">{{ loadError }}</p>
 
     <Transition name="swap" mode="out-in">
-    <SectionCard v-if="active === '引导卷'" title="引导卷"
-                 note="容量只能增不能减；扩容后需在实例内扩展分区与文件系统">
-      <EmptyState v-if="boots.length === 0" title="所选账号下暂无实例"
-                  body="引导卷随实例一同创建。" />
+    <SectionCard v-if="active === 'boot'" :title="t.storagePage.bootTitle"
+                 :note="t.storagePage.bootNote">
+      <EmptyState v-if="boots.length === 0" :title="t.storagePage.noInstances"
+                  :body="t.storagePage.noInstancesBody" />
       <template v-else>
         <div class="head cols-boot">
-          <span>实例</span><span>账号</span><span>区域</span><span>容量</span><span>VPU</span><span>预估性能</span><span />
+          <span>{{ t.storagePage.colInstance }}</span><span>{{ t.storagePage.colAccount }}</span><span>{{ t.storagePage.colRegion }}</span><span>{{ t.storagePage.colSize }}</span><span>{{ t.storagePage.colVpu }}</span><span>{{ t.storagePage.colPerf }}</span><span />
         </div>
         <template v-for="g in bootGroups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个引导卷" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="bootVolume" />
         <div v-for="i in g.rows" :key="i.id" class="row cols-boot">
           <span class="acct-bar" :style="{ background: acctColor(accountById(i.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ i.name }}</span>
@@ -140,26 +141,26 @@ watch(() => [active.value, [...state.accountFilter].join(','), [...state.regionF
           <span class="mono t-xs">{{ i.bootGb > 0 ? `${i.bootGb} GB` : '—' }}</span>
           <span class="mono t-xs dim">{{ i.bootGb > 0 ? `VPU ${i.vpu}` : '—' }}</span>
           <span class="mono t-xs dim">{{ i.bootGb > 0 ? iopsHint(i.vpu) : '—' }}</span>
-          <button class="btn btn--sm" @click="openDrawer({ kind: 'instance', id: i.id, tab: '存储' })">
-            管理
+          <button class="btn btn--sm" @click="openDrawer({ kind: 'instance', id: i.id, tab: 'storage' })">
+            {{ t.storagePage.manage }}
           </button>
         </div>
         </template>
       </template>
     </SectionCard>
 
-    <SectionCard v-else title="块存储" note="独立于实例的数据盘" class="stale-able"
+    <SectionCard v-else :title="t.storagePage.blockTitle" :note="t.storagePage.blockNote" class="stale-able"
                  :class="{ 'is-stale': loading && blocks.length > 0 }">
       <!-- 已有数据时刷新只调暗，不再整块换回骨架 -->
       <SkeletonRows v-if="loading && blocks.length === 0" :rows="3" />
-      <EmptyState v-else-if="blocks.length === 0" title="所选账号下暂无块存储卷"
-                  body="块存储需要在 Oracle 控制台创建后再挂载到实例。" />
+      <EmptyState v-else-if="blocks.length === 0" :title="t.storagePage.noBlocks"
+                  :body="t.storagePage.noBlocksBody" />
       <template v-else>
         <div class="head cols-blk">
-          <span>名称</span><span>账号</span><span>区域</span><span>容量</span><span>VPU</span><span>状态</span>
+          <span>{{ t.storagePage.colName }}</span><span>{{ t.storagePage.colAccount }}</span><span>{{ t.storagePage.colRegion }}</span><span>{{ t.storagePage.colSize }}</span><span>{{ t.storagePage.colVpu }}</span><span>{{ t.storagePage.colState }}</span>
         </div>
         <template v-for="g in blockGroups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个卷" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="volume" />
         <div v-for="b in g.rows" :key="b.item.id" class="row cols-blk">
           <span class="acct-bar" :style="{ background: acctColor(accountById(b.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ b.item.displayName }}</span>

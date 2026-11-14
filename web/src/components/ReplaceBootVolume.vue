@@ -5,6 +5,7 @@
  * 对应 Oracle 控制台的 Replace boot volume：实例、OCID、A1 容量都保留，只换系统盘。
  * 在 A1 紧张的区域里，这比「终止再重建」安全得多——删掉的机器很可能再也抢不回来。
  */
+import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import type { Instance } from '@/types'
 import { useStore } from '@/store'
@@ -14,6 +15,7 @@ import CheckList from '@/components/CheckList.vue'
 import SwitchRow from '@/components/SwitchRow.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import { ALWAYS_FREE } from '@/lib/freetier'
+import { LIFECYCLE } from '@/lib/lifecycle'
 
 const props = defineProps<{ instance: Instance }>()
 
@@ -108,15 +110,15 @@ const canSubmit = computed(() => stable.value && !!imageId.value && sizeValid.va
 const checks = computed(() => {
   const items: { tone: 'ok' | 'warn' | 'info' | 'fail'; text: string }[] = []
   if (!stable.value) {
-    items.push({ tone: 'fail', text: `实例正在 ${props.instance.state}，要等状态落定才能替换。卡在关机中的话，先在 Oracle 控制台强制停止。` })
+    items.push({ tone: 'fail', text: t.bootVol.replaceTransitional(LIFECYCLE[props.instance.state].label) })
   } else if (props.instance.state === 'RUNNING') {
-    items.push({ tone: 'warn', text: 'Oracle 会先停机、换盘，再把实例开回来，期间服务中断。' })
+    items.push({ tone: 'warn', text: t.bootVol.replaceRunning })
   }
-  items.push({ tone: 'warn', text: '新系统盘是全新安装，旧盘上的数据不会带过来。' })
+  items.push({ tone: 'warn', text: t.bootVol.replaceFresh })
   items.push(preserveOld.value
-    ? { tone: 'info', text: `旧引导卷会保留下来（可挂到别的机器上取数据），但会继续占用块存储额度，免费额度共 ${ALWAYS_FREE.blockGB} GB。用不着了记得到「存储」页删掉。` }
-    : { tone: 'warn', text: '旧引导卷会被删除，上面的数据无法恢复。' })
-  items.push({ tone: 'info', text: '实例 OCID 与 A1 容量都保留；临时公网 IP 一般不变。' })
+    ? { tone: 'info', text: t.bootVol.replaceKeepOld(ALWAYS_FREE.blockGB) }
+    : { tone: 'warn', text: t.bootVol.replaceDeleteOld })
+  items.push({ tone: 'info', text: t.bootVol.replaceKeeps })
   return items
 })
 
@@ -124,17 +126,17 @@ function submit() {
   if (!canSubmit.value || !selected.value) return
   const name = props.instance.name
   const label = imageLabel(selected.value)
-  const losses = ['当前系统盘上的系统与数据（新盘是全新安装）']
-  if (!preserveOld.value) losses.push('旧引导卷本身（会被删除，无法恢复）')
+  const losses = [t.bootVol.lossSystem]
+  if (!preserveOld.value) losses.push(t.bootVol.lossOldVolume)
 
   ask({
     level: 3,
-    title: `替换 ${name} 的引导卷`,
-    body: `换成 ${label}，引导卷 ${sizeGb.value} GB。`,
+    title: t.bootVol.replaceConfirmTitle(name),
+    body: t.bootVol.replaceConfirmBody(label, sizeGb.value),
     noun: name,
-    nounLabel: '实例名称',
+    nounLabel: t.rowActions.instanceName,
     losses,
-    okLabel: '替换引导卷',
+    okLabel: t.bootVol.replaceButton,
     onConfirm: async () => {
       submitting.value = true
       try {
@@ -149,7 +151,7 @@ function submit() {
         trackJob(job)
         open.value = false
       } catch (err) {
-        toastError('替换引导卷失败', err)
+        toastError(t.bootVol.replaceFailed, err)
       } finally {
         submitting.value = false
       }
@@ -159,25 +161,25 @@ function submit() {
 </script>
 
 <template>
-  <SectionCard title="替换引导卷" note="重装系统，保留实例与容量">
+  <SectionCard :title="t.bootVol.replaceTitle" :note="t.bootVol.replaceNote">
     <div v-if="!open" class="pad">
       <p class="t-xs dim-3 lead">
-        用一个新镜像换掉系统盘，相当于重装系统。系统起不来（比如 dd 失败）时，用它恢复比终止重建安全。
+        {{ t.bootVol.replaceLead }}
       </p>
-      <button class="btn btn--sm btn--warning" @click="toggle()">选择新系统…</button>
+      <button class="btn btn--sm btn--warning" @click="toggle()">{{ t.bootVol.pickSystem }}</button>
     </div>
 
     <template v-else>
       <SkeletonRows v-if="loading" :rows="3" />
       <div v-else-if="loadError" class="pad">
-        <CheckList :items="[{ tone: 'fail', text: `读取镜像失败：${loadError}` }]" />
-        <button class="btn btn--sm" @click="loadImages()">重试</button>
+        <CheckList :items="[{ tone: 'fail', text: t.bootVol.imagesFailed(loadError) }]" />
+        <button class="btn btn--sm" @click="loadImages()">{{ t.common.retry }}</button>
       </div>
-      <p v-else-if="images.length === 0" class="pad t-xs dim-3">该规格下没有可用镜像。</p>
+      <p v-else-if="images.length === 0" class="pad t-xs dim-3">{{ t.bootVol.noImages }}</p>
       <template v-else>
         <div class="imgbar">
           <button class="chip" :class="{ 'is-on': osFilter === '' }" @click="osFilter = ''">
-            全部 <span class="chip__n">{{ images.length }}</span>
+            {{ t.common.all }} <span class="chip__n">{{ images.length }}</span>
           </button>
           <button v-for="f in osFamilies" :key="f.os" class="chip" :class="{ 'is-on': osFilter === f.os }"
                   @click="osFilter = osFilter === f.os ? '' : f.os">
@@ -198,30 +200,30 @@ function submit() {
 
       <div class="pad">
         <div class="field">
-          <label for="rbv-size">引导卷容量（GB）</label>
+          <label for="rbv-size">{{ t.bootVol.bootSizeGb }}</label>
           <input id="rbv-size" v-model.number="sizeGb" type="number" :min="MIN_BOOT_GB" step="1" class="input mono" />
-          <p v-if="!sizeValid" class="hint hint--bad">至少 {{ MIN_BOOT_GB }} GB</p>
+          <p v-if="!sizeValid" class="hint hint--bad">{{ t.bootVol.minGb(MIN_BOOT_GB) }}</p>
         </div>
         <div class="field">
-          <label for="rbv-ssh">SSH 公钥</label>
+          <label for="rbv-ssh">{{ t.bootVol.sshKey }}</label>
           <textarea id="rbv-ssh" v-model="sshKey" class="textarea" style="height: 68px"
                     spellcheck="false" placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5…" />
-          <p class="hint">留空沿用实例原来的公钥。</p>
+          <p class="hint">{{ t.bootVol.sshKeepHint }}</p>
         </div>
         <div class="field">
-          <label for="rbv-ci">cloud-init（可选）</label>
+          <label for="rbv-ci">{{ t.bootVol.cloudInit }}</label>
           <textarea id="rbv-ci" v-model="cloudInit" class="textarea" style="height: 90px"
                     spellcheck="false" placeholder="#cloud-config" />
         </div>
       </div>
-      <SwitchRow v-model="preserveOld" title="保留旧引导卷" sub="关掉则旧盘随替换一起删除" />
+      <SwitchRow v-model="preserveOld" :title="t.bootVol.keepOld" :sub="t.bootVol.keepOldSub" />
       <div class="pad">
         <CheckList :items="checks" />
         <div class="actions">
           <button class="btn btn--sm btn--danger" :disabled="!canSubmit" @click="submit()">
-            {{ submitting ? '提交中…' : '替换引导卷' }}
+            {{ submitting ? t.common.submitting : t.bootVol.replaceButton }}
           </button>
-          <button class="btn btn--sm" :disabled="submitting" @click="toggle()">取消</button>
+          <button class="btn btn--sm" :disabled="submitting" @click="toggle()">{{ t.common.cancel }}</button>
         </div>
       </div>
     </template>

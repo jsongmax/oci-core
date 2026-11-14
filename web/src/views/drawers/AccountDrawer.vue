@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.3.2 账号详情抽屉（720）：概览 / 区域订阅 / 配额 / 权限自检 / 密钥 */
+import { t } from '@/i18n'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -44,13 +45,13 @@ async function recheck() {
     await loadAccounts()
     toast({
       tone: result.ok ? 'success' : 'danger',
-      title: result.ok ? `${account.value?.alias} 校验通过` : '校验失败',
+      title: result.ok ? t.acctDrawer.checkOk(account.value?.alias ?? '') : t.acctDrawer.checkFailed,
       body: result.ok
-        ? `已订阅 ${result.regions?.length ?? 0} 个区域`
+        ? t.acctDrawer.subscribed(result.regions?.length ?? 0)
         : [result.errorCode, result.errorText].filter(Boolean).join(' · ')
     }, result.ok ? 6000 : 9000)
   } catch (err) {
-    toastError('校验失败', err)
+    toastError(t.acctDrawer.checkFailed, err)
   } finally {
     checking.value = false
   }
@@ -72,9 +73,9 @@ function rotateKeyNow() {
   const acc = account.value
   if (!acc) return
   ask({
-    level: 2, title: `轮换 ${acc.alias} 的 API 密钥`,
-    body: '旧私钥会被覆盖且无法找回。请确认新公钥已经添加到 Oracle 控制台，否则该账号会立即失效。',
-    okLabel: '轮换密钥',
+    level: 2, title: t.acctDrawer.rotateTitle(acc.alias),
+    body: t.acctDrawer.rotateBody,
+    okLabel: t.acctDrawer.rotate,
     onConfirm: async () => {
       rotating.value = true
       try {
@@ -84,10 +85,10 @@ function rotateKeyNow() {
         })
         rotateKey.value = ''
         rotateFingerprint.value = ''
-        toast({ tone: 'success', title: '密钥已轮换', body: '正在重新校验凭据…' })
+        toast({ tone: 'success', title: t.acctDrawer.rotated, body: t.acctDrawer.rechecking })
         await recheck()
       } catch (err) {
-        toastError('轮换密钥失败', err)
+        toastError(t.acctDrawer.rotateFailed, err)
       } finally {
         rotating.value = false
       }
@@ -102,13 +103,13 @@ const permissionChecks = computed<CheckItem[]>(() => {
     text: s.detail ? `${s.label} · ${s.detail}` : s.label
   }))
   if (items.length === 0) {
-    items.push({ tone: 'info', text: '点击「重新校验」逐项检查凭据与权限' })
+    items.push({ tone: 'info', text: t.acctDrawer.clickRecheck })
   }
   if (checkAdvice.value) items.push({ tone: 'warn', text: checkAdvice.value })
   return items
 })
 
-const TABS = ['概览', '区域订阅', '配额', '权限自检', '登录策略', '密钥']
+const TABS = ['overview', 'regions', 'quota', 'permissions', 'signin', 'keys']
 
 /* ---------- 登录策略（身份域密码有效期） ---------- */
 
@@ -128,7 +129,7 @@ async function loadPolicy() {
     if (res.policy.expiresAfterDays) policyDays.value = res.policy.expiresAfterDays
   } catch (err) {
     policy.value = null
-    toastError('读取登录策略失败', err)
+    toastError(t.acctDrawer.policyLoadFailed, err)
   } finally {
     policyLoading.value = false
   }
@@ -144,11 +145,9 @@ async function loadPolicy() {
 function applyPolicy(disable: boolean) {
   ask({
     level: 2,
-    title: disable ? '取消密码过期' : `把密码有效期设为 ${policyDays.value} 天`,
-    body: `这会修改账号「${account.value?.alias ?? ''}」所在身份域的密码策略，` +
-      '影响该租户下所有用户的控制台登录，不只是本工具用的那个 IAM 用户。' +
-      '需要身份域管理员权限。',
-    okLabel: '确认修改',
+    title: disable ? t.acctDrawer.disableExpiry : t.acctDrawer.setExpiry(policyDays.value),
+    body: t.acctDrawer.policyBody(account.value?.alias ?? ''),
+    okLabel: t.acctDrawer.confirmChange,
     onConfirm: async () => {
       policySaving.value = true
       try {
@@ -156,9 +155,9 @@ function applyPolicy(disable: boolean) {
           disable ? { disable: true } : { days: policyDays.value })
         policy.value = res.policy
         policyNotice.value = res.notice
-        toast({ tone: 'success', title: '已修改', body: res.notice })
+        toast({ tone: 'success', title: t.acctDrawer.changed, body: res.notice })
       } catch (err) {
-        toastError('修改失败', err)
+        toastError(t.acctDrawer.changeFailed, err)
       } finally {
         policySaving.value = false
       }
@@ -170,9 +169,9 @@ function applyPolicy(disable: boolean) {
 const expiryText = computed(() => {
   const p = policy.value
   if (!p?.supported) return '—'
-  if (p.expiresAfterDays === null || p.expiresAfterDays === undefined) return '未设置（应为不过期）'
-  if (p.expiresAfterDays === 0) return '0 天（服务端如此存储）'
-  return `${p.expiresAfterDays} 天`
+  if (p.expiresAfterDays === null || p.expiresAfterDays === undefined) return t.acctDrawer.expiryUnset
+  if (p.expiresAfterDays === 0) return t.acctDrawer.expiryZero
+  return t.acctDrawer.days(p.expiresAfterDays)
 })
 
 /** 抽屉副标题里带着 OCID 与邮箱，跟着隐私模式一起打码。 */
@@ -183,7 +182,7 @@ const drawerSub = computed(() => {
   const mail = state.privacyMode ? mask(a.email, 'email') : a.email
   return `ocid1.tenancy…${tail} · ${mail}`
 })
-const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : '概览')
+const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : 'overview')
 
 const account = computed(() => state.accounts.find(a => a.id === props.id))
 const color = computed(() => (account.value ? acctColor(account.value.colorIndex) : 'var(--border-default)'))
@@ -196,12 +195,12 @@ const instances = computed(() => state.instances.filter(i => i.accountId === pro
 const tierText = computed(() => {
   const a = account.value
   if (!a) return '—'
-  if (a.tier === 'unknown') return '未知（读不到订阅信息，可能是权限不足）'
-  if (a.tier === 'paid') return '升级号（Pay As You Go）'
+  if (a.tier === 'unknown') return t.acctDrawer.tierUnknown
+  if (a.tier === 'paid') return t.acctDrawer.tierPaid
   const d = trialDaysLeft(a)
-  if (d === null) return '试用号（Free Trial）'
-  if (d < 0) return '试用号 · 已到期'
-  return `试用号 · ${d} 天后到期，届时配额降回永久免费额度 ${armFreeText}`
+  if (d === null) return t.acctDrawer.tierTrial
+  if (d < 0) return t.acctDrawer.tierTrialExpired
+  return t.acctDrawer.tierTrialDays(d, armFreeText)
 })
 
 /**
@@ -218,8 +217,7 @@ const trialOverage = computed(() => {
   if (a?.tier !== 'trial') return ''
   const over = a.quota.ocpuUsed - ALWAYS_FREE.armOcpus
   if (over <= 0) return ''
-  return `当前已用 ${a.quota.ocpuUsed} OCPU，超出永久免费额度 ${over} OCPU。` +
-    `试用到期后超出部分的实例会被 Oracle 回收，请提前迁移或升级为 PAYG。`
+  return t.acctDrawer.trialOverage(a.quota.ocpuUsed, over)
 })
 
 /**
@@ -230,7 +228,7 @@ const openedText = computed(() => {
   const a = account.value
   if (!a) return '—'
   const age = accountAgeText(a)
-  if (!a.openedAt) return '未知（读不到订阅信息）'
+  if (!a.openedAt) return t.acctDrawer.openedUnknown
   return `${a.openedAt.slice(0, 10)}（${age}）`
 })
 
@@ -244,7 +242,6 @@ const tierTone = computed(() => {
   return undefined
 })
 
-const statusLabel = { ok: '凭据有效', checking: '正在校验', error: '凭据失效', disabled: '已禁用' }
 const statusTone = {
   ok: 'var(--success)', checking: 'var(--info)', error: 'var(--danger)', disabled: 'var(--neutral)'
 }
@@ -267,22 +264,22 @@ function toggleDisabled() {
   const disabling = a.status !== 'disabled'
   ask({
     level: 2,
-    title: `${disabling ? '禁用' : '启用'} ${a.alias}`,
+    title: t.acctDrawer.toggleTitle(disabling, a.alias),
     body: disabling
-      ? '禁用后本工具停止轮询该账号，其资源在列表中只读显示，不会删除任何云端资源。'
-      : '恢复对该账号的轮询与操作能力。',
-    okLabel: disabling ? '禁用' : '启用',
+      ? t.acctDrawer.disableBody
+      : t.acctDrawer.enableBody,
+    okLabel: disabling ? t.acctDrawer.disable : t.acctDrawer.enable,
     onConfirm: async () => {
       try {
         await accountsApi.update(a.id, { enabled: !disabling })
         await loadAccounts()
         toast({
           tone: 'warning',
-          title: `${a.alias} ${disabling ? '已禁用' : '已启用'}`,
-          body: `该账号下 ${instances.value.length} 台实例`
+          title: t.acctDrawer.toggled(a.alias, disabling),
+          body: t.acctDrawer.instancesUnder(instances.value.length)
         })
       } catch (err) {
-        toastError('操作失败', err)
+        toastError(t.acctDrawer.actionFailed, err)
       }
     }
   })
@@ -293,15 +290,15 @@ function askDelete() {
   if (!a) return
   ask({
     level: 3,
-    title: `删除账号 ${a.alias}`,
-    body: '该操作只从本工具移除凭据，不会删除 Oracle 云端的任何资源。',
-    noun: a.alias, nounLabel: '账号别名',
+    title: t.acctDrawer.deleteTitle(a.alias),
+    body: t.acctDrawer.deleteBody,
+    noun: a.alias, nounLabel: t.acctDrawer.aliasLabel,
     losses: [
-      '本地加密存储的 API 私钥与指纹',
-      `该账号的 ${instances.value.length} 台实例在本工具中的聚合视图`,
-      '该账号的历史操作审计记录'
+      t.acctDrawer.lossKey,
+      t.acctDrawer.lossView(instances.value.length),
+      t.acctDrawer.lossAudit
     ],
-    okLabel: '永久删除',
+    okLabel: t.acctDrawer.deletePermanently,
     onConfirm: async () => {
       try {
         // 服务端要求回传账号别名——前端确认框可以被绕过，这道校验不能。
@@ -310,9 +307,9 @@ function askDelete() {
         state.instances = state.instances.filter(i => i.accountId !== a.id)
         await loadAccounts()
         closeDrawer()
-        toast({ tone: 'danger', title: `${a.alias} 已从本工具移除`, body: '云端资源未受影响' })
+        toast({ tone: 'danger', title: t.acctDrawer.removed(a.alias), body: t.acctDrawer.cloudUntouched })
       } catch (err) {
-        toastError('删除账号失败', err)
+        toastError(t.acctDrawer.deleteFailed, err)
       }
     }
   })
@@ -326,89 +323,89 @@ function askDelete() {
       <template #badge>
         <span class="lamp" :style="{ '--c': statusTone[account.status] }">
           <span class="lamp__dot" :class="{ 'is-pulsing': account.status === 'checking' }" />
-          {{ statusLabel[account.status] }}
+          {{ t.acctDrawer.status[account.status] }}
         </span>
       </template>
       <template #actions>
         <button class="btn btn--sm" :disabled="checking" @click="recheck()">
-          {{ checking ? '校验中…' : '重新校验' }}
+          {{ checking ? t.acctDrawer.checking : t.acctDrawer.recheck }}
         </button>
         <button class="btn btn--sm" :disabled="state.syncing" @click="syncNow(account.id)">
-          {{ state.syncing ? '同步中…' : '同步实例' }}
+          {{ state.syncing ? t.acctDrawer.syncing : t.acctDrawer.syncInstances }}
         </button>
         <button class="btn btn--sm" @click="closeDrawer(); state.accountFilter = new Set([account.id]); router.push('/instances')">
-          查看该账号实例
+          {{ t.acctDrawer.viewInstances }}
         </button>
       </template>
     </DrawerHeader>
 
-    <DrawerTabs :tabs="TABS" v-model:active="active" />
+    <DrawerTabs :tabs="TABS" :labels="t.acctDrawer.tabs" v-model:active="active" />
 
     <DrawerBody>
       <!-- 切标签时内容淡入淡出：外层按标签换 key，Transition 需要单一子元素 -->
       <Transition name="swap" mode="out-in">
       <div :key="active">
-      <template v-if="active === '概览'">
-        <SectionCard title="租户">
+      <template v-if="active === 'overview'">
+        <SectionCard :title="t.acctDrawer.tenancy">
           <KeyValueList :items="[
-            { k: '别名', v: account.alias },
-            { k: '短代号', v: account.code, mono: true, tone: color },
-            { k: '租户 OCID', v: `ocid1.tenancy.oc1..aaaaaaaa${account.tenancyTail}`, mono: true, copyable: true, secret: 'ocid' },
-            { k: '用户邮箱', v: account.email, mono: true, copyable: true, secret: 'email' },
-            { k: '账号类型', v: tierText, tone: tierTone },
-            { k: '密钥指纹', v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
-            { k: '开户时间', v: openedText },
-            { k: '接入本面板', v: account.createdAt, mono: true },
-            { k: '最后校验', v: accountStatusText(account) }
+            { k: t.acctDrawer.kAlias, v: account.alias },
+            { k: t.acctDrawer.kCode, v: account.code, mono: true, tone: color },
+            { k: t.acctDrawer.kTenancy, v: `ocid1.tenancy.oc1..aaaaaaaa${account.tenancyTail}`, mono: true, copyable: true, secret: 'ocid' },
+            { k: t.acctDrawer.kEmail, v: account.email, mono: true, copyable: true, secret: 'email' },
+            { k: t.acctDrawer.kTier, v: tierText, tone: tierTone },
+            { k: t.acctDrawer.kFingerprint, v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
+            { k: t.acctDrawer.kOpened, v: openedText },
+            { k: t.acctDrawer.kJoined, v: account.createdAt, mono: true },
+            { k: t.acctDrawer.kChecked, v: accountStatusText(account) }
           ]" />
         </SectionCard>
-        <SectionCard title="资源">
+        <SectionCard :title="t.acctDrawer.resources">
           <KeyValueList :items="[
-            { k: '实例', v: `${instances.length} 台（运行 ${instances.filter(i => i.state === 'RUNNING').length}）`, mono: true },
-            { k: '订阅区域', v: `${account.regions.length} 个`, mono: true },
-            { k: '引导卷合计', v: `${instances.reduce((n, i) => n + i.bootGb, 0)} GB`, mono: true }
+            { k: t.acctDrawer.kInstances, v: t.acctDrawer.vInstances(instances.length, instances.filter(i => i.state === 'RUNNING').length), mono: true },
+            { k: t.acctDrawer.kRegions, v: t.acctDrawer.vRegions(account.regions.length), mono: true },
+            { k: t.acctDrawer.kBootTotal, v: `${instances.reduce((n, i) => n + i.bootGb, 0)} GB`, mono: true }
           ]" />
         </SectionCard>
-        <SectionCard v-if="account.status === 'error'" title="诊断" note="保留原始错误码">
+        <SectionCard v-if="account.status === 'error'" :title="t.acctDrawer.diagnosis" :note="t.acctDrawer.diagnosisNote">
           <CheckList :items="[
-            { tone: 'fail', text: 'NotAuthenticated (401) —— 私钥与该用户的 API 公钥不再匹配。' },
-            { tone: 'info', text: '最可能的原因：API 密钥已在 Oracle 控制台被删除或轮换。请在「密钥」页重新导入私钥。' }
+            { tone: 'fail', text: t.acctDrawer.diag401 },
+            { tone: 'info', text: t.acctDrawer.diagCause }
           ]" />
           <CodeBlock copyable
             :code="'{\n  \'code\': \'NotAuthenticated\',\n  \'message\': \'The required information to complete authentication was not provided.\'\n}'" />
         </SectionCard>
-        <SectionCard v-else title="连通性">
-          <CheckList :items="[{ tone: 'ok', text: `${statusLabel[account.status]} · ${accountStatusText(account)}` }]" />
+        <SectionCard v-else :title="t.acctDrawer.connectivity">
+          <CheckList :items="[{ tone: 'ok', text: `${t.acctDrawer.status[account.status]} · ${accountStatusText(account)}` }]" />
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '区域订阅'">
-        <SectionCard title="已订阅" :note="`${account.regions.length} 个区域`">
+      <template v-else-if="active === 'regions'">
+        <SectionCard :title="t.acctDrawer.subscribedTitle" :note="t.acctDrawer.regionsNote(account.regions.length)">
           <div v-for="r in account.regions" :key="r" class="rule">
             <span class="rule__bar" :style="{ background: color }" />
             <span class="mono t-xs">{{ r }}</span>
             <span class="rule__desc mono t-2xs dim-3">
-              {{ instances.filter(i => i.region === r).length }} 台实例
+              {{ t.acctDrawer.regionInstances(instances.filter(i => i.region === r).length) }}
             </span>
           </div>
         </SectionCard>
-        <SectionCard title="可订阅" note="订阅后立即可创建实例">
+        <SectionCard :title="t.acctDrawer.available" :note="t.acctDrawer.availableNote">
           <div v-for="r in unsubscribed" :key="r" class="rule">
             <span class="rule__bar" style="background: var(--border-default)" />
             <span class="mono t-xs">{{ r }}</span>
             <button class="btn btn--sm rule__desc"
-                    @click="account.regions.push(r); toast({ tone: 'success', title: `${account.alias} 已订阅 ${r}`, body: '区域订阅通常在 1 分钟内生效' })">
-              订阅
+                    @click="account.regions.push(r); toast({ tone: 'success', title: t.acctDrawer.subscribedToast(account.alias, r), body: t.acctDrawer.subscribeEta })">
+              {{ t.acctDrawer.subscribe }}
             </button>
           </div>
-          <CheckList v-if="!unsubscribed.length" :items="[{ tone: 'ok', text: '已订阅全部可用区域' }]" />
+          <CheckList v-if="!unsubscribed.length" :items="[{ tone: 'ok', text: t.acctDrawer.allSubscribed }]" />
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '配额'">
+      <template v-else-if="active === 'quota'">
         <SectionCard
-          :title="account.quotaRegion || account.regions[0] || '配额'"
-          :note="account.quotaRegion ? '上限来自 Oracle 实时返回' : '正在读取配额'">
+          :title="account.quotaRegion || account.regions[0] || t.acctDrawer.quota"
+          :note="account.quotaRegion ? t.acctDrawer.quotaLive : t.acctDrawer.quotaLoading">
           <!-- 配额还没回来时画骨架：四条 0 / 0 的进度条会被当成「没有额度」 -->
           <div v-if="!account.quotaRegion" class="pad sk-quota" aria-busy="true">
             <div v-for="n in 4" :key="n" class="sk-quota__row">
@@ -420,54 +417,53 @@ function askDelete() {
           <div v-else class="pad reveal">
             <QuotaMeter label="ARM OCPU" :used="account.quota.ocpuUsed" :limit="account.quota.ocpuLimit"
                         :unlimited="account.quota.unlimited.ocpu" />
-            <QuotaMeter label="ARM 内存" :used="account.quota.memUsed" :limit="account.quota.memLimit" unit=" GB"
+            <QuotaMeter :label="t.acctDrawer.armMem" :used="account.quota.memUsed" :limit="account.quota.memLimit" unit=" GB"
                         :unlimited="account.quota.unlimited.mem" />
-            <QuotaMeter label="AMD 微型" :used="account.quota.microUsed" :limit="account.quota.microLimit" unit=" 台"
+            <QuotaMeter :label="t.acctDrawer.amdMicro" :used="account.quota.microUsed" :limit="account.quota.microLimit" :unit="t.acctDrawer.unitInstances"
                         :unlimited="account.quota.unlimited.micro" />
-            <QuotaMeter label="块存储 · 免费额度" :used="account.quota.blockUsed" :limit="account.quota.blockLimit" unit=" GB"
+            <QuotaMeter :label="t.acctDrawer.blockFree" :used="account.quota.blockUsed" :limit="account.quota.blockLimit" unit=" GB"
                         :unlimited="account.quota.unlimited.block" />
           </div>
         </SectionCard>
-        <SectionCard v-if="trialOverage" title="试用到期风险"
-                     :note="`永久免费额度 ${armFreeText}（${ALWAYS_FREE.since} 起）`">
+        <SectionCard v-if="trialOverage" :title="t.acctDrawer.trialRisk"
+                     :note="t.acctDrawer.trialRiskNote(armFreeText, ALWAYS_FREE.since)">
           <div class="pad t-xs" style="color: var(--warning); line-height: 1.7">
             {{ trialOverage }}
           </div>
         </SectionCard>
-        <SectionCard v-if="otherRegions.length" title="其他已订阅区域" note="配额按区域独立计算">
+        <SectionCard v-if="otherRegions.length" :title="t.acctDrawer.otherRegions" :note="t.acctDrawer.otherRegionsNote">
           <div class="pad t-xs" style="color: var(--text-secondary); line-height: 1.7">
-            {{ otherRegions.join('、') }}
+            {{ otherRegions.join(t.acctDrawer.listSep) }}
             <br />
-            这几个区域的配额暂未查询——账号的主区域之外用得少，
-            每多查一个区域就要多发八个跨洋请求，默认不拉。
+            {{ t.acctDrawer.otherRegionsBody }}
           </div>
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '权限自检'">
-        <SectionCard title="凭据校验" note="逐项来自后端真实调用">
+      <template v-else-if="active === 'permissions'">
+        <SectionCard :title="t.acctDrawer.credCheck" :note="t.acctDrawer.credCheckNote">
           <template #action>
             <button class="btn btn--sm" :disabled="checking" @click="recheck()">
-              {{ checking ? '校验中…' : '重新校验' }}
+              {{ checking ? t.acctDrawer.checking : t.acctDrawer.recheck }}
             </button>
           </template>
           <CheckList :items="permissionChecks" />
         </SectionCard>
 
-        <SectionCard title="本工具需要的最小权限集"
-                     note="建议为本工具单独建一个 IAM 用户，不要用管理员密钥">
+        <SectionCard :title="t.acctDrawer.minPerms"
+                     :note="t.acctDrawer.minPermsNote">
           <CheckList :items="[
-            { tone: 'info', text: 'inspect / read instance-family —— 实例列表与详情' },
-            { tone: 'info', text: 'use instance-family —— 开机 / 关机 / 重启 / 改配置' },
-            { tone: 'info', text: 'manage instance-family —— 创建与终止实例' },
-            { tone: 'info', text: 'manage virtual-network-family —— VCN、子网、安全规则、公网 IP' },
-            { tone: 'info', text: 'manage volume-family —— 引导卷扩容与 VPU 调整' },
-            { tone: 'info', text: 'manage compute-capacity-reports —— 容量查询、容量监控与守候预检（不含在 instance-family 里）' },
-            { tone: 'info', text: 'read all-resources —— 配额与用量（已覆盖账单所需的 usage-report）' }
+            { tone: 'info', text: t.acctDrawer.permInspect },
+            { tone: 'info', text: t.acctDrawer.permUse },
+            { tone: 'info', text: t.acctDrawer.permManage },
+            { tone: 'info', text: t.acctDrawer.permNet },
+            { tone: 'info', text: t.acctDrawer.permVol },
+            { tone: 'info', text: t.acctDrawer.permCap },
+            { tone: 'info', text: t.acctDrawer.permRead }
           ]" />
         </SectionCard>
 
-        <SectionCard title="策略示例" note="在 Oracle 控制台 → 身份与安全 → 策略 中新建；把 'OCI Core' 换成你的组名，带空格时引号不能省">
+        <SectionCard :title="t.acctDrawer.policyExample" :note="t.acctDrawer.policyExampleNote">
           <CodeBlock copyable :code="`Allow group 'OCI Core' to manage instance-family in tenancy
 Allow group 'OCI Core' to manage virtual-network-family in tenancy
 Allow group 'OCI Core' to manage volume-family in tenancy
@@ -476,18 +472,18 @@ Allow group 'OCI Core' to read all-resources in tenancy`" />
         </SectionCard>
       </template>
 
-      <template v-else-if="active === '登录策略'">
-        <SectionCard title="密码有效期"
-                     :note="policy?.domainName ? `身份域 ${policy.domainName}` : ''">
+      <template v-else-if="active === 'signin'">
+        <SectionCard :title="t.acctDrawer.pwExpiry"
+                     :note="policy?.domainName ? t.acctDrawer.domain(policy.domainName) : ''">
           <template #action>
             <button class="btn btn--sm" :disabled="policyLoading" @click="loadPolicy()">
-              <span v-if="policyLoading" class="btn-spin" aria-hidden="true" />{{ policyLoading ? '读取中' : (policy ? '重新读取' : '读取') }}
+              <span v-if="policyLoading" class="btn-spin" aria-hidden="true" />{{ policyLoading ? t.acctDrawer.readingShort : (policy ? t.acctDrawer.reread : t.acctDrawer.read) }}
             </button>
           </template>
 
           <SkeletonRows v-if="policyLoading && !policy" :rows="2" :height="40" />
           <CheckList v-else-if="!policy" :items="[
-            { tone: 'info', text: '点「读取」查看该租户的密码有效期。读取只需要现有权限，不会改动任何东西。' }
+            { tone: 'info', text: t.acctDrawer.clickRead }
           ]" />
 
           <!-- 老租户根本没有身份域，也就没有密码过期这回事。
@@ -495,48 +491,47 @@ Allow group 'OCI Core' to read all-resources in tenancy`" />
           <CheckList v-else-if="!policy.supported" :items="[
             { tone: policy.error ? 'fail' : 'info',
               text: policy.error
-                ? `读取失败：${policy.error}`
-                : '该租户没有身份域，不存在密码有效期设置。这类租户的密码不会自动过期。' },
-            { tone: 'info', text: '读取失败若是权限问题，需要身份域管理员角色——这比本工具其余功能所需的权限都高。' }
+                ? t.acctDrawer.readFailed(policy.error)
+                : t.acctDrawer.noDomain },
+            { tone: 'info', text: t.acctDrawer.needAdmin }
           ]" />
 
           <template v-else>
             <KeyValueList :items="[
-              { k: '当前有效期', v: expiryText, mono: true,
+              { k: t.acctDrawer.kExpiry, v: expiryText, mono: true,
                 tone: policy.expiresAfterDays ? 'var(--warning)' : 'var(--success)' },
-              { k: '到期前提醒', v: policy.warnBeforeDays ? `${policy.warnBeforeDays} 天` : '未设置', mono: true },
-              { k: '最小长度', v: policy.minLength ? `${policy.minLength} 位` : '未设置', mono: true },
-              { k: '策略名', v: policy.policyName || '—', mono: true }
+              { k: t.acctDrawer.kWarn, v: policy.warnBeforeDays ? t.acctDrawer.days(policy.warnBeforeDays) : t.acctDrawer.notSet, mono: true },
+              { k: t.acctDrawer.kMinLen, v: policy.minLength ? t.acctDrawer.chars(policy.minLength) : t.acctDrawer.notSet, mono: true },
+              { k: t.acctDrawer.kPolicy, v: policy.policyName || '—', mono: true }
             ]" />
 
             <div class="pad">
               <CheckList :items="[
                 { tone: 'info', text: policyNotice },
                 { tone: 'warn',
-                  text: '这条策略作用于整个身份域，影响该租户下所有用户的控制台登录，不只是本工具用的那个 IAM 用户。' },
+                  text: t.acctDrawer.policyScope },
                 { tone: 'info',
-                  text: '关掉过期并不降低安全性：NIST SP 800-63B 已不推荐强制定期轮换，理由是它逼着人用可预测的变体。真正管用的是强密码加多因子。' }
+                  text: t.acctDrawer.policyNist }
               ]" />
 
               <div class="pol">
                 <button class="btn btn--sm" :disabled="policySaving"
-                        @click="applyPolicy(true)">尝试取消过期</button>
-                <span class="pol__sep">或</span>
+                        @click="applyPolicy(true)">{{ t.acctDrawer.tryDisable }}</button>
+                <span class="pol__sep">{{ t.acctDrawer.or }}</span>
                 <label class="pol__num">
-                  <span class="t-2xs dim-3">设为</span>
+                  <span class="t-2xs dim-3">{{ t.acctDrawer.setTo }}</span>
                   <input v-model.number="policyDays" class="input mono" type="number"
                          min="1" max="3650" step="30" />
-                  <span class="t-2xs dim-3">天</span>
+                  <span class="t-2xs dim-3">{{ t.acctDrawer.daysUnit }}</span>
                 </label>
                 <button class="btn btn--sm btn--primary"
                         :disabled="policySaving || !policyDays"
                         @click="applyPolicy(false)">
-                  {{ policySaving ? '提交中…' : '应用' }}
+                  {{ policySaving ? t.common.submitting : t.acctDrawer.apply }}
                 </button>
               </div>
               <p class="t-2xs dim-3 pol__hint">
-                「取消过期」走的是移除该属性。Oracle 未公开这是否等同于永不过期，
-                所以提交后会立即回读——若服务端仍返回有效期，改用上面设一个较大的天数。
+                {{ t.acctDrawer.disableHint }}
               </p>
             </div>
           </template>
@@ -544,42 +539,42 @@ Allow group 'OCI Core' to read all-resources in tenancy`" />
       </template>
 
       <template v-else>
-        <SectionCard title="当前密钥">
+        <SectionCard :title="t.acctDrawer.currentKey">
           <KeyValueList :items="[
-            { k: '指纹', v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
-            { k: '算法', v: 'RSA 2048', mono: true },
-            { k: '存储', v: 'AES-256-GCM 加密于本地数据库' },
-            { k: '私钥', v: '永不回显，界面无导出入口', tone: 'var(--text-secondary)' }
+            { k: t.acctDrawer.kFingerprint, v: account.fingerprint, mono: true, copyable: true, secret: 'fingerprint' },
+            { k: t.acctDrawer.kAlgo, v: 'RSA 2048', mono: true },
+            { k: t.acctDrawer.kStorage, v: t.acctDrawer.vStorage },
+            { k: t.acctDrawer.kPrivate, v: t.acctDrawer.vPrivate, tone: 'var(--text-secondary)' }
           ]" />
         </SectionCard>
-        <SectionCard title="轮换密钥">
+        <SectionCard :title="t.acctDrawer.rotateCard">
           <div class="pad">
-            <CheckList :items="[{ tone: 'info', text: '先在 Oracle 控制台给该用户添加新的 API 密钥，再把新私钥和它的指纹填在这里。轮换后会立即重新校验凭据。' }]" />
+            <CheckList :items="[{ tone: 'info', text: t.acctDrawer.rotateHint }]" />
             <div class="field">
-              <label for="rotate-fp">新密钥指纹</label>
+              <label for="rotate-fp">{{ t.acctDrawer.newFingerprint }}</label>
               <input id="rotate-fp" v-model="rotateFingerprint" class="input mono"
                      placeholder="20:3b:97:13:…" spellcheck="false" autocomplete="off" />
             </div>
             <CredentialField v-model="rotateKey" :fingerprint="rotateFingerprint" />
             <div>
               <button class="btn btn--sm btn--primary" :disabled="!canRotate || rotating" @click="rotateKeyNow()">
-                {{ rotating ? '轮换中…' : '轮换密钥' }}
+                {{ rotating ? t.acctDrawer.rotating : t.acctDrawer.rotate }}
               </button>
             </div>
           </div>
         </SectionCard>
-        <SectionCard title="危险操作">
+        <SectionCard :title="t.acctDrawer.danger">
           <div class="rule">
             <span class="rule__bar" style="background: var(--warning)" />
-            <span class="t-xs">{{ account.status === 'disabled' ? '启用账号' : '禁用账号' }}</span>
+            <span class="t-xs">{{ account.status === 'disabled' ? t.acctDrawer.enableAccount : t.acctDrawer.disableAccount }}</span>
             <button class="btn btn--sm btn--warning rule__desc" @click="toggleDisabled()">
-              {{ account.status === 'disabled' ? '启用' : '禁用' }}
+              {{ account.status === 'disabled' ? t.acctDrawer.enable : t.acctDrawer.disable }}
             </button>
           </div>
           <div class="rule">
             <span class="rule__bar" style="background: var(--danger)" />
-            <span class="t-xs">删除账号 · 从本工具移除，不影响云端资源</span>
-            <button class="btn btn--sm btn--danger rule__desc" @click="askDelete()">删除</button>
+            <span class="t-xs">{{ t.acctDrawer.deleteAccount }}</span>
+            <button class="btn btn--sm btn--danger rule__desc" @click="askDelete()">{{ t.common.delete }}</button>
           </div>
         </SectionCard>
       </template>

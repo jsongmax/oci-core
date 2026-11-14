@@ -1,0 +1,1 @@
+import{f as n}from"./index-Dpg-bkte.js";function u(t){return n.enums.audit[t]??(t.startsWith("instance_bulk_")?n.enums.auditBulk:t)}const i=new Set(["account_check_auto"]),e=t=>i.has(t);function a(t){return/^ocid1\./.test(t)?"ocid1…"+t.slice(-6):t}export{u as a,a as b,e as i};

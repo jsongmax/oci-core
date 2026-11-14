@@ -8,21 +8,21 @@
 import type { AccountDTO, AccountQuotaDTO, InstanceDTO } from '@/api/types'
 import type { Account, AccountColorIndex, AccountStatus, AccountTier, Instance, OsFamily, Quota } from '@/types'
 import { now } from '@/lib/clock'
+import { t, intlLocale } from '@/i18n'
 
 /** 相对时间：3 分钟前 / 2 小时前 / 5 天前。 */
 export function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return '从未'
+  if (!iso) return t.adapt.never
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return '未知'
+  if (Number.isNaN(then)) return t.common.unknown
 
   // 读全局时钟而不是 Date.now()：在模板里调用时，时间一跳就会重新渲染。
   const seconds = Math.floor((now.value - then) / 1000)
-  if (seconds < 0) return '刚刚'
-  if (seconds < 60) return '刚刚'
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)} 天前`
-  return new Date(iso).toLocaleDateString('zh-CN')
+  if (seconds < 60) return t.adapt.justNow
+  if (seconds < 3600) return t.adapt.minutesAgo(Math.floor(seconds / 60))
+  if (seconds < 86400) return t.adapt.hoursAgo(Math.floor(seconds / 3600))
+  if (seconds < 86400 * 30) return t.adapt.daysAgo(Math.floor(seconds / 86400))
+  return new Date(iso).toLocaleDateString(intlLocale())
 }
 
 /** 运行时长：12天4小时 / 3小时20分 / 8分钟。 */
@@ -32,14 +32,14 @@ function durationText(iso: string | null | undefined): string {
   if (Number.isNaN(from)) return '—'
 
   const minutes = Math.floor((now.value - from) / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟`
+  if (minutes < 1) return t.adapt.justNow
+  if (minutes < 60) return t.adapt.durMinutes(minutes)
 
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时${minutes % 60}分`
+  if (hours < 24) return t.adapt.durHours(hours, minutes % 60)
 
   const days = Math.floor(hours / 24)
-  return `${days}天${hours % 24}小时`
+  return t.adapt.durDays(days, hours % 24)
 }
 
 /**
@@ -98,14 +98,10 @@ function accountStatus(dto: AccountDTO): AccountStatus {
  * 全局时钟重算。
  */
 export function accountStatusText(a: Account): string {
-  if (a.status === 'disabled') return '已在设置中手动禁用'
-  if (a.status === 'checking') return '尚未校验凭据'
-  if (a.status === 'error') {
-    return a.statusMessage
-      ? `${relativeTime(a.lastCheckedAt)}校验失败：${a.statusMessage}`
-      : `${relativeTime(a.lastCheckedAt)}校验失败`
-  }
-  return `${relativeTime(a.lastCheckedAt)}校验通过`
+  if (a.status === 'disabled') return t.adapt.accountDisabled
+  if (a.status === 'checking') return t.adapt.accountUnchecked
+  if (a.status === 'error') return t.adapt.checkFailed(relativeTime(a.lastCheckedAt), a.statusMessage)
+  return t.adapt.checkPassed(relativeTime(a.lastCheckedAt))
 }
 
 
@@ -132,21 +128,19 @@ function accountTier(paymentModel: string | undefined): AccountTier {
  */
 export function accountAgeDays(a: Account): number | null {
   if (!a.openedAt) return null
-  const t = new Date(a.openedAt).getTime()
-  if (Number.isNaN(t)) return null
-  return Math.max(0, Math.floor((now.value - t) / 86_400_000))
+  const opened = new Date(a.openedAt).getTime()
+  if (Number.isNaN(opened)) return null
+  return Math.max(0, Math.floor((now.value - opened) / 86_400_000))
 }
 
 /** 「已创建 N 天」，超过两个月折成月/年；取不到则返回空串。 */
 export function accountAgeText(a: Account): string {
   const d = accountAgeDays(a)
   if (d === null) return ''
-  if (d === 0) return '今天创建'
-  if (d < 60) return `已创建 ${d} 天`
-  if (d < 365) return `已创建 ${Math.floor(d / 30)} 个月`
-  const years = Math.floor(d / 365)
-  const months = Math.floor((d % 365) / 30)
-  return months > 0 ? `已创建 ${years} 年 ${months} 个月` : `已创建 ${years} 年`
+  if (d === 0) return t.adapt.createdToday
+  if (d < 60) return t.adapt.createdDays(d)
+  if (d < 365) return t.adapt.createdMonths(Math.floor(d / 30))
+  return t.adapt.createdYears(Math.floor(d / 365), Math.floor((d % 365) / 30))
 }
 
 export function trialDaysLeft(a: Account): number | null {
@@ -230,13 +224,11 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
  */
 export function ipv6LeaseHint(os: OsFamily, added: boolean, primary: boolean): { note: string; command?: string } {
   if (added && !primary) {
-    return { note: '多数系统不会自动启用附属网卡，要先在系统里配置这张网卡，新地址才能使用。' }
+    return { note: t.adapt.ipv6SecondaryNote }
   }
-  const note = added
-    ? '系统里要等 DHCPv6 续租后才会出现新地址。'
-    : '系统里的旧地址要等 DHCPv6 租约到期才会消失，这期间看到它不代表删除没生效。'
-  if (os === 'ubuntu') return { note: note + '想立即生效，可在实例里执行：', command: 'sudo netplan apply' }
-  return { note: note + '想立即生效，可在实例里重新应用网络配置。' }
+  const note = added ? t.adapt.ipv6AddedNote : t.adapt.ipv6RemovedNote
+  if (os === 'ubuntu') return { note: note + t.adapt.ipv6NowCommand, command: 'sudo netplan apply' }
+  return { note: note + t.adapt.ipv6NowGeneric }
 }
 
 export function osFamilyOf(imageOs: string | undefined): OsFamily {
@@ -289,25 +281,24 @@ const GROW_EXT4 =
 export function growfsHint(family: OsFamily): { command?: string; note: string } {
   switch (family) {
     case 'oracle':
-      return { command: RESCAN + GROW_ORACLE, note: '在实例里执行下面的命令：重扫磁盘后用 oci-growfs 扩展根分区。' }
+      return { command: RESCAN + GROW_ORACLE, note: t.adapt.growOracle }
     case 'ubuntu':
     case 'debian':
-      return { command: RESCAN + GROW_EXT4, note: '在实例里执行下面的命令：重扫磁盘后用 growpart 与 resize2fs 扩展根分区。' }
+      return { command: RESCAN + GROW_EXT4, note: t.adapt.growExt4 }
     case 'windows':
-      return { note: '在实例的「磁盘管理」里对系统分区选「扩展卷」，或用 diskpart 的 extend 命令。' }
+      return { note: t.adapt.growWindows }
     default:
       return {
         command: RESCAN + GROW_ORACLE,
-        note: '未识别出系统，下面按 Oracle Linux 给出命令。系统里没有 oci-growfs 时，' +
-          '改用 growpart 扩分区，再按文件系统用 resize2fs（ext4）或 xfs_growfs（XFS）。'
+        note: t.adapt.growUnknown
       }
   }
 }
 
 /** 突发基线的显示文字。不突发返回空串。 */
 export function baselineText(b: string): string {
-  if (b === 'BASELINE_1_8') return '突发 1/8'
-  if (b === 'BASELINE_1_2') return '突发 1/2'
+  if (b === 'BASELINE_1_8') return t.adapt.burst18
+  if (b === 'BASELINE_1_2') return t.adapt.burst12
   return ''
 }
 
@@ -316,9 +307,9 @@ export function baselineText(b: string): string {
  * 规格不支持突发时只有这一项，调用方据此决定显不显示这个选项。
  */
 export function baselineOptions(supported: string[] | null | undefined) {
-  const opts = [{ value: '', label: '不突发（独占整颗 OCPU）' }]
-  if (supported?.includes('BASELINE_1_2')) opts.push({ value: 'BASELINE_1_2', label: '突发 · 基线 1/2 OCPU' })
-  if (supported?.includes('BASELINE_1_8')) opts.push({ value: 'BASELINE_1_8', label: '突发 · 基线 1/8 OCPU' })
+  const opts = [{ value: '', label: t.adapt.noBurst }]
+  if (supported?.includes('BASELINE_1_2')) opts.push({ value: 'BASELINE_1_2', label: t.adapt.burst12Option })
+  if (supported?.includes('BASELINE_1_8')) opts.push({ value: 'BASELINE_1_8', label: t.adapt.burst18Option })
   return opts
 }
 

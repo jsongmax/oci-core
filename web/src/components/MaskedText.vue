@@ -8,6 +8,7 @@
  * 复制永远复制**原文**。打码只是显示层的事；复制出来是星号的话，
  * 这功能就从隐私保护变成了故意添堵。
  */
+import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { mask, type MaskKind } from '@/lib/mask'
@@ -45,7 +46,7 @@ const maskable = computed(() =>
 
 async function onCopy() {
   await copy(props.value)
-  toast({ tone: 'accent', title: '已复制到剪贴板' })
+  toast({ tone: 'accent', title: t.common.copied })
 }
 </script>
 
@@ -54,11 +55,11 @@ async function onCopy() {
     <span class="mk__v" :class="{ 'is-hidden': hidden }">{{ shown }}</span>
 
     <button v-if="maskable && state.privacyMode" class="mk__btn"
-            :title="revealed ? '重新打码' : '显示原文'"
-            :aria-label="revealed ? '重新打码' : '显示原文'"
+            :title="revealed ? t.ui.hideAgain : t.ui.reveal"
+            :aria-label="revealed ? t.ui.hideAgain : t.ui.reveal"
             @click.stop="revealed = !revealed">{{ revealed ? '◡' : '◉' }}</button>
 
-    <button v-if="copyable" class="mk__btn" title="复制原文" aria-label="复制原文"
+    <button v-if="copyable" class="mk__btn" :title="t.ui.copyRaw" :aria-label="t.ui.copyRaw"
             @click.stop="onCopy()">⧉</button>
   </span>
 </template>

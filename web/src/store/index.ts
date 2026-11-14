@@ -11,6 +11,7 @@ import {
 } from '@/api'
 import type { ChangeIpDTO, JobDTO, SyncReportDTO } from '@/api/types'
 import { connectEvents, type ServerEvent } from '@/api/events'
+import { locale, t } from '@/i18n'
 
 export type Density = 'comfy' | 'compact'
 export type StateFilter = 'all' | 'running' | 'stopped' | 'transition' | 'anomaly' | 'terminated'
@@ -27,6 +28,8 @@ interface Options {
   checkIntervalHours: number
   /** 审计日志保留天数，0 为永久保留 */
   auditRetentionDays: number
+  /** 通知与后台任务文案的语言，服务端设置 */
+  notifyLanguage: string
 }
 
 const state = reactive({
@@ -105,7 +108,8 @@ const state = reactive({
     reduceMotion: localStorage.getItem('oci.motion') === 'reduced',
     syncIntervalMinutes: 5,
     checkIntervalHours: 6,
-    auditRetentionDays: 0
+    auditRetentionDays: 0,
+    notifyLanguage: 'zh-CN'
   } as Options
 })
 
@@ -236,8 +240,8 @@ function markIpChanged(instanceId: string, oldIp: string, newIp: string): void {
   inst.previousIp = oldIp
   inst.publicIp = newIp
   toast({
-    tone: 'success', title: `${inst.name} 已更换公网 IP`,
-    body: `${oldIp} → ${newIp}\n新旧 IP 已记入「设置 → 审计日志」。`,
+    tone: 'success', title: t.store.ipChanged(inst.name),
+    body: t.store.ipChangedBody(oldIp, newIp),
     command: `ssh ${inst.sshUser}@${newIp}`
   }, 0)
 }
@@ -358,6 +362,7 @@ async function loadSettings(): Promise<void> {
     state.options.syncIntervalMinutes = s.syncIntervalMinutes
     state.options.checkIntervalHours = s.checkIntervalHours
     state.options.auditRetentionDays = s.auditRetentionDays
+    state.options.notifyLanguage = s.language || 'zh-CN'
   } catch {
     // 设置读不到就用默认值，不该阻断整个应用。
   }
@@ -411,7 +416,7 @@ async function syncNow(accountId?: string): Promise<void> {
     trackJob(job, { quiet: true })
   } catch (err) {
     state.syncing = false
-    toastError('同步失败', err)
+    toastError(t.store.syncFailed, err)
   }
 }
 
@@ -422,11 +427,11 @@ function announceSync(job: JobDTO): void {
   if (failures.length > 0) {
     toast({
       tone: 'warning',
-      title: `同步完成，${failures.length} 个区域失败`,
+      title: t.store.syncDonePartial(failures.length),
       body: failures.map(e => `${e.accountAlias} · ${e.region}：${e.ociCode || e.message}`).join('\n')
     }, 9000)
   } else {
-    toast({ tone: 'success', title: '同步完成', body: job.summary })
+    toast({ tone: 'success', title: t.store.syncDone, body: job.summary })
   }
   // 同步可能改变账号的连通性状态与配额。
   void loadAccounts().catch(() => undefined)
@@ -478,9 +483,9 @@ function trackJob(job: JobDTO, opts: TrackOptions = {}): void {
   if (!opts.quiet) {
     toast({
       tone: 'accent',
-      title: `已转入后台：${job.title}`,
-      body: '可以继续做别的，完成后会提示你。',
-      link: { label: '查看任务', to: '/jobs' }
+      title: t.store.movedToBackground(job.title),
+      body: t.store.movedToBackgroundBody,
+      link: { label: t.common.viewJob, to: '/jobs' }
     })
   }
 }
@@ -498,12 +503,12 @@ function finishJob(job: JobDTO): void {
 
   if (job.status !== 'succeeded') {
     if (job.status === 'canceled') {
-      toast({ tone: 'info', title: `已取消：${job.title}` })
+      toast({ tone: 'info', title: t.store.jobCanceled(job.title) })
       return
     }
     toast({
-      tone: 'danger', title: `${job.title} 失败`,
-      body: job.error, link: { label: '查看详情', to: '/jobs' }
+      tone: 'danger', title: t.store.jobFailed(job.title),
+      body: job.error, link: { label: t.store.viewDetails, to: '/jobs' }
     }, 12000)
     return
   }
@@ -529,7 +534,7 @@ function finishJob(job: JobDTO): void {
     case 'instance.detach_vnic':
       return
   }
-  toast({ tone: 'success', title: `${job.title} 完成`, body: job.summary })
+  toast({ tone: 'success', title: t.store.jobDone(job.title), body: job.summary })
 }
 
 /** 取消排队中的任务。 */
@@ -537,7 +542,7 @@ async function cancelJob(id: string): Promise<void> {
   try {
     await jobsApi.cancel(id)
   } catch (err) {
-    toastError('取消失败', err)
+    toastError(t.store.cancelFailed, err)
   }
 }
 
@@ -547,7 +552,7 @@ async function removeJob(id: string): Promise<void> {
     await jobsApi.remove(id)
     state.jobs = state.jobs.filter(j => j.id !== id)
   } catch (err) {
-    toastError('移除失败', err)
+    toastError(t.store.removeFailed, err)
   }
 }
 
@@ -557,7 +562,7 @@ async function clearFinishedJobs(): Promise<void> {
     await jobsApi.clearFinished()
     state.jobs = state.jobs.filter(j => !isJobDone(j))
   } catch (err) {
-    toastError('清理失败', err)
+    toastError(t.store.clearFailed, err)
   }
 }
 
@@ -600,7 +605,7 @@ function applyEvent(event: ServerEvent): void {
         const acct = state.accounts.find(a => a.id === event.accountId)
         toast({
           tone: 'danger',
-          title: `账号 ${acct?.alias ?? ''} 凭据校验失败`,
+          title: t.store.credentialFailed(acct?.alias ?? ''),
           body: event.message
         }, 9000)
       }
@@ -610,7 +615,7 @@ function applyEvent(event: ServerEvent): void {
       const idx = state.instances.findIndex(i => i.id === event.instanceId)
       if (idx >= 0) {
         const [gone] = state.instances.splice(idx, 1)
-        toast({ tone: 'info', title: `${gone.name} 已终止` })
+        toast({ tone: 'info', title: t.store.terminated(gone.name) })
       }
       break
     }
@@ -621,7 +626,7 @@ function applyEvent(event: ServerEvent): void {
         inst.busy = false
         inst.anomaly = true
         inst.lastError = event.message
-        toast({ tone: 'danger', title: `${inst.name} 操作失败`, body: event.message }, 9000)
+        toast({ tone: 'danger', title: t.store.actionFailed(inst.name), body: event.message }, 9000)
       }
       break
     }
@@ -631,10 +636,10 @@ function applyEvent(event: ServerEvent): void {
       void refreshInstances()
       state.networkChanged = { id: event.instanceId ?? '', at: Date.now() }
       const inst = state.instances.find(i => i.id === event.instanceId)
-      const name = inst?.name ?? '实例'
-      if (event.state === 'ATTACHED') toast({ tone: 'success', title: `${name} 的附属网卡已挂载` })
-      else if (event.state === 'DETACHED') toast({ tone: 'info', title: `${name} 的附属网卡已分离` })
-      else toast({ tone: 'danger', title: `${name} 的附属网卡挂载失败`, body: '请到 OCI 控制台查看工作请求的错误信息。' }, 9000)
+      const name = inst?.name ?? t.store.instanceFallback
+      if (event.state === 'ATTACHED') toast({ tone: 'success', title: t.store.vnicAttached(name) })
+      else if (event.state === 'DETACHED') toast({ tone: 'info', title: t.store.vnicDetached(name) })
+      else toast({ tone: 'danger', title: t.store.vnicFailed(name), body: t.store.vnicFailedBody }, 9000)
       break
     }
 
@@ -687,15 +692,15 @@ function announceSettled(inst: Instance, from: LifecycleState, to: LifecycleStat
   if (from === 'PROVISIONING' && to === 'RUNNING') {
     toast({
       tone: 'success',
-      title: `${inst.name} 已就绪`,
-      body: inst.publicIp !== '—' ? `公网 IP ${inst.publicIp}` : undefined,
+      title: t.store.ready(inst.name),
+      body: inst.publicIp !== '—' ? t.store.publicIp(inst.publicIp) : undefined,
       command: inst.publicIp !== '—' ? `ssh ${inst.sshUser}@${inst.publicIp}` : undefined
     })
     return
   }
   toast({
     tone: to === 'RUNNING' ? 'success' : 'info',
-    title: `${inst.name} ${LIFECYCLE[to].label}`
+    title: t.store.settled(inst.name, LIFECYCLE[to].label)
   })
 }
 
@@ -722,6 +727,20 @@ function stopLiveUpdates(): void {
   state.live = false
 }
 
+/**
+ * 切换语言。任务标题、进度步骤、错误信息是后端按请求语言写的，
+ * 换了语言要重新读一遍，事件流也要带着新语言重连。
+ */
+watch(locale, () => {
+  if (!state.authed) return
+  if (disconnect) {
+    stopLiveUpdates()
+    startLiveUpdates()
+  }
+  void loadJobs()
+  void refreshInstances()
+})
+
 /* ---------- 生命周期操作 ---------- */
 
 /**
@@ -747,7 +766,7 @@ async function runAction(id: string, action: InstanceAction, force = false): Pro
     inst.state = previous
     inst.anomaly = true
     inst.lastError = errorText(err)
-    toastError(`${inst.name} 操作失败`, err)
+    toastError(t.store.actionFailed(inst.name), err)
   } finally {
     // 后端受理后按钮 loading 结束，行内进度条接管（§6.3 t=0.4s）。
     inst.busy = false
@@ -773,7 +792,7 @@ async function terminate(id: string, preserveBootVolume = false): Promise<void> 
   } catch (err) {
     inst.anomaly = true
     inst.lastError = errorText(err)
-    toastError(`${inst.name} 终止失败`, err)
+    toastError(t.store.terminateFailed(inst.name), err)
   } finally {
     inst.busy = false
   }
@@ -792,7 +811,7 @@ async function bulk(action: 'start' | 'stop' | 'restart'): Promise<void> {
     state.selection.clear()
     trackJob(job)
   } catch (err) {
-    toastError('批量操作失败', err)
+    toastError(t.store.bulkFailed, err)
   }
 }
 
@@ -805,7 +824,7 @@ async function launchInstance(input: LaunchInput): Promise<string | null> {
     trackJob(job)
     return job.id
   } catch (err) {
-    toastError('创建实例失败', err)
+    toastError(t.store.launchFailed, err)
     return null
   }
 }
@@ -864,6 +883,7 @@ async function updateOptions(patch: {
   syncIntervalMinutes?: number
   checkIntervalHours?: number
   auditRetentionDays?: number
+  language?: string
 }): Promise<void> {
   try {
     const { settings: s, notice } = await settingsApi.update(patch)
@@ -875,13 +895,14 @@ async function updateOptions(patch: {
     // 这一行漏掉过：接口写成功了、下次刷新也对，但当前页面上的下拉框
     // 还显示旧值——看起来就是"点了没反应"，而 toast 又说保存成功。
     state.options.auditRetentionDays = s.auditRetentionDays
+    state.options.notifyLanguage = s.language || 'zh-CN'
     if (patch.syncIntervalMinutes !== undefined && notice) {
-      toast({ tone: 'info', title: '设置已保存', body: notice })
+      toast({ tone: 'info', title: t.store.settingsSaved, body: notice })
     } else {
-      toast({ tone: 'success', title: '设置已保存' })
+      toast({ tone: 'success', title: t.store.settingsSaved })
     }
   } catch (err) {
-    toastError('保存设置失败', err)
+    toastError(t.store.settingsFailed, err)
     await loadSettings()
   }
 }

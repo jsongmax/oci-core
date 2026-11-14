@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.2 总览：KPI count-up · 需要注意的 · 分布矩阵 · 配额 · 最近操作 */
+import { t, fmtDateTime } from '@/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -80,23 +81,23 @@ const accountSummary = computed(() => {
   const failed = shownAccounts.value.filter(a => a.status === 'error').length
   const disabled = shownAccounts.value.filter(a => a.status === 'disabled').length
   const parts: string[] = []
-  if (failed) parts.push(`${failed} 认证失败`)
-  if (disabled) parts.push(`${disabled} 已禁用`)
-  return parts.length ? parts.join(' · ') : '全部正常'
+  if (failed) parts.push(t.overviewHunt.ov.authFailed(failed))
+  if (disabled) parts.push(t.overviewHunt.ov.disabled(disabled))
+  return parts.length ? parts.join(' · ') : t.overviewHunt.ov.allOk
 })
 
 const syncSummary = computed(() => {
-  if (state.syncing) return '正在同步…'
-  if (!state.lastSync) return '尚未同步实例列表'
-  return `上次同步实例 ${relativeTime(state.lastSync)}`
+  if (state.syncing) return t.overviewHunt.ov.syncing
+  if (!state.lastSync) return t.overviewHunt.ov.neverSyncedList
+  return t.overviewHunt.ov.lastSync(relativeTime(state.lastSync))
 })
 
 /** 页头的绝对时间。副行给的是相对时间，这里给准确值，便于对日志。 */
 const lastSyncAbsolute = computed(() => {
-  if (!state.lastSync) return '尚未同步'
+  if (!state.lastSync) return t.overviewHunt.ov.neverSynced
   const d = new Date(state.lastSync)
-  if (Number.isNaN(d.getTime())) return '尚未同步'
-  return `同步于 ${d.toLocaleString('zh-CN', { hour12: false })}`
+  if (Number.isNaN(d.getTime())) return t.overviewHunt.ov.neverSynced
+  return t.overviewHunt.ov.syncedAt(fmtDateTime(d))
 })
 
 /**
@@ -121,44 +122,44 @@ const hiddenQuotaAccounts = computed(() =>
 )
 
 const kpis = computed(() => [
-  { label: '接入账号', value: String(live.value[0]), sub: accountSummary.value, tone: 'var(--text-primary)' },
-  { label: '实例总数', value: String(live.value[1]), sub: `${shownRegions.value.length} 个区域`, tone: 'var(--text-primary)' },
-  { label: '运行中', value: String(live.value[2]), sub: `${totals.value[1] - totals.value[2]} 已停止`, tone: 'var(--success)' },
+  { key: 'accounts', label: t.overviewHunt.ov.kpiAccounts, value: String(live.value[0]), sub: accountSummary.value, tone: 'var(--text-primary)' },
+  { key: 'instances', label: t.overviewHunt.ov.kpiInstances, value: String(live.value[1]), sub: t.overviewHunt.ov.kpiRegions(shownRegions.value.length), tone: 'var(--text-primary)' },
+  { key: 'running', label: t.overviewHunt.ov.kpiRunning, value: String(live.value[2]), sub: t.overviewHunt.ov.kpiStopped(totals.value[1] - totals.value[2]), tone: 'var(--success)' },
   // 这张卡原来叫"同步状态"，值却是 SSE 连接的通断——两件事混在一格里，
   // 谁都看不懂它在说什么。现在标题说的就是那个值本身，上次同步降到副行。
-  { label: '实时连接', value: state.live ? '已连接' : '已断开', sub: syncSummary.value,
+  { key: 'live', label: t.overviewHunt.ov.kpiLive, value: state.live ? t.overviewHunt.ov.connected : t.overviewHunt.ov.disconnected, sub: syncSummary.value,
     tone: state.live ? 'var(--success)' : 'var(--warning)' }
 ])
 
 interface Alert {
-  code: string; severity: '严重' | '异常' | '告警' | '提示'
+  code: string; severity: 'critical' | 'error' | 'warning' | 'info'
   text: string; detail: string; accountId: string; go: () => void
 }
 
 const alerts = computed<Alert[]>(() => {
   const out: Alert[] = []
   shownAccounts.value.filter(a => a.status === 'error').forEach(a => out.push({
-    code: '401', severity: '严重', accountId: a.id,
-    text: `${a.alias} 凭据失效：NotAuthenticated —— 密钥可能已在 Oracle 控制台被删除`,
+    code: '401', severity: 'critical', accountId: a.id,
+    text: t.overviewHunt.ov.alertCred(a.alias),
     detail: `${a.code} · ${accountStatusText(a)}`,
-    go: () => openDrawer({ kind: 'account', id: a.id, tab: '概览' })
+    go: () => openDrawer({ kind: 'account', id: a.id, tab: 'overview' })
   }))
   // anomaly 只表示「实例上记着一条最近操作失败的原因」，与它此刻是什么状态无关。
   // 以前这里一律写「意外进入 STOPPED」，一台软重启超时、其实还在跑的机器也会被说成停了。
   shownInstances.value.filter(i => i.anomaly).forEach(i => out.push({
-    code: 'FAIL', severity: '异常', accountId: i.accountId,
-    text: `${i.name} 上次操作失败${i.lastError ? '：' + i.lastError : ''}`, detail: i.region,
-    go: () => openDrawer({ kind: 'instance', id: i.id, tab: '操作记录' })
+    code: 'FAIL', severity: 'error', accountId: i.accountId,
+    text: t.overviewHunt.ov.alertFail(i.name, i.lastError ?? ''), detail: i.region,
+    go: () => openDrawer({ kind: 'instance', id: i.id, tab: 'history' })
   }))
   shownAccounts.value.filter(a => a.quota.memUsed / a.quota.memLimit >= 0.9).forEach(a => out.push({
-    code: 'QUOTA', severity: '告警', accountId: a.id,
-    text: `${a.alias} 内存配额 ${a.quota.memUsed} / ${a.quota.memLimit} GB，已达 ${pct(a.quota.memUsed, a.quota.memLimit)}%`,
+    code: 'QUOTA', severity: 'warning', accountId: a.id,
+    text: t.overviewHunt.ov.alertQuota(a.alias, a.quota.memUsed, a.quota.memLimit, pct(a.quota.memUsed, a.quota.memLimit)),
     detail: `${a.code} · ARM`,
-    go: () => openDrawer({ kind: 'account', id: a.id, tab: '配额' })
+    go: () => openDrawer({ kind: 'account', id: a.id, tab: 'quota' })
   }))
   shownInstances.value.filter(i => i.bootGb / i.bootLimitGb >= 0.9).forEach(i => out.push({
-    code: 'DISK', severity: '告警', accountId: i.accountId,
-    text: `${i.name} 引导卷 ${i.bootGb} / ${i.bootLimitGb} GB，剩余 ${i.bootLimitGb - i.bootGb} GB`,
+    code: 'DISK', severity: 'warning', accountId: i.accountId,
+    text: t.overviewHunt.ov.alertDisk(i.name, i.bootGb, i.bootLimitGb),
     detail: `VPU ${i.vpu}`,
     go: () => router.push('/storage')
   }))
@@ -166,9 +167,9 @@ const alerts = computed<Alert[]>(() => {
 })
 
 const severityTone = (s: Alert['severity']) =>
-  s === '严重' ? 'var(--danger)' : s === '提示' ? 'var(--info)' : 'var(--warning)'
+  s === 'critical' ? 'var(--danger)' : s === 'info' ? 'var(--info)' : 'var(--warning)'
 const severityBg = (s: Alert['severity']) =>
-  s === '严重' ? 'var(--danger-soft)' : s === '提示' ? 'var(--info-soft)' : 'var(--warning-soft)'
+  s === 'critical' ? 'var(--danger-soft)' : s === 'info' ? 'var(--info-soft)' : 'var(--warning-soft)'
 
 const matrix = computed(() => shownAccounts.value.map(a => ({
   account: a,
@@ -200,15 +201,15 @@ const huntTasks = ref<HuntTaskDTO[]>([])
 const activeHunts = computed(() =>
   huntTasks.value.filter(t => t.state === 'running' || t.state === 'paused'))
 
-function huntCountdown(t: HuntTaskDTO): string {
-  if (t.state !== 'running') return '已暂停'
-  const ms = new Date(t.nextAt).getTime() - now.value
+function huntCountdown(task: HuntTaskDTO): string {
+  if (task.state !== 'running') return t.overviewHunt.ov.paused
+  const ms = new Date(task.nextAt).getTime() - now.value
   if (Number.isNaN(ms)) return '—'
-  if (ms <= 0) return '即将尝试'
+  if (ms <= 0) return t.overviewHunt.ov.soon
   const sec = Math.round(ms / 1000)
-  if (sec < 60) return `${sec} 秒后`
+  if (sec < 60) return t.overviewHunt.ov.inSec(sec)
   const m = Math.floor(sec / 60)
-  return m < 60 ? `${m} 分后` : `${Math.floor(m / 60)} 小时后`
+  return m < 60 ? t.overviewHunt.ov.inMin(m) : t.overviewHunt.ov.inHour(Math.floor(m / 60))
 }
 
 const timeline = computed(() =>
@@ -221,7 +222,7 @@ const timeline = computed(() =>
       // 账号可能已被删除，颜色要有兜底，不能用 ! 强断言。
       color: a ? acctColor(a.colorIndex) : 'var(--border-default)',
       text: e.target ? `${label} ${auditTarget(e.target)}` : label,
-      result: e.result === 'ok' ? '成功' : '失败',
+      ok: e.result === 'ok',
       at: relativeTime(e.createdAt)
     }
   })
@@ -232,8 +233,8 @@ const timeline = computed(() =>
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">总览</h1>
-        <p class="page-sub">{{ shownAccounts.length }} 个账号 · {{ shownRegions.length }} 个区域 · 跨账号态势</p>
+        <h1 class="page-title">{{ t.overviewHunt.ov.title }}</h1>
+        <p class="page-sub">{{ t.overviewHunt.ov.subtitle(shownAccounts.length, shownRegions.length) }}</p>
       </div>
       <span class="dim-3 mono t-xs">{{ lastSyncAbsolute }}</span>
     </header>
@@ -267,7 +268,7 @@ const timeline = computed(() =>
 
     <template v-else>
     <div class="kpis">
-      <div v-for="(k, n) in kpis" :key="k.label" class="card card-pad reveal" :style="{ '--i': n }">
+      <div v-for="(k, n) in kpis" :key="k.key" class="card card-pad reveal" :style="{ '--i': n }">
         <p class="kpi__label">{{ k.label }}</p>
         <p class="kpi__value mono" :style="{ color: k.tone }">{{ k.value }}</p>
         <p class="kpi__sub">{{ k.sub }}</p>
@@ -278,14 +279,14 @@ const timeline = computed(() =>
     <section v-if="alerts.length" class="card alerts reveal" style="--i: 2">
       <header class="alerts__head">
         <span class="alerts__dot" />
-        <h2 class="t-lg alerts__title">需要注意的</h2>
-        <span class="mono t-2xs dim-3">{{ alerts.length }} 项</span>
+        <h2 class="t-lg alerts__title">{{ t.overviewHunt.ov.attention }}</h2>
+        <span class="mono t-2xs dim-3">{{ t.overviewHunt.ov.items(alerts.length) }}</span>
       </header>
       <button v-for="(a, n) in alerts" :key="n" class="alerts__row" @click="a.go()">
         <span class="acct-bar" :style="{ background: acctColor(accountById(a.accountId).colorIndex) }" />
         <span class="alerts__code mono" :style="{ color: severityTone(a.severity) }">{{ a.code }}</span>
         <span class="alerts__sev" :style="{ color: severityTone(a.severity), background: severityBg(a.severity) }">
-          {{ a.severity }}
+          {{ t.overviewHunt.ov.severity[a.severity] }}
         </span>
         <span class="alerts__text">{{ a.text }}</span>
         <span class="alerts__detail mono">{{ a.detail }}</span>
@@ -295,7 +296,7 @@ const timeline = computed(() =>
 
     <div class="grid-6-4 reveal" style="--i: 3">
       <div class="col-left">
-      <SectionCard title="实例分布矩阵" note="行为账号，列为区域，色块深浅表示密度">
+      <SectionCard :title="t.overviewHunt.ov.matrixTitle" :note="t.overviewHunt.ov.matrixNote">
         <!-- 列数必须跟着区域数走。写死列数时，格子会在错误的位置换行——
              1 账号 1 区域刚好排成一行看不出问题，接第二个账号就散了。 -->
         <div class="matrix-scroll">
@@ -318,37 +319,37 @@ const timeline = computed(() =>
 
       <!-- 有任务才渲染。没有守候任务时这里不该占一张空卡片——
            总览上的空卡片比空白更糟，它看起来像加载失败。 -->
-      <SectionCard v-if="activeHunts.length" title="容量守候"
-                   :note="`${activeHunts.length} 个任务进行中`" class="stack">
-        <button v-for="t in activeHunts" :key="t.id" class="hunt" @click="router.push('/hunt')">
-          <span class="acct-bar" :style="{ background: acctColor(accountById(t.accountId).colorIndex) }" />
+      <SectionCard v-if="activeHunts.length" :title="t.overviewHunt.ov.huntTitle"
+                   :note="t.overviewHunt.ov.huntNote(activeHunts.length)" class="stack">
+        <button v-for="tk in activeHunts" :key="tk.id" class="hunt" @click="router.push('/hunt')">
+          <span class="acct-bar" :style="{ background: acctColor(accountById(tk.accountId).colorIndex) }" />
           <span class="hunt__code mono"
-                :style="{ color: acctColor(accountById(t.accountId).colorIndex) }">
-            {{ accountById(t.accountId).code }}
+                :style="{ color: acctColor(accountById(tk.accountId).colorIndex) }">
+            {{ accountById(tk.accountId).code }}
           </span>
-          <span class="hunt__name">{{ t.name }}</span>
-          <span class="hunt__meta mono">{{ t.attempts }} 次</span>
-          <span class="hunt__at mono">{{ huntCountdown(t) }}</span>
+          <span class="hunt__name">{{ tk.name }}</span>
+          <span class="hunt__meta mono">{{ t.overviewHunt.ov.attempts(tk.attempts) }}</span>
+          <span class="hunt__at mono">{{ huntCountdown(tk) }}</span>
         </button>
       </SectionCard>
 
       <!-- 时间线放在左列而不是整页通栏：右边的配额卡很高，左列到这里为止
            会空出一大块。把它搬上来，两列高度接近，页面也短了一屏。 -->
-      <SectionCard title="最近操作" class="stack">
-        <div v-for="(t, n) in timeline" :key="n" class="tl__row">
-          <span class="acct-bar" :style="{ background: t.color }" />
-          <span class="tl__code mono" :style="{ color: t.color }">{{ t.code }}</span>
-          <span class="tl__text" :title="t.text">{{ t.text }}</span>
-          <span class="tl__result" :style="{ color: t.result === '成功' ? 'var(--success)' : 'var(--danger)' }">{{ t.result }}</span>
-          <span class="tl__at mono">{{ t.at }}</span>
+      <SectionCard :title="t.overviewHunt.ov.recent" class="stack">
+        <div v-for="(tk, n) in timeline" :key="n" class="tl__row">
+          <span class="acct-bar" :style="{ background: tk.color }" />
+          <span class="tl__code mono" :style="{ color: tk.color }">{{ tk.code }}</span>
+          <span class="tl__text" :title="tk.text">{{ tk.text }}</span>
+          <span class="tl__result" :style="{ color: tk.ok ? 'var(--success)' : 'var(--danger)' }">{{ tk.ok ? t.overviewHunt.ov.ok : t.overviewHunt.ov.failed }}</span>
+          <span class="tl__at mono">{{ tk.at }}</span>
         </div>
       </SectionCard>
       </div>
 
-      <SectionCard title="配额与用量"
+      <SectionCard :title="t.overviewHunt.ov.quotaTitle"
                    :note="hiddenQuotaAccounts > 0
-                     ? `按 ARM 用量排序，另有 ${hiddenQuotaAccounts} 个账号未列出`
-                     : '≥90% 转警告色，满额转 danger'">
+                     ? t.overviewHunt.ov.quotaHidden(hiddenQuotaAccounts)
+                     : t.overviewHunt.ov.quotaLegend">
         <div class="quotas">
           <div v-for="a in topQuotaAccounts" :key="a.id" class="quotas__group">
             <p class="quotas__head">
@@ -358,9 +359,9 @@ const timeline = computed(() =>
             </p>
             <QuotaMeter label="ARM OCPU" :used="a.quota.ocpuUsed" :limit="a.quota.ocpuLimit"
                         :unlimited="a.quota.unlimited.ocpu" />
-            <QuotaMeter label="内存" :used="a.quota.memUsed" :limit="a.quota.memLimit" unit=" GB"
+            <QuotaMeter :label="t.overviewHunt.ov.memory" :used="a.quota.memUsed" :limit="a.quota.memLimit" unit=" GB"
                         :unlimited="a.quota.unlimited.mem" />
-            <QuotaMeter label="块存储 · 免费" :used="a.quota.blockUsed" :limit="a.quota.blockLimit" unit=" GB"
+            <QuotaMeter :label="t.overviewHunt.ov.blockFree" :used="a.quota.blockUsed" :limit="a.quota.blockLimit" unit=" GB"
                         :unlimited="a.quota.unlimited.block" />
           </div>
         </div>

@@ -3,26 +3,27 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useStore } from '@/store'
 import BrandMark from '@/components/BrandMark.vue'
+import { locale, setLocale, t } from '@/i18n'
 
 const route = useRoute()
 const { state, visibleInstances, activeJobCount } = useStore()
 
 const items = computed(() => [
-  { to: '/overview', icon: '▦', label: '总览' },
-  { to: '/accounts', icon: '⬡', label: '账号', badge: state.accounts.length },
-  { to: '/instances', icon: '▤', label: '实例', badge: visibleInstances.value.filter(i => i.state !== 'TERMINATED').length },
-  { to: '/network', icon: '⌗', label: '网络' },
-  { to: '/storage', icon: '◱', label: '存储' },
+  { to: '/overview', icon: '▦', label: t.nav.side.overview },
+  { to: '/accounts', icon: '⬡', label: t.nav.side.accounts, badge: state.accounts.length },
+  { to: '/instances', icon: '▤', label: t.nav.side.instances, badge: visibleInstances.value.filter(i => i.state !== 'TERMINATED').length },
+  { to: '/network', icon: '⌗', label: t.nav.side.network },
+  { to: '/storage', icon: '◱', label: t.nav.side.storage },
   // 按账号盘点：网络、存储两页按资源类型跨账号聚合，这一页反过来按账号看。
-  { to: '/resources', icon: '▣', label: '资源' },
+  { to: '/resources', icon: '▣', label: t.nav.side.resources },
   // 徽标只数进行中的：已结束的任务不需要注意力。
-  { to: '/jobs', icon: '◷', label: '任务', badge: activeJobCount.value, live: activeJobCount.value > 0 },
-  { to: '/capacity', icon: '◇', label: '容量' },
-  { to: '/billing', icon: '¤', label: '账单' },
-  { to: '/hunt', icon: '◈', label: '守候' },
-  { to: '/proxies', icon: '⇄', label: '代理' },
-  { to: '/notifications', icon: '✎', label: '通知' },
-  { to: '/settings', icon: '⚙', label: '设置' }
+  { to: '/jobs', icon: '◷', label: t.nav.side.jobs, badge: activeJobCount.value, live: activeJobCount.value > 0 },
+  { to: '/capacity', icon: '◇', label: t.nav.side.capacity },
+  { to: '/billing', icon: '¤', label: t.nav.side.billing },
+  { to: '/hunt', icon: '◈', label: t.nav.side.hunt },
+  { to: '/proxies', icon: '⇄', label: t.nav.side.proxies },
+  { to: '/notifications', icon: '✎', label: t.nav.side.notifications },
+  { to: '/settings', icon: '⚙', label: t.nav.side.settings }
 ])
 
 /** 磁吸指示器（§7 Tier 2.11）：只动 transform */
@@ -30,7 +31,7 @@ const activeIndex = computed(() => Math.max(0, items.value.findIndex(i => route.
 </script>
 
 <template>
-  <nav class="side" :class="{ 'is-collapsed': state.sidebarCollapsed }" aria-label="主导航">
+  <nav class="side" :class="{ 'is-collapsed': state.sidebarCollapsed }" :aria-label="t.nav.mainNav">
     <div class="side__brand">
       <BrandMark class="side__mark" :size="18" />
       <span class="side__name">OCI Core</span>
@@ -48,11 +49,16 @@ const activeIndex = computed(() => Math.max(0, items.value.findIndex(i => route.
     <div class="side__foot">
       <button class="side__item side__item--btn" @click="state.theme = state.theme === 'dark' ? 'light' : 'dark'">
         <span class="side__icon">{{ state.theme === 'dark' ? '☾' : '☀' }}</span>
-        <span class="side__label">{{ state.theme === 'dark' ? '切到 Light' : '切到 Dark' }}</span>
+        <span class="side__label">{{ state.theme === 'dark' ? t.nav.toLight : t.nav.toDark }}</span>
       </button>
       <button class="side__item side__item--btn" @click="state.sidebarCollapsed = !state.sidebarCollapsed">
         <span class="side__icon">{{ state.sidebarCollapsed ? '»' : '«' }}</span>
-        <span class="side__label">折叠侧栏</span>
+        <span class="side__label">{{ state.sidebarCollapsed ? t.nav.expand : t.nav.collapse }}</span>
+      </button>
+      <button class="side__item side__item--btn" :title="t.common.language"
+              @click="setLocale(locale === 'zh-CN' ? 'en' : 'zh-CN')">
+        <span class="side__icon">{{ locale === 'zh-CN' ? 'EN' : '中' }}</span>
+        <span class="side__label">{{ t.nav.switchLanguage }}</span>
       </button>
     </div>
   </nav>

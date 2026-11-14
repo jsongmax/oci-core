@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.3 账号管理：卡片网格 + 四种连通性状态 */
+import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor, pct, usageTone } from '@/lib/format'
@@ -12,13 +13,8 @@ import LoadingBar from '@/components/LoadingBar.vue'
 
 const { state, openDrawer } = useStore()
 
-const tierLabel: Record<Account['tier'], string> = {
-  trial: '试用号',
-  paid: '升级号',
-  // 读不到订阅信息时不猜。写"升级号"会让用户以为资源是稳的,
-  // 写"试用号"又会平白吓人一跳。
-  unknown: '类型未知'
-}
+// 账号类型的显示名见 i18n accountsPage.tier。读不到订阅信息时显示「类型未知」，不猜：
+// 写"升级号"会让用户以为资源是稳的，写"试用号"又会平白吓人一跳。
 
 /**
  * 试用到期提示。
@@ -29,9 +25,9 @@ const tierLabel: Record<Account['tier'], string> = {
 function trialText(a: Account): string {
   const d = trialDaysLeft(a)
   if (d === null) return ''
-  if (d < 0) return '试用已到期'
-  if (d === 0) return '试用今日到期'
-  return `试用 ${d} 天后到期`
+  if (d < 0) return t.accountsPage.trialExpired
+  if (d === 0) return t.accountsPage.trialToday
+  return t.accountsPage.trialDays(d)
 }
 
 function trialTone(a: Account): string {
@@ -50,7 +46,7 @@ const checkIcon: Record<Account['status'], string> = { ok: '✔', checking: '◍
 const summary = computed(() => {
   const err = state.accounts.filter(a => a.status === 'error').length
   const off = state.accounts.filter(a => a.status === 'disabled').length
-  return `${state.accounts.length} 个 Oracle 租户 · ${err} 个认证失败 · ${off} 个已禁用`
+  return t.accountsPage.summary(state.accounts.length, err, off)
 })
 
 const instancesOf = (id: string) => state.instances.filter(i => i.accountId === id && i.state !== 'TERMINATED')
@@ -76,17 +72,17 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">账号</h1>
+        <h1 class="page-title">{{ t.accountsPage.title }}</h1>
         <p class="page-sub">{{ summary }}</p>
       </div>
       <div class="head-actions">
-        <div class="segmented" role="group" aria-label="视图切换">
+        <div class="segmented" role="group" :aria-label="t.accountsPage.viewSwitch">
           <button class="segmented__btn" :class="{ 'is-on': view === 'card' }"
-                  :aria-pressed="view === 'card'" @click="view = 'card'">▦ 卡片</button>
+                  :aria-pressed="view === 'card'" @click="view = 'card'">{{ t.accountsPage.cards }}</button>
           <button class="segmented__btn" :class="{ 'is-on': view === 'list' }"
-                  :aria-pressed="view === 'list'" @click="view = 'list'">☰ 列表</button>
+                  :aria-pressed="view === 'list'" @click="view = 'list'">{{ t.accountsPage.list }}</button>
         </div>
-        <button class="btn btn--primary" @click="openDrawer({ kind: 'add-account' })">添加账号</button>
+        <button class="btn btn--primary" @click="openDrawer({ kind: 'add-account' })">{{ t.accountsPage.addAccount }}</button>
       </div>
     </header>
     <LoadingBar :active="state.loading && state.accounts.length > 0" />
@@ -107,34 +103,34 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
       <div v-else class="card"><SkeletonRows :rows="3" /></div>
     </template>
 
-    <EmptyState v-else-if="!state.accounts.length" icon="⬡" title="还没有接入任何 Oracle 账号"
-                sub="接入后即可统一管理所有实例" action-label="添加第一个账号"
+    <EmptyState v-else-if="!state.accounts.length" icon="⬡" :title="t.accountsPage.emptyTitle"
+                :sub="t.accountsPage.emptySub" :action-label="t.accountsPage.addFirst"
                 @action="openDrawer({ kind: 'add-account' })" />
 
     <div v-else-if="view === 'card'" class="grid reveal">
       <article v-for="a in state.accounts" :key="a.id" class="card acct"
                :class="{ 'is-error': a.status === 'error', 'is-disabled': a.status === 'disabled' }"
                :style="{ '--c': acctColor(a.colorIndex) }"
-               tabindex="0" @click="openDrawer({ kind: 'account', id: a.id, tab: '概览' })"
-               @keydown.enter="openDrawer({ kind: 'account', id: a.id, tab: '概览' })">
+               tabindex="0" @click="openDrawer({ kind: 'account', id: a.id, tab: 'overview' })"
+               @keydown.enter="openDrawer({ kind: 'account', id: a.id, tab: 'overview' })">
         <span class="acct__bar" />
         <div class="acct__body">
-          <p v-if="a.status === 'error'" class="acct__errbar">凭据失效 · 该账号下的资源暂不可操作</p>
+          <p v-if="a.status === 'error'" class="acct__errbar">{{ t.accountsPage.credInvalid }}</p>
 
           <header class="acct__head">
             <span class="acct__lamp" :style="{ '--l': lampTone[a.status] }"
                   :class="{ 'is-solid': a.status !== 'disabled', 'is-pulsing': a.status === 'checking' || a.status === 'error' }" />
             <h2 class="acct__alias">{{ a.alias }}</h2>
             <span class="acct__code mono">{{ a.code }}</span>
-            <button class="acct__menu" aria-label="账号菜单"
-                    @click.stop="openDrawer({ kind: 'account', id: a.id, tab: '密钥' })">⋯</button>
+            <button class="acct__menu" :aria-label="t.accountsPage.accountMenu"
+                    @click.stop="openDrawer({ kind: 'account', id: a.id, tab: 'keys' })">⋯</button>
           </header>
 
           <p class="acct__mail"><MaskedText :value="a.email" kind="email" /></p>
           <p class="acct__ocid mono">ocid1.tenancy…<MaskedText :value="a.tenancyTail" /></p>
 
           <div class="acct__tier">
-            <span class="acct__tag" :class="`is-${a.tier}`">{{ tierLabel[a.tier] }}</span>
+            <span class="acct__tag" :class="`is-${a.tier}`">{{ t.accountsPage.tier[a.tier] }}</span>
             <span v-if="accountAgeText(a)" class="acct__age">{{ accountAgeText(a) }}</span>
             <span v-if="trialText(a)" class="acct__trial" :style="{ color: trialTone(a) }">
               {{ trialText(a) }}
@@ -153,15 +149,15 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
             <span class="skeleton" style="width: 56px; height: 32px" />
           </div>
           <div v-else class="acct__stats">
-            <div><p class="acct__stat-label">实例</p><p class="acct__stat mono">{{ instancesOf(a.id).length }}</p></div>
-            <div><p class="acct__stat-label">运行</p>
+            <div><p class="acct__stat-label">{{ t.accountsPage.statInstances }}</p><p class="acct__stat mono">{{ instancesOf(a.id).length }}</p></div>
+            <div><p class="acct__stat-label">{{ t.accountsPage.statRunning }}</p>
               <p class="acct__stat mono" style="color: var(--success)">{{ instancesOf(a.id).filter(i => i.state === 'RUNNING').length }}</p></div>
-            <div><p class="acct__stat-label">停止</p>
+            <div><p class="acct__stat-label">{{ t.accountsPage.statStopped }}</p>
               <p class="acct__stat mono dim">{{ instancesOf(a.id).filter(i => i.state === 'STOPPED').length }}</p></div>
           </div>
 
           <div class="acct__quota">
-            <span class="t-2xs dim">ARM 配额</span>
+            <span class="t-2xs dim">{{ t.accountsPage.armQuota }}</span>
             <span class="acct__track">
               <span v-if="!a.quota.unlimited.ocpu" class="acct__fill" :style="{
                 width: pct(a.quota.ocpuUsed, a.quota.ocpuLimit) + '%',
@@ -170,7 +166,7 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
             </span>
             <span class="mono t-2xs acct__quota-val"
                   :style="{ color: a.quota.unlimited.ocpu ? 'var(--text-secondary)' : usageTone(a.quota.ocpuUsed, a.quota.ocpuLimit) }">
-              <template v-if="a.quota.unlimited.ocpu">{{ a.quota.ocpuUsed }} OCPU · 不限</template>
+              <template v-if="a.quota.unlimited.ocpu">{{ a.quota.ocpuUsed }} OCPU · {{ t.accountsPage.unlimited }}</template>
               <template v-else>{{ a.quota.ocpuUsed }} / {{ a.quota.ocpuLimit }} OCPU</template>
             </span>
           </div>
@@ -184,15 +180,15 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
 
     <div v-else class="card table reveal">
       <div class="table-head acols">
-        <span>账号</span><span>类型 · 账龄</span><span class="col-region">区域</span>
-        <span class="col-count">实例</span><span class="col-quota">ARM 配额</span>
-        <span>最后校验</span><span></span>
+        <span>{{ t.accountsPage.colAccount }}</span><span>{{ t.accountsPage.colTier }}</span><span class="col-region">{{ t.accountsPage.colRegion }}</span>
+        <span class="col-count">{{ t.accountsPage.colInstances }}</span><span class="col-quota">{{ t.accountsPage.colQuota }}</span>
+        <span>{{ t.accountsPage.colChecked }}</span><span></span>
       </div>
       <div v-for="a in state.accounts" :key="a.id" class="table-row acols"
            :class="{ 'is-error': a.status === 'error', 'is-disabled': a.status === 'disabled' }"
            :style="{ '--c': acctColor(a.colorIndex) }"
-           tabindex="0" @click="openDrawer({ kind: 'account', id: a.id, tab: '概览' })"
-           @keydown.enter="openDrawer({ kind: 'account', id: a.id, tab: '概览' })">
+           tabindex="0" @click="openDrawer({ kind: 'account', id: a.id, tab: 'overview' })"
+           @keydown.enter="openDrawer({ kind: 'account', id: a.id, tab: 'overview' })">
         <span class="acct-bar" :style="{ background: acctColor(a.colorIndex) }" />
 
         <span class="cell lcell">
@@ -207,10 +203,10 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
 
         <span class="cell lcell">
           <span class="lcell__top">
-            <span class="acct__tag" :class="`is-${a.tier}`">{{ tierLabel[a.tier] }}</span>
+            <span class="acct__tag" :class="`is-${a.tier}`">{{ t.accountsPage.tier[a.tier] }}</span>
             <span v-if="trialText(a)" class="acct__trial" :style="{ color: trialTone(a) }">{{ trialText(a) }}</span>
           </span>
-          <span class="lcell__sub">{{ accountAgeText(a) || '开户时间未知' }}</span>
+          <span class="lcell__sub">{{ accountAgeText(a) || t.accountsPage.ageUnknown }}</span>
         </span>
 
         <span class="cell mono t-xs dim col-region">
@@ -219,7 +215,7 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
 
         <span class="cell mono t-xs col-count">
           {{ instancesOf(a.id).length }}
-          <span class="dim-3">/ 运行 {{ instancesOf(a.id).filter(i => i.state === 'RUNNING').length }}</span>
+          <span class="dim-3">{{ t.accountsPage.runningOf(instancesOf(a.id).filter(i => i.state === 'RUNNING').length) }}</span>
         </span>
 
         <span class="cell lquota col-quota">
@@ -231,7 +227,7 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
           </span>
           <span class="mono t-2xs acct__quota-val"
                 :style="{ color: a.quota.unlimited.ocpu ? 'var(--text-secondary)' : usageTone(a.quota.ocpuUsed, a.quota.ocpuLimit) }">
-            <template v-if="a.quota.unlimited.ocpu">{{ a.quota.ocpuUsed }} · 不限</template>
+            <template v-if="a.quota.unlimited.ocpu">{{ a.quota.ocpuUsed }} · {{ t.accountsPage.unlimited }}</template>
             <template v-else>{{ a.quota.ocpuUsed }} / {{ a.quota.ocpuLimit }}</template>
           </span>
         </span>
@@ -241,8 +237,8 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
         </span>
 
         <span class="cell">
-          <button class="acct__menu" aria-label="账号菜单"
-                  @click.stop="openDrawer({ kind: 'account', id: a.id, tab: '密钥' })">⋯</button>
+          <button class="acct__menu" :aria-label="t.accountsPage.accountMenu"
+                  @click.stop="openDrawer({ kind: 'account', id: a.id, tab: 'keys' })">⋯</button>
         </span>
       </div>
     </div>

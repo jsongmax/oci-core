@@ -11,6 +11,7 @@
  *
  * ECharts 按需引入，体积只算折线、柱状和用到的组件。
  */
+import { t, intlLocale } from '@/i18n'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { LineChart, BarChart } from 'echarts/charts'
@@ -40,10 +41,10 @@ const props = withDefaults(defineProps<{
 }>(), {
   type: 'line',
   categories: undefined,
-  format: (v: number) => v.toLocaleString('zh-CN', { maximumFractionDigits: 2 }),
+  format: (v: number) => v.toLocaleString(intlLocale(), { maximumFractionDigits: 2 }),
   yMax: undefined,
   height: 200,
-  emptyText: '暂无数据'
+  emptyText: ''
 })
 
 /** 分类色：dataviz 参考调色板 slot 1（蓝）、slot 2（橙）。 */
@@ -71,7 +72,7 @@ function cssVar(name: string): string {
 
 function timeLabel(ms: number, withDate: boolean): string {
   const d = new Date(ms)
-  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const hm = d.toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
   if (!withDate) return hm
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
@@ -225,7 +226,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="mchart">
     <div v-show="hasData" ref="el" :style="{ height: height + 'px' }" />
-    <p v-if="!hasData" class="mchart__empty" :style="{ height: height + 'px' }">{{ emptyText }}</p>
+    <p v-if="!hasData" class="mchart__empty" :style="{ height: height + 'px' }">{{ emptyText || t.ui.noData }}</p>
   </div>
 </template>
 

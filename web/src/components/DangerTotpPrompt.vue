@@ -3,6 +3,7 @@
  * 危险操作复核：设置里打开「危险操作需重新验证 TOTP」后，后端对 L2 / L3
  * 接口要求一次验证码。HTTP 层收到要求时经 store 打开这里，输完自动重发原请求。
  */
+import { t } from '@/i18n'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useStore } from '@/store'
 
@@ -33,14 +34,14 @@ function submit() {
     <div v-if="req" class="scrim" role="dialog" aria-modal="true" aria-labelledby="danger-totp-title"
          @keydown.esc="cancel">
       <form class="dlg" @submit.prevent="submit">
-        <h2 id="danger-totp-title" class="dlg__title">输入两步验证码</h2>
-        <p class="dlg__body">{{ req.message }}。通过后 5 分钟内的危险操作不再重复询问。</p>
-        <label class="dlg__label" for="danger-totp-code">验证码</label>
+        <h2 id="danger-totp-title" class="dlg__title">{{ t.ui.totpTitle }}</h2>
+        <p class="dlg__body">{{ t.ui.totpBody(req.message) }}</p>
+        <label class="dlg__label" for="danger-totp-code">{{ t.ui.totpCode }}</label>
         <input id="danger-totp-code" ref="input" v-model="code" class="input mono dlg__input"
-               maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字" />
+               maxlength="6" inputmode="numeric" autocomplete="one-time-code" :placeholder="t.ui.totpPlaceholder" />
         <footer class="dlg__foot">
-          <button type="button" class="btn" @click="cancel">取消</button>
-          <button type="submit" class="btn btn--primary" :disabled="!valid">确认</button>
+          <button type="button" class="btn" @click="cancel">{{ t.common.cancel }}</button>
+          <button type="submit" class="btn btn--primary" :disabled="!valid">{{ t.ui.confirm }}</button>
         </footer>
       </form>
     </div>

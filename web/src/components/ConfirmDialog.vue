@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.5 危险操作三级门槛：L2 确认（取消为主按钮），L3 输名确认 */
+import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 
@@ -34,13 +35,13 @@ function commit() {
 
         <template v-if="req.level === 3">
           <div class="dlg__losses">
-            <p class="dlg__losses-head">以下内容将被永久删除，无法恢复：</p>
+            <p class="dlg__losses-head">{{ t.ui.losses }}</p>
             <ul>
               <li v-for="l in req.losses" :key="l"><span>·</span><span class="mono">{{ l }}</span></li>
             </ul>
           </div>
           <label class="dlg__label" for="confirm-noun">
-            请输入{{ req.nounLabel }} <span class="mono dlg__noun">{{ req.noun }}</span> 以确认：
+            {{ t.ui.typeToConfirmBefore }}{{ req.nounLabel }} <span class="mono dlg__noun">{{ req.noun }}</span> {{ t.ui.typeToConfirmAfter }}
           </label>
           <input id="confirm-noun" v-model="typed" class="input mono dlg__input"
                  :class="{ 'is-match': canConfirm }" :placeholder="req.noun" autocomplete="off" />
@@ -48,7 +49,7 @@ function commit() {
 
         <footer class="dlg__foot">
           <!-- L2：取消是主按钮；L3 确认按钮不得是默认焦点（§10.2） -->
-          <button class="btn" :class="{ 'btn--primary': req.level === 2 }" @click="close">取消</button>
+          <button class="btn" :class="{ 'btn--primary': req.level === 2 }" @click="close">{{ t.common.cancel }}</button>
           <button class="btn" :class="isL3 ? 'btn--danger-solid' : 'btn--warning'"
                   :disabled="!canConfirm" @click="commit">{{ req.okLabel }}</button>
         </footer>

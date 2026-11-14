@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.8 ShapeConfigurator + 引导卷扩容/VPU：滑块联动 + 配额校验 + 前置提示 */
+import { t, fmtNumber } from '@/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Account, Instance } from '@/types'
 import { useStore } from '@/store'
@@ -109,11 +110,11 @@ const transitional = computed(() => !running.value && !stopped.value)
  */
 const quotaText = computed(() => {
   const q = props.account.quota
-  if (!isArm.value) return '该规格的配额这里不做预检，超出时 Oracle 会在提交时拒绝'
-  if (overQuota.value) return '超出该账号剩余配额，无法提交'
-  if (q.unlimited.ocpu) return `该账号 ARM 配额不限，当前已用 ${q.ocpuUsed} OCPU / ${q.memUsed} GB`
-  if (!q.ocpuLimit) return '未能读取该账号的配额，提交时后端会再校验一次'
-  return `账号剩余配额 ${q.ocpuLimit - q.ocpuUsed} OCPU / ${q.memLimit - q.memUsed} GB`
+  if (!isArm.value) return t.bootVol.quotaNoPrecheck
+  if (overQuota.value) return t.bootVol.quotaOver
+  if (q.unlimited.ocpu) return t.bootVol.quotaUnlimited(q.ocpuUsed, q.memUsed)
+  if (!q.ocpuLimit) return t.bootVol.quotaUnknown
+  return t.bootVol.quotaLeft(q.ocpuLimit - q.ocpuUsed, q.memLimit - q.memUsed)
 })
 
 /**
@@ -145,7 +146,7 @@ function volumePerf(v: number, gb: number): { iops: number; mbps: number } {
 }
 
 const perf = computed(() => volumePerf(vpu.value, size.value))
-const iops = computed(() => Math.round(perf.value.iops).toLocaleString('en-US'))
+const iops = computed(() => fmtNumber(Math.round(perf.value.iops)))
 const throughput = computed(() => `${Math.round(perf.value.mbps)} MB/s`)
 
 /** 配额上限为 0 表示读不到，此时不拦——总比因为读不到就完全用不了强。 */
@@ -215,8 +216,8 @@ const overFreeBlockNote = computed(() => {
   const over = projectedBlockGb.value - ALWAYS_FREE.blockGB
   if (over <= 0) return ''
   return props.account.tier === 'trial'
-    ? `扩容后共 ${projectedBlockGb.value} GB，超出永久免费额度 ${ALWAYS_FREE.blockGB} GB 共 ${over} GB，试用期结束后超出部分不再免费。`
-    : `扩容后共 ${projectedBlockGb.value} GB，超出永久免费额度 ${ALWAYS_FREE.blockGB} GB 共 ${over} GB，超出部分按量计费。`
+    ? t.bootVol.overFreeTrial(projectedBlockGb.value, ALWAYS_FREE.blockGB, over)
+    : t.bootVol.overFreePaid(projectedBlockGb.value, ALWAYS_FREE.blockGB, over)
 })
 
 function applyVolume() {
@@ -225,11 +226,11 @@ function applyVolume() {
   const grew = size.value > props.instance.bootGb
   ask({
     level: 2,
-    title: `修改 ${props.instance.name} 的引导卷`,
+    title: t.bootVol.editVolumeTitle(props.instance.name),
     body: grew
-      ? `从 ${props.instance.bootGb} GB 扩到 ${size.value} GB。容量只能增不能减，扩容后还需要在实例内扩展分区与文件系统才会生效。`
-      : `将 VPU 从 ${props.instance.vpu} 调整为 ${vpu.value}。性能档位变更会在后台生效，无需重启。`,
-    okLabel: '应用变更',
+      ? t.bootVol.growBody(props.instance.bootGb, size.value)
+      : t.bootVol.vpuBody(props.instance.vpu, vpu.value),
+    okLabel: t.bootVol.applyChanges,
     onConfirm: async () => {
       applyingVolume.value = true
       try {
@@ -249,14 +250,14 @@ function applyVolume() {
             // 扩容了就一直留着：命令要复制到实例里去跑，10 秒根本来不及。
             toast({
               tone: 'success',
-              title: `${name} 的引导卷已更新`,
+              title: t.bootVol.volumeUpdated(name),
               body: [notice, hint?.note].filter(Boolean).join('\n') || undefined,
               command: hint?.command
             }, grew ? 0 : 10000)
           }
         })
       } catch (err) {
-        toastError('修改引导卷失败', err)
+        toastError(t.bootVol.volumeFailed, err)
         size.value = props.instance.bootGb
         vpu.value = props.instance.vpu
       } finally {
@@ -269,12 +270,12 @@ function applyVolume() {
 function applyShape() {
   ask({
     level: 2,
-    title: `修改 ${props.instance.name} 的配置`,
+    title: t.bootVol.editShapeTitle(props.instance.name),
     body: `${props.instance.ocpu} OCPU / ${props.instance.memGb} GB → ${ocpu.value} OCPU / ${mem.value} GB。` +
       (running.value
-        ? '实例正在运行，Oracle 会重启它一次来应用变更，期间服务中断。'
-        : '实例已关机，下次开机时按新配置启动。'),
-    okLabel: '应用配置',
+        ? t.bootVol.shapeRunning
+        : t.bootVol.shapeStopped),
+    okLabel: t.bootVol.applyShape,
     onConfirm: async () => {
       applyingShape.value = true
       try {
@@ -286,7 +287,7 @@ function applyShape() {
           baselineChanged.value ? (baseline.value || 'BASELINE_1_1') : undefined)
         trackJob(job)
       } catch (err) {
-        toastError('修改配置失败', err)
+        toastError(t.bootVol.shapeFailed, err)
         ocpu.value = props.instance.ocpu
         mem.value = props.instance.memGb
         baseline.value = props.instance.baseline
@@ -299,34 +300,34 @@ function applyShape() {
 </script>
 
 <template>
-  <SectionCard title="引导卷" :note="`${instance.bootGb} GB · VPU ${instance.vpu} · 容量只能增不能减`">
+  <SectionCard :title="t.bootVol.bootVolume" :note="t.bootVol.bootNote(instance.bootGb, instance.vpu)">
     <div class="pad">
       <label class="slider">
-        <span class="slider__head"><span>容量</span><span class="mono">{{ size }} GB</span></span>
+        <span class="slider__head"><span>{{ t.bootVol.size }}</span><span class="mono">{{ size }} GB</span></span>
         <input type="range" :min="instance.bootGb" :max="maxBootGb" step="1" v-model.number="size" />
       </label>
       <label class="slider">
         <span class="slider__head"><span>VPU</span><span class="mono">{{ vpu }}</span></span>
         <input type="range" min="0" max="120" step="10" v-model.number="vpu" />
-        <span class="slider__hint mono">预估 {{ iops }} IOPS · {{ throughput }}</span>
+        <span class="slider__hint mono">{{ t.bootVol.estimate(iops, throughput) }}</span>
       </label>
-      <QuotaMeter v-if="account.quota.blockLimit" label="扩容后用量"
+      <QuotaMeter v-if="account.quota.blockLimit" :label="t.bootVol.projectedUsage"
                   :used="projectedBlockGb"
                   :limit="account.quota.blockLimit" unit=" GB" />
       <p v-if="account.quota.blockLimit" class="t-2xs dim-3 quota-note">
-        分母是该租户块存储的服务上限（含引导卷与块存储卷），不是免费额度。
+        {{ t.bootVol.quotaDenominator }}
       </p>
       <CheckList v-if="overFreeBlockNote" :items="[{ tone: 'warn', text: overFreeBlockNote }]" />
       <CheckList v-if="!bootVolumeId"
-                 :items="[{ tone: 'info', text: '尚未同步到该实例的引导卷信息，先执行一次同步再来。' }]" />
+                 :items="[{ tone: 'info', text: t.bootVol.notSynced }]" />
       <button class="btn btn--sm" :disabled="!volumeChanged || applyingVolume || !bootVolumeId"
               @click="applyVolume()">
-        {{ applyingVolume ? '提交中…' : '应用引导卷变更' }}
+        {{ applyingVolume ? t.common.submitting : t.bootVol.applyVolume }}
       </button>
     </div>
   </SectionCard>
 
-  <SectionCard title="修改配置" note="OCPU 与内存联动">
+  <SectionCard :title="t.bootVol.changeShape" :note="t.bootVol.shapeNote">
     <div class="pad">
       <label class="slider">
         <span class="slider__head"><span>OCPU</span><span class="mono">{{ ocpu }}</span></span>
@@ -335,28 +336,28 @@ function applyShape() {
                @input="onOcpu(Number(($event.target as HTMLInputElement).value))" />
       </label>
       <label class="slider">
-        <span class="slider__head"><span>内存</span><span class="mono">{{ mem }} GB</span></span>
+        <span class="slider__head"><span>{{ t.bootVol.memory }}</span><span class="mono">{{ mem }} GB</span></span>
         <input type="range" min="1" :max="maxMem" step="1" v-model.number="mem" :disabled="!isFlexible" />
         <span class="slider__hint">{{ isFlexible
-          ? `${instance.shape} 约束：每 OCPU 最多 ${maxPerOcpu} GB`
-          : '该规格为固定配置，无法调整' }}</span>
+          ? t.bootVol.shapeLimit(instance.shape, maxPerOcpu)
+          : t.bootVol.shapeFixed }}</span>
       </label>
       <div v-if="canBurst" class="burst">
-        <span class="burst__label">CPU 基线</span>
-        <SelectMenu v-model="baseline" :groups="burstOptions" :min-width="240" aria-label="CPU 基线" />
+        <span class="burst__label">{{ t.bootVol.cpuBaseline }}</span>
+        <SelectMenu v-model="baseline" :groups="burstOptions" :min-width="240" :aria-label="t.bootVol.cpuBaseline" />
       </div>
       <CheckList :items="[
         running
-          ? { tone: 'warn', text: '实例正在运行，Oracle 会在应用变更时重启它一次。' }
+          ? { tone: 'warn', text: t.bootVol.checkRunning }
           : stopped
-            ? { tone: 'ok', text: '实例已关机，变更会在下次开机时生效。' }
-            : { tone: 'info', text: '实例正在转换状态，等落定后再操作。' },
+            ? { tone: 'ok', text: t.bootVol.checkStopped }
+            : { tone: 'info', text: t.bootVol.checkTransition },
         { tone: overQuota ? 'fail' : 'info', text: quotaText }
       ]" />
       <button class="btn btn--sm"
               :disabled="!shapeChanged || transitional || overQuota || applyingShape || !isFlexible"
               @click="applyShape()">
-        {{ applyingShape ? '提交中…' : '应用配置变更' }}
+        {{ applyingShape ? t.common.submitting : t.bootVol.applyShapeChanges }}
       </button>
     </div>
   </SectionCard>

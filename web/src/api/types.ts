@@ -323,6 +323,8 @@ export interface SettingsDTO {
   checkIntervalHours: number
   /** 审计日志保留天数，0 为永久保留 */
   auditRetentionDays: number
+  /** 通知与后台任务文案的语言（zh-CN / en）。旧后端没有这个字段 */
+  language?: string
 }
 
 export interface ChannelDTO {

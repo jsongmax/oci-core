@@ -159,7 +159,7 @@ export function mask(v: string, kind: MaskKind = 'generic'): string {
   if (!v) return v
   const t = v.trim()
   if (t === '' || t === '—' || t === '-') return v
-  // 中文占位文案一律放行：它们不是数据。
-  if (/^(未|无|尚未|不)/.test(t)) return v
+  // 占位文案一律放行：它们不是数据。中英文两套界面的占位词都要认。
+  if (/^(未|无|尚未|不)/.test(t) || /^(not |none\b|unknown\b|never\b|n\/a\b)/i.test(t)) return v
   return MASKERS[kind](v)
 }

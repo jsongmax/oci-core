@@ -12,6 +12,7 @@
  * 单独建的 IAM 用户只授了 compute / network / volume。那种情况下给的是
  * 一段可以直接照抄的策略，不是一句「查询失败」。
  */
+import { t, intlLocale } from '@/i18n'
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor, byteScale, formatGB, pct, usageTone } from '@/lib/format'
@@ -88,13 +89,6 @@ const rows = computed(() =>
   })
 )
 
-const STATUS_TEXT: Record<BillingStatusDTO, string> = {
-  ok: '',
-  free: '免费额度内',
-  no_permission: '缺查询权限',
-  disabled: '账号已停用',
-  error: '查询失败'
-}
 
 const STATUS_TONE: Record<BillingStatusDTO, string> = {
   ok: 'var(--text-primary)',
@@ -113,7 +107,7 @@ const STATUS_TONE: Record<BillingStatusDTO, string> = {
 function money(amount: number, currency: string): string {
   if (!amount) return '0.00'
   const digits = Math.abs(amount) < 0.01 ? 4 : 2
-  const n = amount.toLocaleString('zh-CN', {
+  const n = amount.toLocaleString(intlLocale(), {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits
   })
@@ -122,14 +116,14 @@ function money(amount: number, currency: string): string {
 
 /** 用量数字：整数就不带小数，小数最多两位。 */
 function qty(v: number): string {
-  return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  return v.toLocaleString(intlLocale(), { maximumFractionDigits: 2 })
 }
 
 /** 环比。上月为零时没有意义，返回空串而不是 +∞ 或 +100%。 */
 function deltaText(s: BillingSummaryDTO | BillingCurrencyTotalDTO): string {
   if (!s.lastMonth || !s.thisMonth) return ''
   const d = (s.thisMonth - s.lastMonth) / s.lastMonth
-  if (Math.abs(d) < 0.005) return '与上月持平'
+  if (Math.abs(d) < 0.005) return t.billing.flat
   return `${d > 0 ? '↑' : '↓'} ${Math.abs(d * 100).toFixed(0)}%`
 }
 
@@ -210,7 +204,7 @@ const egressScale = computed(() => byteScale(
   (egress.value?.series ?? []).reduce((m, d) => Math.max(m, d.gb), 0) * 1024 ** 3))
 const egressSeries = computed<MetricSeries[]>(() => {
   const f = egressScale.value.factor / 1024 ** 3
-  return [{ name: '出站流量', data: (egress.value?.series ?? []).map(d => d.gb / f) }]
+  return [{ name: t.billing.egress, data: (egress.value?.series ?? []).map(d => d.gb / f) }]
 })
 
 function refreshDetail() {
@@ -317,25 +311,25 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">账单</h1>
+        <h1 class="page-title">{{ t.billing.title }}</h1>
         <p class="page-sub">
           <template v-if="billedTotals.length">
-            本月至今
-            <template v-for="(t, i) in billedTotals" :key="t.currency">
+            {{ t.billing.mtd }}
+            <template v-for="(tot, i) in billedTotals" :key="tot.currency">
               <span v-if="i > 0"> · </span>
-              <span class="mono">{{ money(t.thisMonth, t.currency) }}</span>
+              <span class="mono">{{ money(tot.thisMonth, tot.currency) }}</span>
             </template>
-            · 共 {{ summaries.length }} 个账号
+            {{ t.billing.accountsTotal(summaries.length) }}
           </template>
           <template v-else-if="summaries.length">
-            {{ summaries.length }} 个账号 · 本月暂无费用产生
+            {{ t.billing.noCost(summaries.length) }}
           </template>
-          <template v-else>Oracle 用量与成本 · 只读查询，不产生费用</template>
+          <template v-else>{{ t.billing.intro }}</template>
         </p>
       </div>
       <div class="head-actions">
         <button class="btn" :disabled="loading" @click="load(true)">
-          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '刷新中' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? t.billing.refreshing : t.common.refresh }}
         </button>
       </div>
     </header>
@@ -345,47 +339,44 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
     <p v-if="loadError" class="load-err">{{ loadError }}</p>
 
     <CheckList class="warn-box" :items="[
-      { tone: 'info', text: notice || '用量数据由 Oracle 每隔几小时结算一次，最新一天通常不完整。这里显示的不是实时消费。' },
-      { tone: 'info', text: '查询走 Usage API，是只读接口，不创建资源、不消耗配额、本身不产生费用。' },
-      { tone: 'info', text: '发票与付款记录不在这里——那部分只在 Oracle 官网的账户中心，没有可用的接口。' }
+      { tone: 'info', text: notice || t.billing.noteDelay },
+      { tone: 'info', text: t.billing.noteReadonly },
+      { tone: 'info', text: t.billing.noteInvoices }
     ]" />
 
     <!-- 缺权限是常态而不是故障，所以给的是可照抄的策略而不是报错 -->
-    <SectionCard v-if="anyNoPermission" title="有账号缺少查询权限"
-                 :note="`${noPermissionCount} 个账号读不到用量数据`">
+    <SectionCard v-if="anyNoPermission" :title="t.billing.permTitle"
+                 :note="t.billing.permNote(noPermissionCount)">
       <div class="perm">
         <p class="t-xs perm__body">
-          账单查询需要一项本工具其余功能都用不到的权限。如果你为本工具单独建了
-          IAM 用户，只授了计算 / 网络 / 存储三项，就会是这个状态——账号本身是好的。
-          在 Oracle 控制台 → 身份与安全 → 策略里补上这条：
+          {{ t.billing.permBody }}
         </p>
         <CodeBlock copyable :code="POLICY" />
         <p class="t-2xs dim-3 perm__foot">
-          已经有 <span class="mono">read all-resources in tenancy</span> 的账号无需再加，那条已经覆盖。
-          补完权限后点右上角刷新。
+          {{ t.billing.permFootBefore }} <span class="mono">read all-resources in tenancy</span> {{ t.billing.permFootAfter }}
         </p>
       </div>
     </SectionCard>
 
     <!-- 按币种分开的合计。绝不把不同币种加成一个数 -->
     <div v-if="totals.length" class="kpis">
-      <div v-for="t in totals" :key="t.currency" class="kpi card">
-        <span class="t-2xs dim-3">本月至今{{ currencyLabel(t.currency) }}</span>
-        <span class="kpi__v mono">{{ money(t.thisMonth, '') }}</span>
+      <div v-for="tot in totals" :key="tot.currency" class="kpi card">
+        <span class="t-2xs dim-3">{{ t.billing.mtd }}{{ currencyLabel(tot.currency) }}</span>
+        <span class="kpi__v mono">{{ money(tot.thisMonth, '') }}</span>
         <span class="kpi__meta t-2xs">
-          <span class="dim-3">上月 {{ money(t.lastMonth, '') }}</span>
-          <span v-if="deltaText(t)" :style="{ color: deltaTone(t) }">{{ deltaText(t) }}</span>
+          <span class="dim-3">{{ t.billing.lastMonth(money(tot.lastMonth, '')) }}</span>
+          <span v-if="deltaText(tot)" :style="{ color: deltaTone(tot) }">{{ deltaText(tot) }}</span>
         </span>
-        <span class="t-2xs dim-3">计入 {{ t.accounts }} 个账号</span>
+        <span class="t-2xs dim-3">{{ t.billing.countedAccounts(tot.accounts) }}</span>
       </div>
     </div>
 
-    <SectionCard title="按账号" note="点一行看它的明细" class="stale-able"
+    <SectionCard :title="t.billing.byAccount" :note="t.billing.byAccountNote" class="stale-able"
                  :class="{ 'is-stale': loading && summaries.length > 0 }">
       <SkeletonRows v-if="loading && summaries.length === 0" :rows="4" />
 
-      <EmptyState v-else-if="summaries.length === 0" icon="¤" title="还没有账号"
-                  sub="先在账号页接入 Oracle 账号，这里才有账单可看。" />
+      <EmptyState v-else-if="summaries.length === 0" icon="¤" :title="t.billing.noAccounts"
+                  :sub="t.billing.noAccountsSub" />
 
       <template v-else>
         <div v-for="(s, n) in rows" :key="s.accountId" class="acct reveal" :style="{ '--i': Math.min(n, 8) }"
@@ -405,14 +396,14 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             {{ money(s.thisMonth, s.currency) }}
           </span>
           <span v-else class="t-xs acct__state" :style="{ color: STATUS_TONE[s.status] }">
-            {{ STATUS_TEXT[s.status] }}
+            {{ t.billing.status[s.status] }}
           </span>
 
           <span v-if="s.status === 'ok' && deltaText(s)" class="t-2xs acct__delta"
                 :style="{ color: deltaTone(s) }">{{ deltaText(s) }}</span>
 
           <span v-if="s.status === 'ok'" class="mono t-2xs dim-3 acct__last">
-            上月 {{ money(s.lastMonth, '') }}
+            {{ t.billing.lastMonth(money(s.lastMonth, '')) }}
           </span>
 
           <span v-if="s.error" class="mono t-2xs acct__err" :title="s.error">{{ s.error }}</span>
@@ -424,17 +415,17 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
     </SectionCard>
 
     <!-- 明细 -->
-    <SectionCard v-if="selected" :title="`明细 · ${selectedAccount?.alias ?? ''}`" class="stale-able reveal"
+    <SectionCard v-if="selected" :title="t.billing.detailTitle(selectedAccount?.alias ?? '')" class="stale-able reveal"
                  :class="{ 'is-stale': detailLoading && !!detail }"
-                 :note="detail ? `${detail.start.slice(0, 10)} 至今 · ${detail.region}` : ''">
+                 :note="detail ? t.billing.detailNote(detail.start.slice(0, 10), detail.region) : ''">
       <template #action>
         <div class="range">
           <button v-for="d in DAY_OPTIONS" :key="d" class="btn btn--xs"
                   :class="{ 'btn--primary': days === d }" @click="days = d">
-            {{ d }} 天
+            {{ t.billing.days(d) }}
           </button>
           <button class="btn btn--xs" :disabled="detailLoading || egressLoading" @click="refreshDetail()">
-            <span v-if="detailLoading || egressLoading" class="btn-spin" aria-hidden="true" />刷新
+            <span v-if="detailLoading || egressLoading" class="btn-spin" aria-hidden="true" />{{ t.common.refresh }}
           </button>
         </div>
       </template>
@@ -447,7 +438,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
         <!-- 缺权限：明细页也要给同一段策略，不能让人回上面找 -->
         <div v-if="detail.status === 'no_permission'" class="perm">
           <p class="t-xs perm__body">
-            这个账号读不到用量数据。补上下面这条策略后刷新：
+            {{ t.billing.detailNoPerm }}
           </p>
           <CodeBlock copyable :code="POLICY" />
         </div>
@@ -461,13 +452,13 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                不如直接说清楚「这段时间没有产生费用」 -->
           <div v-if="hasCost" class="chart">
             <div class="chart__head">
-              <span class="t-2xs dim-3">每日费用 · {{ detail.currency }}</span>
+              <span class="t-2xs dim-3">{{ t.billing.dailyCost(detail.currency) }}</span>
               <span class="mono t-xs chart__total">
-                合计 {{ money(detail.total, detail.currency) }}
+                {{ t.billing.total(money(detail.total, detail.currency)) }}
               </span>
             </div>
             <div class="bars" role="img"
-                 :aria-label="`${detail.days} 天每日费用趋势，峰值 ${money(peak, detail.currency)}`">
+                 :aria-label="t.billing.trendLabel(detail.days, money(peak, detail.currency))">
               <span v-for="(d, i) in series" :key="d.date" class="bar"
                     :style="{ height: barHeight(d.amount) + '%' }"
                     :title="`${d.date} · ${money(d.amount, detail.currency)}`"
@@ -480,10 +471,9 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
           </div>
 
           <div v-else class="free">
-            <p class="free__title">这 {{ detail.days }} 天没有产生费用</p>
+            <p class="free__title">{{ t.billing.freeTitle(detail.days) }}</p>
             <p class="free__sub t-xs">
-              资源都在免费额度内。下面是实际用量——免费额度也是有上限的，
-              这些数字才是该盯的。
+              {{ t.billing.freeSub }}
             </p>
           </div>
 
@@ -491,17 +481,17 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                不跟上面的天数切换走 -->
           <div class="egress-month">
             <div class="egress-month__head">
-              <span class="t-2xs dim-3">本月出站流量<template v-if="egress"> · {{ egress.month }}（UTC）</template></span>
+              <span class="t-2xs dim-3">{{ t.billing.monthEgress }}<template v-if="egress">{{ t.billing.utc(egress.month) }}</template></span>
               <span v-if="egress && egress.status === 'ok'" class="mono t-xs"
                     :style="{ color: usageTone(egress.usedGb, egress.freeGb) }">
                 {{ formatGB(egress.usedGb) }} / {{ formatGB(egress.freeGb) }}
                 · {{ pct(egress.usedGb, egress.freeGb) }}%
               </span>
             </div>
-            <span v-if="egressLoading && !egress" class="skeleton egress-month__sk" aria-label="查询中" />
+            <span v-if="egressLoading && !egress" class="skeleton egress-month__sk" :aria-label="t.billing.querying" />
             <p v-else-if="egressError" class="t-2xs egress-month__msg egress-month__err">{{ egressError }}</p>
             <p v-else-if="egress && egress.status !== 'ok'" class="t-2xs egress-month__msg egress-month__err">
-              {{ egress.error || '查询失败' }}
+              {{ egress.error || t.billing.queryFailed }}
             </p>
             <template v-else-if="egress">
               <span class="egress-month__track">
@@ -511,11 +501,11 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
               </span>
               <MetricChart class="egress-month__bars" type="bar" :categories="egressDays"
                            :series="egressSeries" :format="egressScale.format" :height="160"
-                           empty-text="本月暂无出站流量" />
+                           :empty-text="t.billing.noEgress" />
               <p class="t-2xs dim-3 egress-month__msg">
-                计费口径，取自 Oracle 用量数据，通常延迟几小时到一天。永久免费额度为每月 10 TB。
-                <template v-if="egress.amount > 0">本月出站流量已产生费用 {{ money(egress.amount, egress.currency) }}。</template>
-                <template v-if="egress.unit && egress.unit.toUpperCase() !== 'GB'">Oracle 返回的单位是 {{ egress.unit }}，已换算成 GB。</template>
+                {{ t.billing.egressBasis }}
+                <template v-if="egress.amount > 0">{{ t.billing.egressCost(money(egress.amount, egress.currency)) }}</template>
+                <template v-if="egress.unit && egress.unit.toUpperCase() !== 'GB'">{{ t.billing.egressUnit(egress.unit) }}</template>
               </p>
             </template>
           </div>
@@ -523,18 +513,18 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
           <!-- 出站流量单独拎出来：它是免费号最容易超的一项，而按服务分组时
                和网络服务的其他计费项混在一起看不出来 -->
           <div v-if="detail.egress" class="egress">
-            <span class="t-2xs dim-3">出站流量 · 这 {{ detail.days }} 天</span>
+            <span class="t-2xs dim-3">{{ t.billing.egressDays(detail.days) }}</span>
             <span class="mono egress__v">
               {{ qty(detail.egress.quantity) }}<span class="brow__unit dim-3">{{ detail.egress.unit }}</span>
             </span>
             <span v-if="detail.egress.amount > 0" class="mono t-xs">{{ money(detail.egress.amount, detail.currency) }}</span>
-            <span class="t-2xs dim-3">永久免费额度为每月 10 TB；单位以 Oracle 返回为准</span>
+            <span class="t-2xs dim-3">{{ t.billing.egressFree }}</span>
           </div>
 
           <!-- 有费用时按服务/区域拆金额；没费用时拆用量 -->
           <div class="splits">
             <div v-if="hasCost && serviceRows.length" class="split">
-              <p class="split__head t-2xs dim-3">按服务</p>
+              <p class="split__head t-2xs dim-3">{{ t.billing.byService }}</p>
               <div v-for="b in serviceRows" :key="b.key" class="brow">
                 <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
@@ -545,7 +535,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             </div>
 
             <div v-if="hasCost && regionRows.length" class="split">
-              <p class="split__head t-2xs dim-3">按区域</p>
+              <p class="split__head t-2xs dim-3">{{ t.billing.byRegion }}</p>
               <div v-for="b in regionRows" :key="b.key" class="brow">
                 <span class="mono t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
@@ -556,7 +546,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             </div>
 
             <div v-if="usageRows.length" class="split" :class="{ 'split--wide': !hasCost }">
-              <p class="split__head t-2xs dim-3">用量 · 按服务</p>
+              <p class="split__head t-2xs dim-3">{{ t.billing.usageByService }}</p>
               <div v-for="b in usageRows" :key="b.key" class="brow">
                 <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
@@ -570,7 +560,7 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
             </div>
 
             <div v-if="skuRows.length" class="split split--wide">
-              <p class="split__head t-2xs dim-3">用量 · 按计费项</p>
+              <p class="split__head t-2xs dim-3">{{ t.billing.usageBySku }}</p>
               <div v-for="b in skuRows" :key="b.key" class="brow">
                 <span class="t-xs brow__k" :title="b.key">{{ b.key }}</span>
                 <span class="brow__track">
@@ -582,16 +572,16 @@ const currencyLabel = (c: string) => (c && c !== '—' ? ' · ' + c : '')
                   <template v-if="b.amount > 0"> · {{ money(b.amount, '') }}</template>
                 </span>
               </div>
-              <p v-if="skuRest" class="t-2xs dim-3">另有 {{ skuRest }} 个用量更小的计费项未列出</p>
+              <p v-if="skuRest" class="t-2xs dim-3">{{ t.billing.skuRest(skuRest) }}</p>
             </div>
 
             <p v-if="!hasCost && !usageRows.length" class="t-xs dim-3 splits__none">
-              这段时间没有任何用量记录。新接入的账号可能要等几小时才有数据。
+              {{ t.billing.noUsage }}
             </p>
           </div>
 
           <p class="t-2xs dim-3 detail__foot">
-            {{ relativeTime(detail.fetchedAt) }}查询 · 后端缓存 30 分钟，点刷新可强制重查
+            {{ t.billing.fetched(relativeTime(detail.fetchedAt)) }}
           </p>
         </template>
       </template>

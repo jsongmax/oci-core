@@ -6,12 +6,13 @@
  * 产出的 HTML 字符串，免得走 v-html。颜色固定深色模块 + 白底 + 四格静区，
  * 不跟随深色主题——反色二维码不少验证器扫不出来。
  */
+import { t } from '@/i18n'
 import { computed } from 'vue'
 import qrcode from 'qrcode-generator'
 
 const props = withDefaults(defineProps<{ value: string; size?: number; label?: string }>(), {
   size: 168,
-  label: '二维码'
+  label: ''
 })
 
 /** QR 规范要求四个模块宽的静区。 */
@@ -36,7 +37,7 @@ const qr = computed(() => {
 
 <template>
   <svg class="qr" :width="size" :height="size" :viewBox="`0 0 ${qr.span} ${qr.span}`"
-       shape-rendering="crispEdges" role="img" :aria-label="label">
+       shape-rendering="crispEdges" role="img" :aria-label="label || t.ui.qrLabel">
     <rect :width="qr.span" :height="qr.span" fill="#fff" />
     <path :d="qr.d" fill="#111" />
   </svg>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.4.4 创建实例向导（520）：账号 → 区域·AD → 规格 → 镜像 → 网络 → 初始化 */
+import { t } from '@/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -25,7 +26,7 @@ import SelectMenu from '@/components/SelectMenu.vue'
 const { state, accountById, closeDrawer, launchInstance, ask, toast, toastError } = useStore()
 const router = useRouter()
 
-const STEPS = ['账号', '区域·AD', '规格', '镜像', '网络', '初始化']
+const STEPS = computed(() => t.createInst.steps)
 
 /**
  * 立即创建 vs 容量守候。
@@ -65,26 +66,26 @@ const intervalTooFast = computed(() => huntForm.intervalSeconds < WARN_INTERVAL)
  * 用户想选的是"大概三周"，却得自己乘一遍。这类参数的自然单位是天和月，
  * 不是小时。自定义仍然保留：真要填 577 也随他。
  */
-const DURATION_PRESETS = [
-  { hours: 24, label: '1 天' },
-  { hours: 72, label: '3 天' },
-  { hours: 168, label: '1 周' },
-  { hours: 336, label: '2 周' },
-  { hours: 720, label: '1 个月' },
-  { hours: 2160, label: '3 个月' }
-]
+const DURATION_PRESETS = computed(() => [
+  { hours: 24, label: t.createInst.dur1d },
+  { hours: 72, label: t.createInst.dur3d },
+  { hours: 168, label: t.createInst.dur1w },
+  { hours: 336, label: t.createInst.dur2w },
+  { hours: 720, label: t.createInst.dur1m },
+  { hours: 2160, label: t.createInst.dur3m }
+])
 
 const customDuration = ref(false)
 
 /** 把小时数说成人话。确认摘要和自定义输入的回显都用它。 */
 function durationText(hours: number): string {
   if (hours <= 0) return '—'
-  const preset = DURATION_PRESETS.find(p => p.hours === hours)
+  const preset = DURATION_PRESETS.value.find(p => p.hours === hours)
   if (preset) return preset.label
-  if (hours < 48) return `${hours} 小时`
+  if (hours < 48) return t.createInst.hours(hours)
   const days = Math.round(hours / 24)
-  if (days < 60) return `${days} 天`
-  return `${Math.round(days / 30)} 个月左右`
+  if (days < 60) return t.createInst.days(days)
+  return t.createInst.aboutMonths(Math.round(days / 30))
 }
 
 function pickDuration(hours: number) {
@@ -94,10 +95,10 @@ function pickDuration(hours: number) {
 
 const intervalHint = computed(() => {
   const n = huntForm.intervalSeconds
-  if (n < minInterval.value) return `低于硬下限，提交后会被抬到 ${minInterval.value} 秒`
-  if (n < WARN_INTERVAL) return '偏激进，被 Oracle 限流的概率明显更高'
-  if (n <= 180) return '推荐范围'
-  return '较保守，命中率略低但几乎不会触发限流'
+  if (n < minInterval.value) return t.createInst.belowFloor(minInterval.value)
+  if (n < WARN_INTERVAL) return t.createInst.aggressive
+  if (n <= 180) return t.createInst.recommended
+  return t.createInst.conservative
 })
 const step = ref(0)
 const submitting = ref(false)
@@ -201,9 +202,9 @@ const shapeGroups = computed(() => {
   for (const sh of [...shapes.value].sort((a, b) => a.shape.localeCompare(b.shape))) {
     const family = sh.shape.split('.').slice(0, 2).join('.')
     const spec = sh.isFlexible
-      ? `弹性 ${sh.ocpuOptions?.min ?? 1}–${sh.ocpuOptions?.max ?? '?'} OCPU`
+      ? t.createInst.flexOcpu(sh.ocpuOptions?.min ?? 1, sh.ocpuOptions?.max ?? '?')
       : `${sh.ocpus} OCPU · ${sh.memoryInGBs} GB`
-    const free = FREE_SHAPES.has(sh.shape) ? ' · 免费额度' : ''
+    const free = FREE_SHAPES.has(sh.shape) ? t.createInst.freeTag : ''
     const label = `${sh.shape} · ${spec}${sh.processorDescription ? ` · ${sh.processorDescription}` : ''}${free}`
     const list = groups.get(family) ?? []
     list.push({ value: sh.shape, label })
@@ -371,7 +372,7 @@ async function loadRegionOptions() {
     await loadShapes()
   } catch (err) {
     if (seq !== optionSeq) return
-    optionError.value = `查询可用域失败：${errorText(err)}`
+    optionError.value = t.createInst.adsFailed(errorText(err))
     ads.value = []
     shapes.value = []
     shapesKey = ''
@@ -408,7 +409,7 @@ async function loadShapes() {
     shapes.value = list
   } catch (err) {
     if (key !== shapesKey) return
-    optionError.value = `查询规格失败：${errorText(err)}`
+    optionError.value = t.createInst.shapesFailed(errorText(err))
     // 查不到就留空。下面的可用性判断会因此全部放行——
     // 拦不住总好过把所有预设都误标成不可用。
     shapes.value = []
@@ -438,7 +439,7 @@ async function loadImages() {
     }
   } catch (err) {
     if (key !== `${form.accountId}|${region.value}|${form.shape}`) return
-    optionError.value = `查询镜像失败：${errorText(err)}`
+    optionError.value = t.createInst.imagesFailed(errorText(err))
     images.value = []
   } finally {
     loadingImages.value = false
@@ -482,7 +483,7 @@ const subnetConflict = computed(() => {
   if (!form.subnetId || !form.publicIp) return ''
   const sn = subnets.value.find(x => x.id === form.subnetId)
   if (!sn?.prohibitPublicIpOnVnic) return ''
-  return `子网 ${sn.displayName} 禁止分配公网 IP。请改选其他子网，或关掉「分配公网 IPv4」。`
+  return t.createInst.subnetConflict(sn.displayName)
 })
 
 function onOcpu(v: number) {
@@ -559,7 +560,7 @@ const selectedImage = computed(() => images.value.find(i => i.id === form.imageI
 
 async function next() {
   if (!canNext.value || submitting.value) return
-  if (step.value < STEPS.length - 1) {
+  if (step.value < STEPS.value.length - 1) {
     step.value++
     if (step.value === 3) void loadImages()
     if (step.value === 4) void loadSubnets()
@@ -605,17 +606,14 @@ async function next() {
  */
 async function submitHunt() {
   const risk = intervalTooFast.value
-    ? `你设置的间隔是 ${huntForm.intervalSeconds} 秒，低于建议的 ${WARN_INTERVAL} 秒。`
-      + '高频调用创建接口是 Oracle 明确不欢迎的行为，被限流甚至标记账号的概率明显更高。'
+    ? t.createInst.riskBody(huntForm.intervalSeconds, WARN_INTERVAL)
     : ''
 
   ask({
     level: 2,
-    title: '建立容量守候任务',
-    body: `任务会每 ${huntForm.intervalSeconds} 秒尝试创建一次 ${form.shape}，`
-      + `直到抢到、或 ${durationText(huntForm.expiresInHours)}后到期。`
-      + `期间会持续调用该账号的 Oracle 接口。${risk}`,
-    okLabel: risk ? '我了解风险，仍然建立' : '建立任务',
+    title: t.createInst.huntTitle,
+    body: t.createInst.huntBody(huntForm.intervalSeconds, form.shape, durationText(huntForm.expiresInHours), risk),
+    okLabel: risk ? t.createInst.huntRiskOk : t.createInst.huntCreate,
     onConfirm: async () => {
       submitting.value = true
       try {
@@ -643,10 +641,10 @@ async function submitHunt() {
           cloudInit: form.cloudInit.trim() || undefined
         })
         closeDrawer()
-        toast({ tone: 'accent', title: '守候任务已启动', body: res.notice }, 9000)
+        toast({ tone: 'accent', title: t.createInst.huntStarted, body: res.notice }, 9000)
         void router.push('/hunt')
       } catch (err) {
-        toastError('建立守候任务失败', err)
+        toastError(t.createInst.huntFailed, err)
       } finally {
         submitting.value = false
       }
@@ -701,8 +699,8 @@ watch(() => form.shape, () => {
   <AppDrawer width="narrow" @close="closeDrawer()">
     <header class="head">
       <div class="head__row">
-        <h2 class="head__title">创建实例</h2>
-        <button class="head__close" aria-label="关闭" @click="closeDrawer()">✕</button>
+        <h2 class="head__title">{{ t.createInst.title }}</h2>
+        <button class="head__close" :aria-label="t.common.close" @click="closeDrawer()">✕</button>
       </div>
       <ol class="steps">
         <li v-for="(s, n) in STEPS" :key="s" :class="{ 'is-done': n <= step, 'is-current': n === step }">
@@ -715,8 +713,8 @@ watch(() => form.shape, () => {
       <p v-if="optionError" class="err">{{ optionError }}</p>
 
       <template v-if="step === 0">
-        <SectionCard title="选择账号" note="凭据失效或已禁用的账号不可选">
-          <EmptyState v-if="state.accounts.length === 0" title="还没有接入任何 Oracle 账号" />
+        <SectionCard :title="t.createInst.pickAccount" :note="t.createInst.pickAccountNote">
+          <EmptyState v-if="state.accounts.length === 0" :title="t.createInst.noAccounts" />
           <button v-for="a in state.accounts" :key="a.id" class="opt"
                   :class="{ 'is-picked': form.accountId === a.id }"
                   :disabled="a.status === 'error' || a.status === 'disabled'"
@@ -726,33 +724,33 @@ watch(() => form.shape, () => {
             <span class="opt__text">
               <span class="opt__title">{{ a.alias }}</span>
               <span class="opt__sub">
-                {{ a.status === 'error' ? '凭据失效，无法创建'
-                  : a.status === 'disabled' ? '已禁用'
+                {{ a.status === 'error' ? t.createInst.credInvalid
+                  : a.status === 'disabled' ? t.createInst.disabled
                   : a.quota.ocpuLimit
-                    ? `剩余 ${a.quota.ocpuLimit - a.quota.ocpuUsed} OCPU / ${a.quota.memLimit - a.quota.memUsed} GB`
-                    : '配额未知' }}
+                    ? t.createInst.remaining(a.quota.ocpuLimit - a.quota.ocpuUsed, a.quota.memLimit - a.quota.memUsed)
+                    : t.createInst.quotaUnknown }}
               </span>
             </span>
-            <span class="mono opt__tag">{{ a.regions.length }} 区域</span>
+            <span class="mono opt__tag">{{ t.createInst.nRegions(a.regions.length) }}</span>
           </button>
         </SectionCard>
       </template>
 
       <template v-else-if="step === 1">
-        <SectionCard title="区域" note="仅显示该账号已订阅的区域">
+        <SectionCard :title="t.createInst.region" :note="t.createInst.regionNote">
           <button v-for="r in account.regions" :key="r" class="opt" :class="{ 'is-picked': region === r }"
                   @click="form.region = r">
             <span class="opt__radio" />
             <span class="opt__text"><span class="opt__title mono">{{ r }}</span></span>
             <span class="mono opt__tag">
-              {{ state.instances.filter(i => i.accountId === account.id && i.region === r).length }} 台
+              {{ t.createInst.nInstances(state.instances.filter(i => i.accountId === account.id && i.region === r).length) }}
             </span>
           </button>
         </SectionCard>
 
-        <SectionCard title="可用域" note="容量按可用域独立计算，一个开不出可以换一个">
+        <SectionCard :title="t.createInst.ad" :note="t.createInst.adNote">
           <SkeletonRows v-if="loadingAds" :rows="3" />
-          <EmptyState v-else-if="ads.length === 0" title="该区域没有可用域" />
+          <EmptyState v-else-if="ads.length === 0" :title="t.createInst.noAds" />
           <button v-for="ad in ads" :key="ad.id" class="opt" :class="{ 'is-picked': form.ad === ad.name }"
                   @click="form.ad = ad.name">
             <span class="opt__radio" />
@@ -765,12 +763,12 @@ watch(() => form.shape, () => {
       </template>
 
       <template v-else-if="step === 2">
-        <SectionCard title="免费额度预设"
-                     :note="form.ad ? `已按 ${shortAd(form.ad)} 实际提供的规格过滤` : ''">
+        <SectionCard :title="t.createInst.presets"
+                     :note="form.ad ? t.createInst.presetsNote(shortAd(form.ad)) : ''">
           <button v-for="p in presets" :key="p.key" class="opt"
                   :class="{ 'is-picked': form.shape === p.shape && form.ocpu === p.ocpus && form.memGb === p.memoryInGbs }"
                   :disabled="presetUnavailable(p)"
-                  :title="presetUnavailable(p) ? `${p.shape} 在 ${form.ad} 不提供` : ''"
+                  :title="presetUnavailable(p) ? t.createInst.notOffered(p.shape, form.ad) : ''"
                   @click="pickPreset(p)">
             <span class="opt__radio" />
             <span class="opt__text">
@@ -780,33 +778,32 @@ watch(() => form.shape, () => {
             <!-- 不可用要盖过「免费」标：那个标此刻是误导，
                  免费与否已经无所谓，根本开不出来 -->
             <span v-if="presetUnavailable(p)" class="opt__tag" style="color: var(--warning)">
-              该可用域不提供
+              {{ t.createInst.adNotOffered }}
             </span>
-            <span v-else-if="p.freeTier" class="opt__tag" style="color: var(--accent)">免费</span>
+            <span v-else-if="p.freeTier" class="opt__tag" style="color: var(--accent)">{{ t.createInst.free }}</span>
           </button>
 
           <!-- 规格不可用是永久性的，和「暂时没有容量」完全不同：
                等下去不会变，挂守候只是白白消耗创建请求 -->
           <p v-if="shapeUnavailable" class="shape-warn t-xs">
-            <b>{{ form.shape }}</b> 在 <span class="mono">{{ form.ad }}</span> 不提供。
-            这不是「暂时没有容量」——该可用域没有部署这种硬件，等待或反复重试都不会成功。
-            请换一个规格，或回上一步换可用域。
+            <b>{{ form.shape }}</b> {{ t.createInst.shapeNotOfferedA }} <span class="mono">{{ form.ad }}</span>{{ t.createInst.shapeNotOfferedB }}
+            {{ t.createInst.shapeNotOfferedBody }}
           </p>
         </SectionCard>
 
-        <SectionCard title="全部规格" note="该可用域实际提供的规格，含付费规格">
+        <SectionCard :title="t.createInst.allShapes" :note="t.createInst.allShapesNote">
           <div class="pad">
             <SelectMenu :model-value="form.shape" :groups="shapeGroups"
-                        :placeholder="shapes.length ? '选择规格' : '读取规格中…'"
-                        :disabled="!shapes.length" :min-width="320" aria-label="选择规格"
+                        :placeholder="shapes.length ? t.createInst.pickShape : t.createInst.loadingShapes"
+                        :disabled="!shapes.length" :min-width="320" :aria-label="t.createInst.pickShape"
                         @update:model-value="pickShape($event)" />
             <CheckList v-if="!isFreeShape" :items="[{ tone: 'warn',
-              text: `${form.shape} 不在永久免费额度内，创建后按量计费（试用号先扣试用金）。` }]" />
+              text: t.createInst.paidShape(form.shape) }]" />
           </div>
         </SectionCard>
 
-        <SectionCard v-if="isFlexible" title="算力"
-                     :note="`OCPU 与内存联动：每 OCPU 最多 ${maxPerOcpu} GB`">
+        <SectionCard v-if="isFlexible" :title="t.createInst.compute"
+                     :note="t.createInst.computeNote(maxPerOcpu)">
           <div class="pad">
             <label class="slider">
               <span class="slider__head"><span>OCPU</span><span class="mono">{{ form.ocpu }}</span></span>
@@ -814,43 +811,42 @@ watch(() => form.shape, () => {
                      @input="onOcpu(Number(($event.target as HTMLInputElement).value))" />
             </label>
             <label class="slider">
-              <span class="slider__head"><span>内存</span><span class="mono">{{ form.memGb }} GB</span></span>
+              <span class="slider__head"><span>{{ t.createInst.memory }}</span><span class="mono">{{ form.memGb }} GB</span></span>
               <input type="range" :min="minMem" :max="maxMem" step="1" v-model.number="form.memGb" />
             </label>
             <label class="slider">
-              <span class="slider__head"><span>引导卷</span><span class="mono">{{ form.bootGb }} GB</span></span>
+              <span class="slider__head"><span>{{ t.createInst.bootVolume }}</span><span class="mono">{{ form.bootGb }} GB</span></span>
               <input type="range" min="50" :max="maxBootGb" step="10" v-model.number="form.bootGb" />
               <span class="slider__hint">
                 {{ quota.blockLimit
-                  ? `账号块存储剩余 ${Math.max(0, quota.blockLimit - quota.blockUsed)} GB`
-                  : '未读到块存储配额，提交时后端会再校验一次' }}
+                  ? t.createInst.blockLeft(Math.max(0, quota.blockLimit - quota.blockUsed))
+                  : t.createInst.blockUnknown }}
               </span>
             </label>
 
             <div v-if="canBurst" class="burst">
-              <span class="burst__label">CPU 基线</span>
+              <span class="burst__label">{{ t.createInst.cpuBaseline }}</span>
               <SelectMenu v-model="form.baseline" :groups="burstOptions" :min-width="240"
-                          aria-label="CPU 基线" />
+                          :aria-label="t.createInst.cpuBaseline" />
               <span class="slider__hint">
-                突发实例平时只保证基线那部分算力，空闲时攒下的额度可以短时跑满；
-                按基线计费，适合负载不高的小服务。
+                {{ t.createInst.burstHint }}
               </span>
             </div>
 
             <div v-if="isArm && quota.ocpuLimit" class="quota-box">
               <QuotaMeter label="ARM OCPU" :used="quota.ocpuUsed + form.ocpu" :limit="quota.ocpuLimit" />
-              <QuotaMeter label="内存" :used="quota.memUsed + form.memGb" :limit="quota.memLimit" unit=" GB" />
+              <QuotaMeter :label="t.createInst.memory" :used="quota.memUsed + form.memGb" :limit="quota.memLimit" unit=" GB" />
             </div>
-            <p v-else-if="isArm" class="hint">未能读取该账号的配额，创建时后端会再校验一次。</p>
-            <p v-else class="hint">该规格的配额这里不做预检，超出时 Oracle 会在创建时拒绝。</p>
+            <p v-else-if="isArm" class="hint">{{ t.createInst.armQuotaUnknown }}</p>
+            <p v-else class="hint">{{ t.createInst.noPrecheck }}</p>
 
             <p v-if="overQuota" class="over">
-              超出该账号剩余配额（{{ remainingOcpu }} OCPU / {{ remainingMem }} GB），无法进入下一步
+              {{ t.createInst.overQuota(remainingOcpu, remainingMem) }}
             </p>
           </div>
         </SectionCard>
 
-        <SectionCard v-else title="算力" note="该规格为固定配置">
+        <SectionCard v-else :title="t.createInst.compute" :note="t.createInst.fixedShape">
           <div class="pad">
             <p class="hint mono">{{ form.shape }} · {{ form.ocpu }} OCPU · {{ form.memGb }} GB</p>
           </div>
@@ -858,15 +854,15 @@ watch(() => form.shape, () => {
       </template>
 
       <template v-else-if="step === 3">
-        <SectionCard title="镜像" :note="`已按 ${form.shape} 过滤，ARM 与 x86 镜像不通用`">
+        <SectionCard :title="t.createInst.image" :note="t.createInst.imageNote(form.shape)">
           <SkeletonRows v-if="loadingImages" :rows="4" />
-          <EmptyState v-else-if="images.length === 0" title="该规格下没有可用镜像"
-                      body="换一个规格或区域再试。" />
+          <EmptyState v-else-if="images.length === 0" :title="t.createInst.noImages"
+                      :body="t.createInst.noImagesBody" />
           <template v-else>
             <div class="imgbar">
               <div class="imgbar__chips">
                 <button class="chip" :class="{ 'is-on': osFilter === '' }" @click="osFilter = ''">
-                  全部 <span class="chip__n">{{ images.length }}</span>
+                  {{ t.common.all }} <span class="chip__n">{{ images.length }}</span>
                 </button>
                 <button v-for="f in osFamilies" :key="f.os" class="chip"
                         :class="{ 'is-on': osFilter === f.os }"
@@ -876,12 +872,12 @@ watch(() => form.shape, () => {
               </div>
               <label class="imgbar__latest">
                 <input type="checkbox" v-model="latestOnly" />
-                只看最新构建
-                <span v-if="latestOnly && hiddenBuilds > 0" class="dim-3">已折叠 {{ hiddenBuilds }} 个旧构建</span>
+                {{ t.createInst.latestOnly }}
+                <span v-if="latestOnly && hiddenBuilds > 0" class="dim-3">{{ t.createInst.folded(hiddenBuilds) }}</span>
               </label>
             </div>
-            <EmptyState v-if="visibleImages.length === 0" title="该系统族下没有镜像"
-                        body="换一个系统族，或取消「只看最新构建」。" />
+            <EmptyState v-if="visibleImages.length === 0" :title="t.createInst.noFamilyImages"
+                        :body="t.createInst.noFamilyImagesBody" />
             <button v-for="im in visibleImages" :key="im.id" class="opt"
                     :class="{ 'is-picked': form.imageId === im.id }" @click="form.imageId = im.id">
               <span class="opt__radio" />
@@ -895,15 +891,15 @@ watch(() => form.shape, () => {
       </template>
 
       <template v-else-if="step === 4">
-        <SectionCard title="子网" note="不确定就用自动处理，无需理解 OCI 网络模型">
+        <SectionCard :title="t.createInst.subnet" :note="t.createInst.subnetNote">
           <SkeletonRows v-if="loadingSubnets" :rows="2" />
           <template v-else>
             <button class="opt" :class="{ 'is-picked': form.subnetId === '' }" @click="pickSubnet('')">
               <span class="opt__radio" />
               <span class="opt__text">
-                <span class="opt__title">自动处理</span>
+                <span class="opt__title">{{ t.createInst.auto }}</span>
                 <span class="opt__sub">
-                  有可用公网子网就复用；没有则创建 10.0.0.0/16 与网关、路由、子网
+                  {{ t.createInst.autoSub }}
                 </span>
               </span>
             </button>
@@ -914,24 +910,24 @@ watch(() => form.shape, () => {
                 <span class="opt__title">{{ sn.displayName }}</span>
                 <span class="opt__sub mono">
                   {{ sn.cidrBlock }} ·
-                  {{ sn.availabilityDomain ? shortAd(sn.availabilityDomain) : '区域级' }} ·
-                  {{ sn.prohibitPublicIpOnVnic ? '禁止公网 IP' : '允许公网 IP' }}
+                  {{ sn.availabilityDomain ? shortAd(sn.availabilityDomain) : t.createInst.regional }} ·
+                  {{ sn.prohibitPublicIpOnVnic ? t.createInst.noPublicIp : t.createInst.allowPublicIp }}
                 </span>
               </span>
             </button>
             <p v-if="subnets.length === 0" class="pad t-xs dim-3">
-              该区域还没有可用子网，将由「自动处理」创建。
+              {{ t.createInst.noSubnets }}
             </p>
           </template>
         </SectionCard>
 
-        <SectionCard title="地址">
-          <SwitchRow v-model="form.publicIp" title="分配公网 IPv4"
-                     sub="临时 IP，可在实例详情中更换" />
+        <SectionCard :title="t.createInst.address">
+          <SwitchRow v-model="form.publicIp" :title="t.createInst.assignV4"
+                     :sub="t.createInst.assignV4Sub" />
           <!-- 说清楚会改动什么：VCN 一旦开通 IPv6 就关不掉（Oracle 的限制），
                而入站规则不会自动加，想用 IPv6 登录得自己去网络页加。 -->
-          <SwitchRow v-model="form.ipv6" title="启用 IPv6"
-                     sub="子网没有 IPv6 时自动开通（所在 VCN 开通后无法关闭），并照 IPv4 的配置补上 ::/0 路由和出站规则。入站规则不会自动添加" />
+          <SwitchRow v-model="form.ipv6" :title="t.createInst.enableV6"
+                     :sub="t.createInst.enableV6Sub" />
           <p v-if="subnetConflict" class="pad t-xs" style="color: var(--warning); line-height: 1.7">
             {{ subnetConflict }}
           </p>
@@ -939,46 +935,46 @@ watch(() => form.shape, () => {
       </template>
 
       <template v-else>
-        <SectionCard title="初始化">
+        <SectionCard :title="t.createInst.init">
           <div class="pad">
             <div class="field">
-              <label for="iname">实例名称</label>
+              <label for="iname">{{ t.createInst.name }}</label>
               <input id="iname" v-model="form.name" class="input mono" />
             </div>
             <div class="field">
-              <label for="sshkey">SSH 公钥</label>
+              <label for="sshkey">{{ t.createInst.sshKey }}</label>
               <textarea id="sshkey" v-model="form.sshKey" class="textarea" style="height: 68px"
                         spellcheck="false" placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5…" />
-              <p class="hint">不填就只能通过串行控制台登录。</p>
+              <p class="hint">{{ t.createInst.sshHint }}</p>
             </div>
             <div class="field">
-              <label for="ci">cloud-init（可选）</label>
+              <label for="ci">{{ t.createInst.cloudInit }}</label>
               <textarea id="ci" v-model="form.cloudInit" class="textarea" style="height: 140px"
                         spellcheck="false" placeholder="#cloud-config" />
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="创建方式">
+        <SectionCard :title="t.createInst.mode">
           <div class="pad">
             <div class="modes">
               <button class="mode" :class="{ 'is-on': mode === 'now' }" @click="mode = 'now'">
-                <span class="mode__t">立即创建</span>
-                <span class="mode__s">现在提交一次。没有容量就直接失败。</span>
+                <span class="mode__t">{{ t.createInst.now }}</span>
+                <span class="mode__s">{{ t.createInst.nowSub }}</span>
               </button>
               <button class="mode" :class="{ 'is-on': mode === 'hunt' }" @click="mode = 'hunt'">
-                <span class="mode__t">容量守候</span>
-                <span class="mode__s">后台反复尝试，直到抢到或到期。</span>
+                <span class="mode__t">{{ t.createInst.hunt }}</span>
+                <span class="mode__s">{{ t.createInst.huntSub }}</span>
               </button>
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard v-if="mode === 'hunt'" title="守候参数"
-                     note="任务会长期无人看管地运行，参数直接决定风险">
+        <SectionCard v-if="mode === 'hunt'" :title="t.createInst.huntParams"
+                     :note="t.createInst.huntParamsNote">
           <div class="pad">
             <div class="field">
-              <label for="hi">尝试间隔（秒）</label>
+              <label for="hi">{{ t.createInst.interval }}</label>
               <input id="hi" v-model.number="huntForm.intervalSeconds" class="input mono"
                      type="number" :min="minInterval" max="3600" step="10" />
               <p class="hint" :style="{ color: intervalTooFast ? 'var(--warning)' : undefined }">
@@ -989,82 +985,82 @@ watch(() => form.shape, () => {
             <!-- 警告必须在提交之前就在眼前，而不是提交后用 toast 补一句 -->
             <CheckList v-if="intervalTooFast" :items="[
               { tone: 'warn',
-                text: `${huntForm.intervalSeconds} 秒偏激进。高频调用创建接口易触发 429 限流（该账号全部任务会自动降速），严重时账号被标记。` },
+                text: t.createInst.intervalWarn(huntForm.intervalSeconds) },
               { tone: 'info',
-                text: '容量释放后有数分钟的申领窗口，不是抢毫秒。间隔减半，命中率提升有限，请求量翻倍。' }
+                text: t.createInst.intervalWindow }
             ]" />
 
             <SwitchRow :model-value="huntForm.precheckCapacity"
-                       title="先查容量再尝试"
-                       sub="先查只读的容量报告，没货就跳过本轮，不发创建请求"
+                       :title="t.createInst.precheck"
+                       :sub="t.createInst.precheckSub"
                        @update:model-value="v => huntForm.precheckCapacity = v" />
 
             <CheckList v-if="!huntForm.precheckCapacity" :items="[
               { tone: 'warn',
-                text: '关掉后每轮都直接调创建接口，不论有没有容量。除非确认容量报告在该区域不准，否则建议开着。' }
+                text: t.createInst.precheckOff }
             ]" />
 
             <div class="field">
-              <label>任务时长</label>
+              <label>{{ t.createInst.duration }}</label>
               <div class="chips">
                 <button v-for="d in DURATION_PRESETS" :key="d.hours" class="chip"
                         :class="{ 'is-on': !customDuration && huntForm.expiresInHours === d.hours }"
                         @click="pickDuration(d.hours)">{{ d.label }}</button>
                 <button class="chip" :class="{ 'is-on': customDuration }"
-                        @click="customDuration = true">自定义</button>
+                        @click="customDuration = true">{{ t.createInst.custom }}</button>
               </div>
               <input v-if="customDuration" v-model.number="huntForm.expiresInHours"
                      class="input mono chips__custom" type="number" min="1" max="8760" step="24"
-                     aria-label="自定义任务时长（小时）" />
+                     :aria-label="t.createInst.customLabel" />
               <p class="hint">
-                {{ customDuration ? `${huntForm.expiresInHours} 小时 ≈ ${durationText(huntForm.expiresInHours)} · ` : '' }}
-                到期自动停止并推通知。默认 7 天，避免建完就忘。
+                {{ customDuration ? t.createInst.customEcho(huntForm.expiresInHours, durationText(huntForm.expiresInHours)) : '' }}
+                {{ t.createInst.durationHint }}
               </p>
             </div>
 
             <div class="field">
-              <label for="hm">最大尝试次数（0 = 不限）</label>
+              <label for="hm">{{ t.createInst.maxAttempts }}</label>
               <input id="hm" v-model.number="huntForm.maxAttempts" class="input mono"
                      type="number" min="0" max="100000" step="100" />
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="确认">
+        <SectionCard :title="t.createInst.confirm">
           <KeyValueList :items="[
-            { k: '账号', v: `${account.alias} · ${account.code}`, tone: acctColor(account.colorIndex) },
-            { k: '区域 · AD', v: `${region} · ${shortAd(form.ad)}`, mono: true },
-            { k: '规格', v: form.shape, mono: true },
-            { k: '算力', v: `${form.ocpu} OCPU · ${form.memGb} GB`
+            { k: t.createInst.kAccount, v: `${account.alias} · ${account.code}`, tone: acctColor(account.colorIndex) },
+            { k: t.createInst.kRegion, v: `${region} · ${shortAd(form.ad)}`, mono: true },
+            { k: t.createInst.kShape, v: form.shape, mono: true },
+            { k: t.createInst.kCompute, v: `${form.ocpu} OCPU · ${form.memGb} GB`
               + (canBurst && form.baseline ? ` · ${baselineText(form.baseline)}` : ''), mono: true },
-            { k: '镜像', v: selectedImage ? imageLabel(selectedImage) : '—' },
-            { k: '引导卷', v: `${form.bootGb} GB`, mono: true },
-            { k: '网络', v: `${form.autoVcn ? '自动创建/复用 VCN' : '使用现有 VCN'}${form.publicIp ? ' · 公网 IPv4' : ''}${form.ipv6 ? ' · IPv6' : ''}` },
-            { k: '名称', v: form.name, mono: true },
-            { k: '方式', v: mode === 'hunt'
-              ? `容量守候 · 每 ${huntForm.intervalSeconds} 秒 · ${durationText(huntForm.expiresInHours)}后到期`
-                + (huntForm.precheckCapacity ? ' · 先查容量' : ' · 不查容量直接尝试')
-              : '立即创建' }
+            { k: t.createInst.kImage, v: selectedImage ? imageLabel(selectedImage) : '—' },
+            { k: t.createInst.kBoot, v: `${form.bootGb} GB`, mono: true },
+            { k: t.createInst.kNetwork, v: `${form.autoVcn ? t.createInst.netAuto : t.createInst.netExisting}${form.publicIp ? t.createInst.netV4 : ''}${form.ipv6 ? ' · IPv6' : ''}` },
+            { k: t.createInst.kName, v: form.name, mono: true },
+            { k: t.createInst.kMode, v: mode === 'hunt'
+              ? t.createInst.modeHunt(huntForm.intervalSeconds, durationText(huntForm.expiresInHours))
+                + (huntForm.precheckCapacity ? t.createInst.modePrecheck : t.createInst.modeNoPrecheck)
+              : t.createInst.now }
           ]" />
-          <p v-if="isFreeShape" class="free">免费额度内预估费用 $0.00 · 超出部分按 Oracle 定价计费</p>
-          <p v-else class="free is-paid">{{ form.shape }} 按量计费，费用以 Oracle 账单为准</p>
+          <p v-if="isFreeShape" class="free">{{ t.createInst.freeCost }}</p>
+          <p v-else class="free is-paid">{{ t.createInst.paidCost(form.shape) }}</p>
         </SectionCard>
       </template>
     </DrawerBody>
 
     <footer class="foot">
-      <button class="btn" :disabled="step === 0 || submitting" @click="step--">上一步</button>
+      <button class="btn" :disabled="step === 0 || submitting" @click="step--">{{ t.common.prev }}</button>
       <span class="t-2xs dim-3">
-        {{ step === 2 ? `滑块联动：每 OCPU 最多 ${maxPerOcpu} GB`
+        {{ step === 2 ? t.createInst.sliderHint(maxPerOcpu)
           : step === 5 ? (mode === 'hunt'
-            ? '任务会立刻尝试第一次，之后按间隔重试'
-            : '创建后会立即在列表中插入 PROVISIONING 行')
+            ? t.createInst.huntFirst
+            : t.createInst.nowFirst)
           : '' }}
       </span>
       <button class="btn btn--primary" :disabled="!canNext || submitting" @click="next()">
-        {{ submitting ? '提交中…'
-          : step === STEPS.length - 1 ? (mode === 'hunt' ? '建立守候任务' : '创建实例')
-          : '下一步' }}
+        {{ submitting ? t.common.submitting
+          : step === STEPS.length - 1 ? (mode === 'hunt' ? t.createInst.huntTitle : t.createInst.title)
+          : t.common.next }}
       </button>
     </footer>
   </AppDrawer>

@@ -6,6 +6,7 @@
  * 做成一个视图而不是四个路由，是因为它们共用同一套外壳与动画，
  * 拆开只会让"设置完自动进入绑定"这类衔接变得别扭。
  */
+import { t, locale, setLocale } from '@/i18n'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -58,9 +59,9 @@ function resetDigits() {
 
 async function doSetup() {
   error.value = ''
-  if (!username.value.trim()) { fail('请填写用户名'); return }
-  if (password.value.length < 10) { fail('口令至少需要 10 个字符'); return }
-  if (password.value !== passwordConfirm.value) { fail('两次输入的口令不一致'); return }
+  if (!username.value.trim()) { fail(t.loginPage.usernameRequired); return }
+  if (password.value.length < 10) { fail(t.loginPage.passwordTooShort); return }
+  if (password.value !== passwordConfirm.value) { fail(t.loginPage.passwordMismatch); return }
 
   busy.value = true
   try {
@@ -86,7 +87,7 @@ async function doSetup() {
 
 async function doLogin() {
   error.value = ''
-  if (!username.value || !password.value) { fail('用户名或口令不能为空'); return }
+  if (!username.value || !password.value) { fail(t.loginPage.credentialsRequired); return }
 
   busy.value = true
   try {
@@ -119,14 +120,14 @@ async function submitCode() {
   try {
     if (mode.value === 'enroll') {
       await auth.totpEnable(code)
-      toast({ tone: 'success', title: '两步验证已启用' })
+      toast({ tone: 'success', title: t.loginPage.totpEnabled })
     } else {
       await auth.verifyTotp(code)
     }
     await enter()
   } catch (err) {
     const hint = err instanceof ApiError && err.code === 'code_reused'
-      ? '该验证码已被使用，请等待验证器刷新出下一个'
+      ? t.loginPage.codeReused
       : errorText(err)
     fail(hint)
     resetDigits()
@@ -144,8 +145,8 @@ async function enter() {
 async function skipEnroll() {
   toast({
     tone: 'warning',
-    title: '已跳过两步验证',
-    body: '强烈建议稍后在「设置 → 账户安全」中完成绑定。'
+    title: t.loginPage.skippedTitle,
+    body: t.loginPage.skippedBody
   }, 9000)
   await enter()
 }
@@ -186,74 +187,74 @@ function onBackspace(i: number) {
 
       <!-- 首次设置 -->
       <form v-if="mode === 'setup'" class="login__form" @submit.prevent="doSetup">
-        <p class="login__step-title">首次设置</p>
-        <p class="login__step-sub">创建管理员账户。口令至少 10 个字符。</p>
+        <p class="login__step-title">{{ t.loginPage.setupTitle }}</p>
+        <p class="login__step-sub">{{ t.loginPage.setupSub }}</p>
         <div class="field">
-          <label for="u">用户名</label>
+          <label for="u">{{ t.loginPage.username }}</label>
           <input id="u" v-model="username" class="input mono" autocomplete="username" />
         </div>
         <div class="field">
-          <label for="p">口令</label>
+          <label for="p">{{ t.loginPage.password }}</label>
           <input id="p" v-model="password" type="password" class="input" autocomplete="new-password" />
         </div>
         <div class="field">
-          <label for="p2">确认口令</label>
+          <label for="p2">{{ t.loginPage.passwordConfirm }}</label>
           <input id="p2" v-model="passwordConfirm" type="password" class="input" autocomplete="new-password" />
         </div>
         <p v-if="error" class="login__error" role="alert">{{ error }}</p>
         <button class="btn btn--primary login__submit" type="submit" :disabled="busy">
-          {{ busy ? '创建中…' : '创建账户' }}
+          {{ busy ? t.loginPage.creating : t.loginPage.createAccount }}
         </button>
       </form>
 
       <!-- 登录 -->
       <form v-else-if="mode === 'login'" class="login__form" @submit.prevent="doLogin">
         <div class="field">
-          <label for="u2">用户名</label>
+          <label for="u2">{{ t.loginPage.username }}</label>
           <input id="u2" v-model="username" class="input mono" autocomplete="username" />
         </div>
         <div class="field">
-          <label for="p3">口令</label>
+          <label for="p3">{{ t.loginPage.password }}</label>
           <input id="p3" v-model="password" type="password" class="input" autocomplete="current-password" />
         </div>
         <p v-if="error" class="login__error" role="alert">{{ error }}</p>
         <button class="btn btn--primary login__submit" type="submit" :disabled="busy">
-          {{ busy ? '登录中…' : '登录' }}
+          {{ busy ? t.loginPage.signingIn : t.loginPage.signIn }}
         </button>
       </form>
 
       <!-- 绑定验证器 -->
       <div v-else-if="mode === 'enroll'" class="login__form">
-        <p class="login__step-title">绑定两步验证</p>
+        <p class="login__step-title">{{ t.loginPage.enrollTitle }}</p>
         <p class="login__step-sub">
-          用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。
+          {{ t.loginPage.enrollSub }}
         </p>
 
-        <QrCode v-if="totpUri" class="login__qr" :value="totpUri" label="两步验证绑定二维码" />
+        <QrCode v-if="totpUri" class="login__qr" :value="totpUri" :label="t.loginPage.enrollQr" />
 
         <div class="login__secret">
           <code class="login__secret-value mono">{{ groupedSecret }}</code>
-          <button class="btn login__copy" type="button" @click="copy(totpSecret)">复制</button>
+          <button class="btn login__copy" type="button" @click="copy(totpSecret)">{{ t.common.copy }}</button>
         </div>
-        <a class="login__uri mono" :href="totpUri">在本机验证器中打开</a>
+        <a class="login__uri mono" :href="totpUri">{{ t.loginPage.openInApp }}</a>
 
         <div class="login__totp" @paste.prevent="onPaste(($event.clipboardData?.getData('text') ?? ''))">
           <input v-for="(d, i) in digits" :key="i" ref="boxes" :value="d" class="login__box mono"
-                 inputmode="numeric" maxlength="1" :aria-label="`第 ${i + 1} 位`"
+                 inputmode="numeric" maxlength="1" :aria-label="t.loginPage.digit(i + 1)"
                  :class="{ 'is-error': error }"
                  @input="onDigit(i, $event)" @keydown.backspace="onBackspace(i)" />
         </div>
         <p v-if="error" class="login__error" role="alert">{{ error }}</p>
-        <button class="btn login__skip" type="button" @click="skipEnroll">稍后再绑定</button>
+        <button class="btn login__skip" type="button" @click="skipEnroll">{{ t.loginPage.enrollLater }}</button>
       </div>
 
       <!-- 两步验证 -->
       <div v-else class="login__form">
-        <p class="login__step-title">输入两步验证码</p>
-        <p class="login__step-sub">来自验证器应用的 6 位数字，填满自动提交</p>
+        <p class="login__step-title">{{ t.loginPage.totpTitle }}</p>
+        <p class="login__step-sub">{{ t.loginPage.totpSub }}</p>
         <div class="login__totp" @paste.prevent="onPaste(($event.clipboardData?.getData('text') ?? ''))">
           <input v-for="(d, i) in digits" :key="i" ref="boxes" :value="d" class="login__box mono"
-                 inputmode="numeric" maxlength="1" :aria-label="`第 ${i + 1} 位`"
+                 inputmode="numeric" maxlength="1" :aria-label="t.loginPage.digit(i + 1)"
                  :class="{ 'is-error': error }"
                  @input="onDigit(i, $event)" @keydown.backspace="onBackspace(i)" />
         </div>
@@ -266,12 +267,17 @@ function onBackspace(i: number) {
              属于白送的信息。该提醒的对象是部署者，位置应该在 README 与
              服务端启动日志里，不是登录页。 -->
         <span class="mono">{{ state.version || 'dev' }}</span>
+        <button type="button" class="login__lang" @click="setLocale(locale === 'zh-CN' ? 'en' : 'zh-CN')">
+          {{ t.nav.switchLanguage }}
+        </button>
       </footer>
     </div>
   </div>
 </template>
 
 <style scoped>
+.login__lang { margin-left: auto; border: 0; background: none; color: var(--text-tertiary); font-size: 11px; cursor: pointer; }
+.login__lang:hover { color: var(--text-primary); }
 .login { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-base); }
 .login__grid {
   position: absolute; inset: 0; opacity: 0.55;

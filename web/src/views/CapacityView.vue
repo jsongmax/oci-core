@@ -9,6 +9,7 @@
  * 的整体状态，真正的分配还要看那一瞬间的争抢。把它写成"抢到了"会得到一个
  * 总是骗人的界面。
  */
+import { t } from '@/i18n'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
@@ -81,20 +82,20 @@ const form = ref({
 })
 
 const accountGroups = computed(() => [{
-  label: '账号',
+  label: t.capNotify.cap.account,
   options: usableAccounts.value.map(a => ({
     value: a.id, label: `${a.code} · ${a.alias}`, dot: acctColor(a.colorIndex)
   }))
 }])
 
 /** 只给这两个规格的快捷项：其余规格自己填，免费额度里也就这两种值得盯。 */
-const shapeGroups = [{
-  label: '规格',
+const shapeGroups = computed(() => [{
+  label: t.capNotify.cap.shape,
   options: [
     { value: 'VM.Standard.A1.Flex', label: 'A1.Flex（ARM）' },
     { value: 'VM.Standard.E2.1.Micro', label: 'E2.1.Micro（AMD）' }
   ]
-}]
+}])
 
 /** Micro 是固定规格，带 ShapeConfig 会被 OCI 拒。 */
 const isFlexible = computed(() => form.value.shape.includes('Flex'))
@@ -163,10 +164,10 @@ async function watchThis(ad: string) {
       ocpus: p.ocpus,
       memoryGb: p.memoryGb
     })
-    toast({ tone: 'success', title: '已加入监控', body: res.notice })
+    toast({ tone: 'success', title: t.capNotify.cap.added, body: res.notice })
     await load()
   } catch (err) {
-    toastError('加入监控失败', err)
+    toastError(t.capNotify.cap.addFailed, err)
   }
 }
 
@@ -184,23 +185,23 @@ async function toggle(w: CapacityWatchDTO) {
     const i = watches.value.findIndex(x => x.id === w.id)
     if (i >= 0) watches.value[i] = res.watch
   } catch (err) {
-    toastError('操作失败', err)
+    toastError(t.capNotify.cap.actionFailed, err)
   }
 }
 
 function remove(w: CapacityWatchDTO) {
   ask({
     level: 2,
-    title: `删除监控「${w.shape} · ${w.availabilityDomainShort}」`,
-    body: '删除后不再查询这一项，也不会再收到它的容量变化通知。',
-    okLabel: '删除',
+    title: t.capNotify.cap.deleteTitle(`${w.shape} · ${w.availabilityDomainShort}`),
+    body: t.capNotify.cap.deleteBody,
+    okLabel: t.common.delete,
     onConfirm: async () => {
       try {
         await capApi.remove(w.id)
         watches.value = watches.value.filter(x => x.id !== w.id)
-        toast({ tone: 'success', title: '已删除' })
+        toast({ tone: 'success', title: t.capNotify.cap.deleted })
       } catch (err) {
-        toastError('删除失败', err)
+        toastError(t.capNotify.cap.deleteFailed, err)
       }
     }
   })
@@ -217,9 +218,9 @@ const STATUS_TONE: Record<string, string> = {
 const toneOf = (status: string) => STATUS_TONE[status] ?? 'var(--text-3)'
 
 function checkedText(w: CapacityWatchDTO): string {
-  if (!w.lastCheckedAt || w.lastCheckedAt.startsWith('1970')) return '尚未查询'
+  if (!w.lastCheckedAt || w.lastCheckedAt.startsWith('1970')) return t.capNotify.cap.neverChecked
   // relativeTime 自己读全局时钟，不用再传时间进去
-  return relativeTime(w.lastCheckedAt) + '查询'
+  return t.capNotify.cap.checked(relativeTime(w.lastCheckedAt))
 }
 
 const availableCount = computed(() =>
@@ -230,14 +231,14 @@ const availableCount = computed(() =>
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">容量监控</h1>
+        <h1 class="page-title">{{ t.capNotify.cap.title }}</h1>
         <p class="page-sub">
-          Oracle 官方容量报告 · {{ watches.length }} 项监控，{{ availableCount }} 项有容量
+          {{ t.capNotify.cap.subtitle(watches.length, availableCount) }}
         </p>
       </div>
       <div class="head-actions">
         <button class="btn" :disabled="refreshing" @click="refresh()">
-          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />刷新
+          <span v-if="refreshing" class="btn-spin" aria-hidden="true" />{{ t.common.refresh }}
         </button>
       </div>
     </header>
@@ -247,34 +248,34 @@ const availableCount = computed(() =>
 
     <CheckList class="warn-box" :items="[
       { tone: 'info',
-        text: 'Oracle 官方的只读接口，不创建资源、不消耗配额。' },
+        text: t.capNotify.cap.noteReadonly },
       { tone: 'warn',
-        text: '显示有容量时创建仍可能失败——它反映宿主机池的整体状态，不是那一瞬间的分配结果。当作「值得一试」，不是「一定能开」。' },
+        text: t.capNotify.cap.noteMayFail },
       { tone: 'info',
-        text: '只能查已订阅的区域。免费号的实例只能开在 home region，通常也订阅不了第二个区域。' }
+        text: t.capNotify.cap.noteSubscribed }
     ]" />
 
     <!-- 手动查询放在最前：先让人点一下看看返回对不对，
          再决定要不要把持续监控打开 -->
-    <SectionCard title="立即查询" note="查完可以把某个可用域加入持续监控">
+    <SectionCard :title="t.capNotify.cap.probeTitle" :note="t.capNotify.cap.probeNote">
       <div class="pad">
         <div class="probe">
           <SelectMenu v-model="form.accountId" :groups="accountGroups"
-                      placeholder="选择账号" aria-label="账号" :min-width="200" />
+                      :placeholder="t.capNotify.cap.pickAccount" :aria-label="t.capNotify.cap.account" :min-width="200" />
           <SelectMenu v-model="form.shape" :groups="shapeGroups"
-                      placeholder="选择规格" aria-label="规格" :min-width="200" />
+                      :placeholder="t.capNotify.cap.pickShape" :aria-label="t.capNotify.cap.shape" :min-width="200" />
           <template v-if="isFlexible">
             <label class="probe__num">
               <span class="t-2xs dim-3">OCPU</span>
               <input v-model.number="form.ocpus" class="input mono" type="number" min="1" max="64" />
             </label>
             <label class="probe__num">
-              <span class="t-2xs dim-3">内存 GB</span>
+              <span class="t-2xs dim-3">{{ t.capNotify.cap.memGb }}</span>
               <input v-model.number="form.memoryGb" class="input mono" type="number" min="1" max="512" />
             </label>
           </template>
           <button class="btn btn--primary" :disabled="probing || !form.accountId"
-                  @click="probe()">{{ probing ? '查询中…' : '查询' }}</button>
+                  @click="probe()">{{ probing ? t.capNotify.cap.probing : t.capNotify.cap.probe }}</button>
         </div>
 
         <p v-if="probeError" class="t-xs probe__err">{{ probeError }}</p>
@@ -289,26 +290,26 @@ const availableCount = computed(() =>
               {{ r.statusText }}
             </span>
             <span v-if="r.availableCount > 0" class="mono t-2xs dim-3">
-              可用 {{ r.availableCount }}
+              {{ t.capNotify.cap.available(r.availableCount) }}
             </span>
             <span v-if="r.error" class="mono t-2xs result__err">{{ r.error }}</span>
             <span class="results__spacer" />
             <button v-if="!r.error" class="btn btn--xs"
                     :disabled="alreadyWatched(r.availabilityDomain)"
                     @click="watchThis(r.availabilityDomain)">
-              {{ alreadyWatched(r.availabilityDomain) ? '已监控' : '加入监控' }}
+              {{ alreadyWatched(r.availabilityDomain) ? t.capNotify.cap.watched : t.capNotify.cap.watch }}
             </button>
           </div>
         </div>
       </div>
     </SectionCard>
 
-    <SectionCard title="持续监控" class="stale-able" :class="{ 'is-stale': refreshing && watches.length > 0 }"
-                 :note="`每 ${Math.round(probeInterval / 60)} 分钟复查一次 · 状态变化时才推通知`">
+    <SectionCard :title="t.capNotify.cap.watchTitle" class="stale-able" :class="{ 'is-stale': refreshing && watches.length > 0 }"
+                 :note="t.capNotify.cap.watchNote(Math.round(probeInterval / 60))">
       <SkeletonRows v-if="loading && watches.length === 0" :rows="3" />
 
-      <EmptyState v-else-if="watches.length === 0" title="还没有监控项"
-                  body="先在上面查一次，再把关心的可用域加入监控。有容量时推通知。" />
+      <EmptyState v-else-if="watches.length === 0" :title="t.capNotify.cap.emptyTitle"
+                  :body="t.capNotify.cap.emptyBody" />
 
       <div v-for="(w, n) in watches" v-else :key="w.id" class="watch reveal" :style="{ '--i': Math.min(n, 8) }"
            :class="{ 'is-off': !w.enabled }">
@@ -331,8 +332,8 @@ const availableCount = computed(() =>
         </span>
         <span class="mono t-2xs dim-3">{{ checkedText(w) }}</span>
 
-        <button class="btn btn--xs" @click="toggle(w)">{{ w.enabled ? '暂停' : '启用' }}</button>
-        <button class="btn btn--xs btn--warning" @click="remove(w)">删除</button>
+        <button class="btn btn--xs" @click="toggle(w)">{{ w.enabled ? t.capNotify.cap.pause : t.capNotify.cap.resume }}</button>
+        <button class="btn btn--xs btn--warning" @click="remove(w)">{{ t.common.delete }}</button>
       </div>
     </SectionCard>
   </div>

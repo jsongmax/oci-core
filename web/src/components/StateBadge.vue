@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.2 StateBadge —— 六态。只有过渡态带动画；文字标签始终存在（§10.2） */
+import { t } from '@/i18n'
 import { computed } from 'vue'
 import type { LifecycleState } from '@/types'
 import { LIFECYCLE } from '@/lib/lifecycle'
@@ -23,7 +24,7 @@ const pulsing = computed(() => meta.value.transitional && !props.staticDot)
       <span v-if="pulsing" class="badge__ring" />
     </span>
     <span class="badge__label">{{ meta.label }}</span>
-    <span v-if="anomaly" class="badge__warn" title="非用户操作导致的状态变化">⚠</span>
+    <span v-if="anomaly" class="badge__warn" :title="t.ui.unexpectedState">⚠</span>
   </span>
 </template>
 

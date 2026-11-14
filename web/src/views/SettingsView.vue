@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.8 设置：账户安全 / 操作策略 / 外观 / 审计日志 / 关于 */
+import { t, fmtDateTime, locale, setLocale, LOCALES, type Locale } from '@/i18n'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -18,8 +19,8 @@ import { actionLabel, auditTarget } from '@/lib/audit'
 
 const router = useRouter()
 const { state, ask, toast, toastError, updateOptions, logout } = useStore()
-const TABS = ['账户安全', '操作策略', '外观', '审计日志', '关于']
-const active = ref('账户安全')
+const TABS = ['security', 'policy', 'appearance', 'audit', 'about']
+const active = ref('security')
 
 /* ---------- 账户安全 ---------- */
 
@@ -59,7 +60,7 @@ async function startEnroll() {
     totpUri.value = setup.uri
     enrollCode.value = ''
   } catch (err) {
-    toastError('获取绑定密钥失败', err)
+    toastError(t.settingsPage.secretFailed, err)
   } finally {
     totpBusy.value = false
   }
@@ -67,7 +68,7 @@ async function startEnroll() {
 
 async function confirmEnroll() {
   if (enrollCode.value.trim().length !== 6) {
-    toast({ tone: 'danger', title: '请输入 6 位验证码' })
+    toast({ tone: 'danger', title: t.settingsPage.need6 })
     return
   }
   totpBusy.value = true
@@ -77,9 +78,9 @@ async function confirmEnroll() {
     totpUri.value = ''
     enrollCode.value = ''
     await loadMe()
-    toast({ tone: 'success', title: '两步验证已启用' })
+    toast({ tone: 'success', title: t.settingsPage.totpEnabled })
   } catch (err) {
-    toastError('绑定失败', err)
+    toastError(t.settingsPage.bindFailed, err)
   } finally {
     totpBusy.value = false
   }
@@ -88,17 +89,16 @@ async function confirmEnroll() {
 function askDisable() {
   ask({
     level: 2,
-    title: '关闭两步验证',
-    body: '关闭后仅凭口令即可登录本面板。这个面板持有你全部 Oracle 租户的控制权，'
-      + '一旦口令泄露就再没有第二道防线。确认要关闭吗？',
-    okLabel: '继续关闭',
+    title: t.settingsPage.disableTitle,
+    body: t.settingsPage.disableBody,
+    okLabel: t.settingsPage.continueDisable,
     onConfirm: () => { showDisable.value = true }
   })
 }
 
 async function confirmDisable() {
   if (!disablePassword.value || disableCode.value.trim().length !== 6) {
-    toast({ tone: 'danger', title: '需要填写口令和 6 位验证码' })
+    toast({ tone: 'danger', title: t.settingsPage.needPwAndCode })
     return
   }
   totpBusy.value = true
@@ -108,9 +108,9 @@ async function confirmDisable() {
     disablePassword.value = ''
     disableCode.value = ''
     await loadMe()
-    toast({ tone: 'warning', title: '两步验证已关闭', body: result.message }, 9000)
+    toast({ tone: 'warning', title: t.settingsPage.totpDisabled, body: result.message }, 9000)
   } catch (err) {
-    toastError('关闭失败', err)
+    toastError(t.settingsPage.disableFailed, err)
   } finally {
     totpBusy.value = false
   }
@@ -118,23 +118,23 @@ async function confirmDisable() {
 
 async function changePassword() {
   if (newPassword.value.length < 10) {
-    toast({ tone: 'danger', title: '新口令至少需要 10 个字符' })
+    toast({ tone: 'danger', title: t.settingsPage.pwTooShort })
     return
   }
   if (newPassword.value !== confirmPassword.value) {
-    toast({ tone: 'danger', title: '两次输入的新口令不一致' })
+    toast({ tone: 'danger', title: t.settingsPage.pwMismatch })
     return
   }
 
   changingPassword.value = true
   try {
     const result = await auth.changePassword(currentPassword.value, newPassword.value)
-    toast({ tone: 'success', title: '口令已更新', body: result.message })
+    toast({ tone: 'success', title: t.settingsPage.pwUpdated, body: result.message })
     // 后端会顺带清空所有会话，这里必须跟着跳登录页。
     await logout()
     router.push('/login')
   } catch (err) {
-    toastError('修改口令失败', err)
+    toastError(t.settingsPage.pwFailed, err)
   } finally {
     changingPassword.value = false
     currentPassword.value = ''
@@ -146,17 +146,17 @@ async function changePassword() {
 function revokeAll() {
   ask({
     level: 2,
-    title: '强制所有会话下线',
-    body: '包括当前这个浏览器在内的全部登录都会立即失效，需要重新登录。怀疑凭据泄露时应当这么做。',
-    okLabel: '全部下线',
+    title: t.settingsPage.revokeTitle,
+    body: t.settingsPage.revokeBody,
+    okLabel: t.settingsPage.revokeAll,
     onConfirm: async () => {
       try {
         await http.post('/api/auth/sessions/revoke-all')
-        toast({ tone: 'warning', title: '所有会话已下线' })
+        toast({ tone: 'warning', title: t.settingsPage.revoked })
         await logout()
         router.push('/login')
       } catch (err) {
-        toastError('操作失败', err)
+        toastError(t.settingsPage.actionFailed, err)
       }
     }
   })
@@ -164,12 +164,16 @@ function revokeAll() {
 
 /* ---------- 外观 ---------- */
 
-const accents = [
-  { key: 'cyan', label: 'cyan（默认）', hex: '#22D3EE', note: '与八色身份色板色相距离最大' },
-  { key: 'sky', label: 'sky', hex: '#38BDF8', note: '偏蓝，弱化终端感' },
-  { key: 'emerald', label: 'emerald', hex: '#34D399', note: '与 success 绿接近，不推荐' },
-  { key: 'violet', label: 'violet', hex: '#A78BFA', note: '与 acct-6 冲突，不推荐' }
-]
+const accents = computed(() => [
+  { key: 'cyan', label: t.settingsPage.accentDefault, hex: '#22D3EE', note: t.settingsPage.accentCyanNote },
+  { key: 'sky', label: 'sky', hex: '#38BDF8', note: t.settingsPage.accentSkyNote },
+  { key: 'emerald', label: 'emerald', hex: '#34D399', note: t.settingsPage.accentEmeraldNote },
+  { key: 'violet', label: 'violet', hex: '#A78BFA', note: t.settingsPage.accentVioletNote }
+])
+
+/* ---------- 语言 ---------- */
+
+const languageGroups = [{ label: '', options: LOCALES.map(l => ({ value: l.value, label: l.label })) }]
 
 /* ---------- 审计日志 ---------- */
 
@@ -206,7 +210,7 @@ async function loadAudit(append = false) {
     auditMore.value = res.hasMore
     if (res.total !== undefined) auditTotal.value = res.total
   } catch (err) {
-    if (seq === auditSeq) toastError('读取审计日志失败', err)
+    if (seq === auditSeq) toastError(t.settingsPage.auditFailed, err)
   } finally {
     if (seq === auditSeq) auditLoading.value = false
   }
@@ -220,7 +224,7 @@ const colorOf = (id: string) => {
 
 const auditTime = (iso: string) => {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+  return Number.isNaN(d.getTime()) ? '—' : fmtDateTime(d).replace(/\//g, '-')
 }
 
 /**
@@ -231,13 +235,13 @@ const auditTime = (iso: string) => {
  */
 function exportCsv() {
   if (audit.value.length === 0) {
-    toast({ tone: 'warning', title: '没有可导出的记录' })
+    toast({ tone: 'warning', title: t.settingsPage.nothingToExport })
     return
   }
   // 同源、带 Cookie 的普通下载，交给浏览器处理。BOM 与转义都在后端做了。
   // 演示站没有后端，导出不了文件。
   if (import.meta.env.VITE_DEMO === 'true') {
-    toast({ tone: 'info', title: '演示站不支持导出', body: '部署自己的实例后即可导出完整的 CSV。' })
+    toast({ tone: 'info', title: t.settingsPage.demoNoExport, body: t.settingsPage.demoNoExportBody })
     return
   }
   window.location.href = '/api/audit/export'
@@ -246,42 +250,42 @@ function exportCsv() {
 /* ---------- 关于 ---------- */
 
 const aboutItems = computed(() => [
-  { k: '版本', v: state.version || 'dev', mono: true },
-  { k: '项目主页', v: 'github.com/jsongmax/oci-core', href: 'https://github.com/jsongmax/oci-core', mono: true },
-  { k: '前端', v: 'Vue 3 + TypeScript · 产物 embed 进单二进制' },
+  { k: t.settingsPage.kVersion, v: state.version || 'dev', mono: true },
+  { k: t.settingsPage.kHome, v: 'github.com/jsongmax/oci-core', href: 'https://github.com/jsongmax/oci-core', mono: true },
+  { k: t.settingsPage.kFrontend, v: t.settingsPage.vFrontend },
   // 只写引擎，不写路径：路径对使用者没有意义，而且是部署细节——
   // 容器里的 /app/data 和宿主机上的卷不是一回事，写出来反而误导。
-  { k: '数据库', v: 'SQLite', mono: true },
-  { k: '同步间隔', v: `每 ${state.options.syncIntervalMinutes} 分钟全量同步一次，状态变化走 SSE 实时推送` },
+  { k: t.settingsPage.kDb, v: 'SQLite', mono: true },
+  { k: t.settingsPage.kSync, v: t.settingsPage.vSync(state.options.syncIntervalMinutes) },
   {
-    k: '凭据复查',
+    k: t.settingsPage.kCheck,
     v: state.options.checkIntervalHours > 0
-      ? `每 ${state.options.checkIntervalHours} 小时自动重跑一次连通性校验`
-      : '已关闭——卡片上的校验时间只反映最后一次手动校验'
+      ? t.settingsPage.vCheck(state.options.checkIntervalHours)
+      : t.settingsPage.vCheckOff
   },
-  { k: '实时连接', v: state.live ? '正常' : '已断开', tone: state.live ? 'var(--success)' : 'var(--warning)' },
+  { k: t.settingsPage.kLive, v: state.live ? t.settingsPage.vLiveOk : t.settingsPage.vLiveDown, tone: state.live ? 'var(--success)' : 'var(--warning)' },
   // 与 README 的「关于开发方式」保持一致，改一处要改另一处。
-  { k: '开发方式', v: '代码主要由 AI 编程助手（Claude Code）编写，作者负责需求、审阅与测试' }
+  { k: t.settingsPage.kDev, v: t.settingsPage.vDev }
 ])
 
 /** 顶部副标题。总数由后端给，不等于已加载条数——那会让人以为只有这么多。 */
 const auditNote = computed(() => {
   const loaded = audit.value.length
-  if (auditTotal.value === null) return `已加载 ${loaded} 条 · 只增不改`
-  if (auditTotal.value <= loaded) return `共 ${loaded} 条 · 只增不改`
-  return `已加载 ${loaded} / 共 ${auditTotal.value} 条 · 只增不改`
+  if (auditTotal.value === null) return t.settingsPage.auditLoaded(loaded)
+  if (auditTotal.value <= loaded) return t.settingsPage.auditAll(loaded)
+  return t.settingsPage.auditPartial(loaded, auditTotal.value)
 })
 
-const retentionGroups = [{
+const retentionGroups = computed(() => [{
   label: '',
   options: [
-    { value: '0', label: '永久保留' },
-    { value: '30', label: '30 天' },
-    { value: '90', label: '90 天' },
-    { value: '180', label: '180 天' },
-    { value: '365', label: '一年' }
+    { value: '0', label: t.settingsPage.keepForever },
+    { value: '30', label: t.settingsPage.nDays(30) },
+    { value: '90', label: t.settingsPage.nDays(90) },
+    { value: '180', label: t.settingsPage.nDays(180) },
+    { value: '365', label: t.settingsPage.oneYear }
   ]
-}]
+}])
 
 /**
  * 改保留期限要过确认。
@@ -297,26 +301,25 @@ function confirmRetention(days: number) {
   }
   ask({
     level: 2,
-    title: `审计日志只保留 ${days} 天`,
-    body: `超过 ${days} 天的审计记录会在下一次清理时被永久删除，无法恢复。`
-      + '如果需要长期留存，先用「导出 CSV」把现有记录存下来。',
-    okLabel: `设为 ${days} 天`,
+    title: t.settingsPage.retentionTitle(days),
+    body: t.settingsPage.retentionBody(days),
+    okLabel: t.settingsPage.setDays(days),
     onConfirm: async () => { await updateOptions({ auditRetentionDays: days }) }
   })
 }
 
-const checkIntervalGroups = [{
+const checkIntervalGroups = computed(() => [{
   label: '',
   options: [
-    { value: '0', label: '关闭' },
-    { value: '1', label: '每小时' },
-    { value: '6', label: '每 6 小时' },
-    { value: '12', label: '每 12 小时' },
-    { value: '24', label: '每天' },
-    { value: '72', label: '每 3 天' },
-    { value: '168', label: '每周' }
+    { value: '0', label: t.settingsPage.off },
+    { value: '1', label: t.settingsPage.hourly },
+    { value: '6', label: t.settingsPage.everyNHours(6) },
+    { value: '12', label: t.settingsPage.everyNHours(12) },
+    { value: '24', label: t.settingsPage.daily },
+    { value: '72', label: t.settingsPage.every3Days },
+    { value: '168', label: t.settingsPage.weekly }
   ]
-}]
+}])
 
 /**
  * 全量同步间隔。
@@ -325,75 +328,75 @@ const checkIntervalGroups = [{
  * 这里只是不把做不到的选项摆出来。一轮同步要对每个（账号 × 区域）发一组
  * 请求，五个账号就是几十个调用；实时性本来就由 SSE 保证，全量只是兜底对账。
  */
-const syncIntervalGroups = [{
+const syncIntervalGroups = computed(() => [{
   label: '',
   options: [
-    { value: '2', label: '每 2 分钟' },
-    { value: '5', label: '每 5 分钟' },
-    { value: '10', label: '每 10 分钟' },
-    { value: '30', label: '每 30 分钟' },
-    { value: '60', label: '每小时' },
-    { value: '360', label: '每 6 小时' },
-    { value: '1440', label: '每天' }
+    { value: '2', label: t.settingsPage.everyNMin(2) },
+    { value: '5', label: t.settingsPage.everyNMin(5) },
+    { value: '10', label: t.settingsPage.everyNMin(10) },
+    { value: '30', label: t.settingsPage.everyNMin(30) },
+    { value: '60', label: t.settingsPage.hourly },
+    { value: '360', label: t.settingsPage.everyNHours(6) },
+    { value: '1440', label: t.settingsPage.daily }
   ]
-}]
+}])
 
 onMounted(() => {
   void loadMe()
   void loadAudit()
 })
 
-watch(active, tab => { if (tab === '审计日志') void loadAudit() })
+watch(active, tab => { if (tab === 'audit') void loadAudit() })
 </script>
 
 <template>
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">设置</h1>
-        <p class="page-sub">安全 · 操作策略 · 外观 · 审计</p>
+        <h1 class="page-title">{{ t.settingsPage.title }}</h1>
+        <p class="page-sub">{{ t.settingsPage.subtitle }}</p>
       </div>
     </header>
 
-    <PageTabs :tabs="TABS" v-model:active="active" />
+    <PageTabs :tabs="TABS" :labels="t.settingsPage.tabs" v-model:active="active" />
 
     <!-- 各标签的条件链彼此独立，没法逐个过渡；外层按标签换 key，切换时整块淡入淡出 -->
     <Transition name="swap" mode="out-in">
     <div :key="active">
 
-    <template v-if="active === '账户安全'">
-      <SectionCard title="两步验证">
+    <template v-if="active === 'security'">
+      <SectionCard :title="t.settingsPage.totp">
         <div class="pad">
           <p class="t-sm">
-            当前状态：
+            {{ t.settingsPage.currentStatus }}
             <strong :style="{ color: totpEnabled ? 'var(--success)' : 'var(--warning)' }">
-              {{ totpEnabled ? '已启用' : '未启用' }}
+              {{ totpEnabled ? t.settingsPage.enabled : t.settingsPage.notEnabled }}
             </strong>
           </p>
 
           <!-- 已启用：提供关闭入口 -->
           <template v-if="totpEnabled">
             <template v-if="!showDisable">
-              <p class="t-xs dim">登录时需要口令与验证器上的 6 位数字。</p>
-              <button class="btn btn--sm btn--danger" @click="askDisable()">关闭两步验证</button>
+              <p class="t-xs dim">{{ t.settingsPage.totpOnHint }}</p>
+              <button class="btn btn--sm btn--danger" @click="askDisable()">{{ t.settingsPage.disableTitle }}</button>
             </template>
 
             <div v-else class="sub-form">
-              <p class="t-xs dim">关闭需要同时验证口令与一次有效验证码。</p>
+              <p class="t-xs dim">{{ t.settingsPage.disableHint }}</p>
               <div class="field">
-                <label for="dp">当前口令</label>
+                <label for="dp">{{ t.settingsPage.currentPw }}</label>
                 <input id="dp" v-model="disablePassword" type="password" class="input"
                        autocomplete="current-password" />
               </div>
               <div class="field">
-                <label for="dc">验证码</label>
+                <label for="dc">{{ t.settingsPage.code }}</label>
                 <input id="dc" v-model="disableCode" class="input mono" maxlength="6"
-                       inputmode="numeric" placeholder="6 位数字" />
+                       inputmode="numeric" :placeholder="t.settingsPage.sixDigits" />
               </div>
               <div class="sub-form__foot">
-                <button class="btn btn--sm" @click="showDisable = false">取消</button>
+                <button class="btn btn--sm" @click="showDisable = false">{{ t.common.cancel }}</button>
                 <button class="btn btn--sm btn--danger" :disabled="totpBusy" @click="confirmDisable()">
-                  {{ totpBusy ? '提交中…' : '确认关闭' }}
+                  {{ totpBusy ? t.common.submitting : t.settingsPage.confirmDisable }}
                 </button>
               </div>
             </div>
@@ -401,31 +404,31 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
 
           <!-- 未启用：就地绑定，不必退出登录 -->
           <template v-else>
-            <p class="t-xs dim">这个面板持有你全部 Oracle 租户的控制权，强烈建议启用。</p>
+            <p class="t-xs dim">{{ t.settingsPage.totpOffHint }}</p>
 
             <button v-if="!totpSecret" class="btn btn--sm" :disabled="totpBusy" @click="startEnroll()">
-              {{ totpBusy ? '生成中…' : '开始绑定' }}
+              {{ totpBusy ? t.settingsPage.generating : t.settingsPage.startEnroll }}
             </button>
 
             <div v-else class="sub-form">
               <p class="t-xs dim">
-                用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。
+                {{ t.settingsPage.enrollHint }}
               </p>
-              <QrCode v-if="totpUri" :value="totpUri" label="两步验证绑定二维码" />
+              <QrCode v-if="totpUri" :value="totpUri" :label="t.settingsPage.enrollQr" />
               <div class="secret">
                 <code class="secret__value mono">{{ groupedSecret }}</code>
-                <button class="btn btn--sm" @click="copy(totpSecret)">复制</button>
+                <button class="btn btn--sm" @click="copy(totpSecret)">{{ t.common.copy }}</button>
               </div>
-              <a class="t-xs" :href="totpUri" style="color: var(--accent)">在本机验证器中打开</a>
+              <a class="t-xs" :href="totpUri" style="color: var(--accent)">{{ t.settingsPage.openInApp }}</a>
               <div class="field">
-                <label for="ec">验证码</label>
+                <label for="ec">{{ t.settingsPage.code }}</label>
                 <input id="ec" v-model="enrollCode" class="input mono" maxlength="6"
-                       inputmode="numeric" placeholder="6 位数字" />
+                       inputmode="numeric" :placeholder="t.settingsPage.sixDigits" />
               </div>
               <div class="sub-form__foot">
-                <button class="btn btn--sm" @click="totpSecret = ''">取消</button>
+                <button class="btn btn--sm" @click="totpSecret = ''">{{ t.common.cancel }}</button>
                 <button class="btn btn--sm btn--primary" :disabled="totpBusy" @click="confirmEnroll()">
-                  {{ totpBusy ? '提交中…' : '完成绑定' }}
+                  {{ totpBusy ? t.common.submitting : t.settingsPage.finishEnroll }}
                 </button>
               </div>
             </div>
@@ -433,147 +436,163 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
         </div>
       </SectionCard>
 
-      <SectionCard title="修改口令" note="修改后所有会话会立即失效" class="mt">
+      <SectionCard :title="t.settingsPage.changePw" :note="t.settingsPage.changePwNote" class="mt">
         <form class="pad form" @submit.prevent="changePassword">
           <div class="field">
-            <label for="cur">当前口令</label>
+            <label for="cur">{{ t.settingsPage.currentPw }}</label>
             <input id="cur" v-model="currentPassword" type="password" class="input" autocomplete="current-password" />
           </div>
           <div class="field">
-            <label for="np">新口令</label>
+            <label for="np">{{ t.settingsPage.newPw }}</label>
             <input id="np" v-model="newPassword" type="password" class="input" autocomplete="new-password" />
           </div>
           <div class="field">
-            <label for="np2">确认新口令</label>
+            <label for="np2">{{ t.settingsPage.confirmNewPw }}</label>
             <input id="np2" v-model="confirmPassword" type="password" class="input" autocomplete="new-password" />
           </div>
           <button class="btn btn--primary" type="submit" :disabled="changingPassword">
-            {{ changingPassword ? '提交中…' : '修改口令' }}
+            {{ changingPassword ? t.common.submitting : t.settingsPage.changePw }}
           </button>
         </form>
       </SectionCard>
 
-      <SectionCard title="会话" note="怀疑凭据泄露时的第一件事" class="mt">
+      <SectionCard :title="t.settingsPage.sessions" :note="t.settingsPage.sessionsNote" class="mt">
         <div class="pad">
           <p class="t-xs dim">
-            会话有效期 12 小时，每次请求滑动续期。下线操作会作用于包括当前浏览器在内的全部登录。
+            {{ t.settingsPage.sessionsHint }}
           </p>
-          <button class="btn btn--danger mt-10" @click="revokeAll">强制所有会话下线</button>
+          <button class="btn btn--danger mt-10" @click="revokeAll">{{ t.settingsPage.revokeButton }}</button>
         </div>
       </SectionCard>
     </template>
 
-    <SectionCard v-else-if="active === '操作策略'" title="危险操作"
-                 note="服务端强制执行——前端按钮可以被绕过，这些开关不能">
-      <SwitchRow :model-value="state.options.allowTerminate" title="允许终止实例"
-                 sub="关闭后终止接口直接返回 403，⋯ 菜单中的入口灰显"
+    <SectionCard v-else-if="active === 'policy'" :title="t.settingsPage.dangerOps"
+                 :note="t.settingsPage.dangerOpsNote">
+      <SwitchRow :model-value="state.options.allowTerminate" :title="t.settingsPage.allowTerminate"
+                 :sub="t.settingsPage.allowTerminateSub"
                  @update:model-value="v => updateOptions({ allowTerminate: v })" />
-      <SwitchRow :model-value="state.options.allowBulk" title="允许批量操作"
-                 sub="关闭后行首复选框与批量操作条隐藏，批量接口同时拒绝"
+      <SwitchRow :model-value="state.options.allowBulk" :title="t.settingsPage.allowBulk"
+                 :sub="t.settingsPage.allowBulkSub"
                  @update:model-value="v => updateOptions({ allowBulkActions: v })" />
-      <SwitchRow :model-value="state.options.reauthForDanger" title="危险操作需重新验证 TOTP"
-                 sub="L2 / L3 操作需再输一次 6 位验证码，通过后 5 分钟内不再询问。需先绑定两步验证"
+      <SwitchRow :model-value="state.options.reauthForDanger" :title="t.settingsPage.reauth"
+                 :sub="t.settingsPage.reauthSub"
                  @update:model-value="v => updateOptions({ requireTotpForDanger: v })" />
-      <SwitchRow v-model="state.options.confirmForceRestart" title="强制重启需要二次确认"
-                 sub="按 L2 门槛处理。仅前端行为，不影响接口" />
+      <SwitchRow v-model="state.options.confirmForceRestart" :title="t.settingsPage.confirmForce"
+                 :sub="t.settingsPage.confirmForceSub" />
     </SectionCard>
 
-    <SectionCard v-if="active === '操作策略'" title="隐私模式"
-                 note="为截图与共享屏幕而做——只影响显示，不影响复制" class="mt">
-      <SwitchRow v-model="state.privacyMode" title="敏感数据默认打码"
-                 sub="邮箱、公网 IP、OCID、密钥指纹、代理地址显示为打码形式，每处尾部有按钮可单独展开" />
+    <SectionCard v-if="active === 'policy'" :title="t.settingsPage.privacy"
+                 :note="t.settingsPage.privacyNote" class="mt">
+      <SwitchRow v-model="state.privacyMode" :title="t.settingsPage.privacyMask"
+                 :sub="t.settingsPage.privacyMaskSub" />
       <div class="pad privacy-note">
         <p class="t-xs dim-3">
-          保留可辨识度：IP 留前两段、邮箱留域名、OCID 留类型与末四位——
-          全打成星号会让面板没法用。<b>复制永远给原文</b>，
-          重新开启时会收回所有已展开的项。
+          {{ t.settingsPage.privacyKeep }}<b>{{ t.settingsPage.privacyCopy }}</b>{{ t.settingsPage.privacyReveal }}
         </p>
         <p class="t-xs dim-3">
-          这不是安全边界：数据仍完整地经接口到达浏览器。真正的机密——
-          OCI 私钥、代理密码、通知渠道令牌——在后端就不回显，那才是边界。
+          {{ t.settingsPage.privacyBoundary }}
         </p>
       </div>
     </SectionCard>
 
-    <SectionCard v-if="active === '操作策略'" title="后台同步"
-                 note="全量对账的频率。状态变化走 SSE 实时推送，这里只是兜底">
+    <SectionCard v-if="active === 'policy'" :title="t.settingsPage.bgSync"
+                 :note="t.settingsPage.bgSyncNote">
       <div class="chk">
         <div class="chk__text">
-          <div class="chk__title">同步间隔</div>
+          <div class="chk__title">{{ t.settingsPage.syncInterval }}</div>
           <div class="chk__sub">
-            一轮会对每个「账号 × 区域」发一组请求，账号多时是几十个调用。调密了只消耗配额，实时性不会更好。
+            {{ t.settingsPage.syncIntervalSub }}
           </div>
         </div>
         <SelectMenu class="chk__select" :model-value="String(state.options.syncIntervalMinutes)"
-                    :groups="syncIntervalGroups" :min-width="128" aria-label="后台同步间隔"
+                    :groups="syncIntervalGroups" :min-width="128" :aria-label="t.settingsPage.syncIntervalLabel"
                     @update:model-value="v => updateOptions({ syncIntervalMinutes: Number(v) })" />
       </div>
     </SectionCard>
 
-    <SectionCard v-if="active === '操作策略'" title="自动校验凭据"
-                 note="凭据会在面板不知情的情况下失效——密钥轮换、IAM 用户被删、账号被封">
+    <SectionCard v-if="active === 'policy'" :title="t.settingsPage.autoCheck"
+                 :note="t.settingsPage.autoCheckNote">
       <div class="chk">
         <div class="chk__text">
-          <div class="chk__title">复查间隔</div>
+          <div class="chk__title">{{ t.settingsPage.checkInterval }}</div>
           <div class="chk__sub">
-            每个账号每轮只发两个只读请求。状态变化时才推通知。
+            {{ t.settingsPage.checkIntervalSub }}
           </div>
         </div>
         <SelectMenu class="chk__select" :model-value="String(state.options.checkIntervalHours)"
-                    :groups="checkIntervalGroups" :min-width="128" aria-label="凭据复查间隔"
+                    :groups="checkIntervalGroups" :min-width="128" :aria-label="t.settingsPage.checkIntervalLabel"
                     @update:model-value="v => updateOptions({ checkIntervalHours: Number(v) })" />
       </div>
     </SectionCard>
 
-    <SectionCard v-if="active === '操作策略'" title="审计日志保留"
-                 note="默认永久保留——审计记录删掉就再也找不回来了">
+    <SectionCard v-if="active === 'policy'" :title="t.settingsPage.retention"
+                 :note="t.settingsPage.retentionNote">
       <div class="chk">
         <div class="chk__text">
-          <div class="chk__title">保留期限</div>
+          <div class="chk__title">{{ t.settingsPage.retentionPeriod }}</div>
           <div class="chk__sub">
-            超期记录每天清理一次。按几十条／天算，一年不过几 MB——存储不构成开启的理由。
+            {{ t.settingsPage.retentionSub }}
           </div>
         </div>
         <SelectMenu class="chk__select" :model-value="String(state.options.auditRetentionDays)"
-                    :groups="retentionGroups" :min-width="128" aria-label="审计日志保留期限"
+                    :groups="retentionGroups" :min-width="128" :aria-label="t.settingsPage.retentionLabel"
                     @update:model-value="v => confirmRetention(Number(v))" />
       </div>
     </SectionCard>
 
-    <template v-else-if="active === '外观'">
-      <SectionCard title="主题与密度">
-        <SwitchRow :model-value="state.theme === 'dark'" title="深色主题" sub="暗色是默认，Light 完整对等"
+    <template v-else-if="active === 'appearance'">
+      <SectionCard :title="t.settingsPage.language" :note="t.settingsPage.languageNote">
+        <div class="chk">
+          <div class="chk__text">
+            <div class="chk__title">{{ t.settingsPage.uiLanguage }}</div>
+            <div class="chk__sub">{{ t.settingsPage.uiLanguageSub }}</div>
+          </div>
+          <SelectMenu class="chk__select" :model-value="locale" :groups="languageGroups" :min-width="128"
+                      :aria-label="t.settingsPage.uiLanguage" @update:model-value="v => setLocale(v as Locale)" />
+        </div>
+        <div class="chk">
+          <div class="chk__text">
+            <div class="chk__title">{{ t.settingsPage.notifyLanguage }}</div>
+            <div class="chk__sub">{{ t.settingsPage.notifyLanguageSub }}</div>
+          </div>
+          <SelectMenu class="chk__select" :model-value="state.options.notifyLanguage" :groups="languageGroups"
+                      :min-width="128" :aria-label="t.settingsPage.notifyLanguage"
+                      @update:model-value="v => updateOptions({ language: String(v) })" />
+        </div>
+      </SectionCard>
+      <SectionCard :title="t.settingsPage.themeDensity" class="mt">
+        <SwitchRow :model-value="state.theme === 'dark'" :title="t.settingsPage.darkTheme" :sub="t.settingsPage.darkThemeSub"
                    :value="state.theme === 'dark' ? 'Dark' : 'Light'"
                    @update:model-value="state.theme = state.theme === 'dark' ? 'light' : 'dark'" />
-        <SwitchRow :model-value="state.density === 'compact'" title="紧凑密度" sub="实例表行高 56px / 44px"
+        <SwitchRow :model-value="state.density === 'compact'" :title="t.settingsPage.compact" :sub="t.settingsPage.compactSub"
                    :value="state.density === 'comfy' ? '56px' : '44px'"
                    @update:model-value="state.density = state.density === 'comfy' ? 'compact' : 'comfy'" />
-        <SwitchRow v-model="state.options.reduceMotion" title="减弱动效" sub="停止所有循环动画，过渡时长归零" />
+        <SwitchRow v-model="state.options.reduceMotion" :title="t.settingsPage.reduceMotion" :sub="t.settingsPage.reduceMotionSub" />
       </SectionCard>
-      <SectionCard title="强调色" note="账号身份色不受影响" class="mt">
+      <SectionCard :title="t.settingsPage.accent" :note="t.settingsPage.accentNote" class="mt">
         <button v-for="a in accents" :key="a.key" class="row cols-accent accent"
                 :class="{ 'is-picked': state.accentName === a.key }" @click="state.accentName = a.key">
           <span class="acct-bar" :style="{ background: a.hex }" />
           <span class="t-xs">{{ a.label }}</span>
           <span class="mono t-xs" :style="{ color: a.hex }">{{ a.hex }}</span>
           <span class="t-xs dim">{{ a.note }}</span>
-          <span class="t-xs" :style="{ color: 'var(--accent)' }">{{ state.accentName === a.key ? '当前' : '' }}</span>
+          <span class="t-xs" :style="{ color: 'var(--accent)' }">{{ state.accentName === a.key ? t.settingsPage.current : '' }}</span>
         </button>
       </SectionCard>
     </template>
 
-    <SectionCard v-else-if="active === '审计日志'" title="审计日志" :note="auditNote">
+    <SectionCard v-else-if="active === 'audit'" :title="t.settingsPage.audit" :note="auditNote">
       <template #action>
-        <button class="btn btn--sm" :disabled="auditLoading" @click="loadAudit(false)">刷新</button>
-        <button class="btn btn--sm" @click="exportCsv">导出 CSV</button>
+        <button class="btn btn--sm" :disabled="auditLoading" @click="loadAudit(false)">{{ t.common.refresh }}</button>
+        <button class="btn btn--sm" @click="exportCsv">{{ t.settingsPage.exportCsv }}</button>
       </template>
 
       <SkeletonRows v-if="auditLoading && audit.length === 0" :rows="6" />
-      <EmptyState v-else-if="audit.length === 0" title="暂无审计记录"
-                  body="所有账号与实例操作都会记录在这里。" />
+      <EmptyState v-else-if="audit.length === 0" :title="t.settingsPage.noAudit"
+                  :body="t.settingsPage.noAuditBody" />
       <template v-else>
         <div class="head cols-audit">
-          <span>时间</span><span>动作</span><span>账号</span><span>目标资源</span><span>详情</span><span>来源 IP</span><span>结果</span>
+          <span>{{ t.settingsPage.colTime }}</span><span>{{ t.settingsPage.colAction }}</span><span>{{ t.settingsPage.colAccount }}</span><span>{{ t.settingsPage.colTarget }}</span><span>{{ t.settingsPage.colDetail }}</span><span>{{ t.settingsPage.colIp }}</span><span>{{ t.settingsPage.colResult }}</span>
         </div>
         <div v-for="r in audit" :key="r.id" class="row cols-audit">
           <span class="acct-bar" :style="{ background: colorOf(r.accountId) }" />
@@ -584,21 +603,21 @@ watch(active, tab => { if (tab === '审计日志') void loadAudit() })
           <span class="t-xs dim-3">{{ r.detail || '—' }}</span>
           <span class="mono t-xs dim-3"><MaskedText :value="r.ip || '—'" kind="ip" /></span>
           <span class="t-xs" :style="{ color: r.result === 'ok' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
-            {{ r.result === 'ok' ? '成功' : '失败' }}
+            {{ r.result === 'ok' ? t.settingsPage.ok : t.settingsPage.failed }}
           </span>
         </div>
 
         <div class="more">
           <button v-if="auditMore" class="btn btn--sm" :disabled="auditLoading"
                   @click="loadAudit(true)">
-            <span v-if="auditLoading" class="btn-spin" aria-hidden="true" />{{ auditLoading ? '加载中' : `加载更早的 ${AUDIT_PAGE} 条` }}
+            <span v-if="auditLoading" class="btn-spin" aria-hidden="true" />{{ auditLoading ? t.settingsPage.loadingShort : t.settingsPage.loadEarlier(AUDIT_PAGE) }}
           </button>
-          <span v-else class="t-2xs dim-3">已经到最早的一条了</span>
+          <span v-else class="t-2xs dim-3">{{ t.settingsPage.earliest }}</span>
         </div>
       </template>
     </SectionCard>
 
-    <SectionCard v-else title="关于">
+    <SectionCard v-else :title="t.settingsPage.about">
       <KeyValueList :items="aboutItems" />
     </SectionCard>
     </div>

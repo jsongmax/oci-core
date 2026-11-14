@@ -1,0 +1,71 @@
+/** lib/adapt.ts 里的格式化文案：相对时间、账号状态、扩容提示等。 */
+const zh = {
+  never: '从未',
+  justNow: '刚刚',
+  minutesAgo: (n: number) => `${n} 分钟前`,
+  hoursAgo: (n: number) => `${n} 小时前`,
+  daysAgo: (n: number) => `${n} 天前`,
+  durMinutes: (m: number) => `${m}分钟`,
+  durHours: (h: number, m: number) => `${h}小时${m}分`,
+  durDays: (d: number, h: number) => `${d}天${h}小时`,
+  accountDisabled: '已在设置中手动禁用',
+  accountUnchecked: '尚未校验凭据',
+  checkFailed: (when: string, msg: string) => msg ? `${when}校验失败：${msg}` : `${when}校验失败`,
+  checkPassed: (when: string) => `${when}校验通过`,
+  createdToday: '今天创建',
+  createdDays: (d: number) => `已创建 ${d} 天`,
+  createdMonths: (m: number) => `已创建 ${m} 个月`,
+  createdYears: (y: number, m: number) => m > 0 ? `已创建 ${y} 年 ${m} 个月` : `已创建 ${y} 年`,
+  ipv6SecondaryNote: '多数系统不会自动启用附属网卡，要先在系统里配置这张网卡，新地址才能使用。',
+  ipv6AddedNote: '系统里要等 DHCPv6 续租后才会出现新地址。',
+  ipv6RemovedNote: '系统里的旧地址要等 DHCPv6 租约到期才会消失，这期间看到它不代表删除没生效。',
+  ipv6NowCommand: '想立即生效，可在实例里执行：',
+  ipv6NowGeneric: '想立即生效，可在实例里重新应用网络配置。',
+  growOracle: '在实例里执行下面的命令：重扫磁盘后用 oci-growfs 扩展根分区。',
+  growExt4: '在实例里执行下面的命令：重扫磁盘后用 growpart 与 resize2fs 扩展根分区。',
+  growWindows: '在实例的「磁盘管理」里对系统分区选「扩展卷」，或用 diskpart 的 extend 命令。',
+  growUnknown: '未识别出系统，下面按 Oracle Linux 给出命令。系统里没有 oci-growfs 时，' +
+    '改用 growpart 扩分区，再按文件系统用 resize2fs（ext4）或 xfs_growfs（XFS）。',
+  burst18: '突发 1/8',
+  burst12: '突发 1/2',
+  noBurst: '不突发（独占整颗 OCPU）',
+  burst12Option: '突发 · 基线 1/2 OCPU',
+  burst18Option: '突发 · 基线 1/8 OCPU'
+}
+
+const en: typeof zh = {
+  never: 'Never',
+  justNow: 'just now',
+  minutesAgo: (n: number) => `${n} min ago`,
+  hoursAgo: (n: number) => `${n} h ago`,
+  daysAgo: (n: number) => `${n} ${n === 1 ? 'day' : 'days'} ago`,
+  durMinutes: (m: number) => `${m}m`,
+  durHours: (h: number, m: number) => `${h}h ${m}m`,
+  durDays: (d: number, h: number) => `${d}d ${h}h`,
+  accountDisabled: 'Disabled manually in settings',
+  accountUnchecked: 'Credentials not checked yet',
+  checkFailed: (when: string, msg: string) => msg ? `Check failed ${when}: ${msg}` : `Check failed ${when}`,
+  checkPassed: (when: string) => `Checked ${when}`,
+  createdToday: 'Created today',
+  createdDays: (d: number) => `Created ${d} ${d === 1 ? 'day' : 'days'} ago`,
+  createdMonths: (m: number) => `Created ${m} ${m === 1 ? 'month' : 'months'} ago`,
+  createdYears: (y: number, m: number) =>
+    `Created ${y} ${y === 1 ? 'year' : 'years'}${m > 0 ? ` ${m} ${m === 1 ? 'month' : 'months'}` : ''} ago`,
+  ipv6SecondaryNote: 'Most OS images don\'t bring up secondary VNICs automatically. Configure this VNIC in the OS before using the new address.',
+  ipv6AddedNote: 'The OS picks up the new address on the next DHCPv6 renewal.',
+  ipv6RemovedNote: 'The old address stays in the OS until its DHCPv6 lease expires — seeing it there doesn\'t mean the removal failed.',
+  ipv6NowCommand: ' To apply it now, run this on the instance:',
+  ipv6NowGeneric: ' To apply it now, re-apply the network configuration on the instance.',
+  growOracle: 'Run this on the instance: it rescans the disk, then grows the root partition with oci-growfs.',
+  growExt4: 'Run this on the instance: it rescans the disk, then grows the root partition with growpart and resize2fs.',
+  growWindows: 'In Disk Management on the instance, choose "Extend Volume" on the system partition, or use diskpart\'s extend command.',
+  growUnknown: 'OS not recognized; the command below assumes Oracle Linux. Without oci-growfs, ' +
+    'grow the partition with growpart, then resize2fs (ext4) or xfs_growfs (XFS).',
+  burst18: 'Burst 1/8',
+  burst12: 'Burst 1/2',
+  noBurst: 'No burst (dedicated OCPU)',
+  burst12Option: 'Burstable · baseline 1/2 OCPU',
+  burst18Option: 'Burstable · baseline 1/8 OCPU'
+}
+
+export default { zh, en }

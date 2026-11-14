@@ -6,6 +6,7 @@
  * 因此这里对筛选器里的每个账号 × 其订阅区域各拉一次，再在前端合并。
  * 网络对象数量很少（一个账号通常一两个 VCN），这个代价可以接受。
  */
+import { t } from '@/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
@@ -21,8 +22,8 @@ import AccountGroupRow from '@/components/AccountGroupRow.vue'
 import { groupByAccount } from '@/lib/grouping'
 
 const { state, accountById, ask, toast, toastError, visibleInstances, trackJob } = useStore()
-const TABS = ['VCN', '子网', '安全规则', '公网 IP', 'IPv6']
-const active = ref('VCN')
+const TABS = ['vcn', 'subnet', 'rules', 'publicIp', 'ipv6']
+const active = ref('vcn')
 
 /** 一条网络记录附带它属于哪个账号与区域——跨账号聚合后必须能归属。 */
 interface Located<T> { accountId: string; region: string; item: T }
@@ -137,7 +138,7 @@ async function loadNetwork() {
  * 那是拿单账号的样子想当然：接第二个账号后，六条 IP 混在一起同样难分。
  * 安全规则页是"编辑单个安全列表"，那里确实用不上。
  */
-const groupable = computed(() => active.value !== '安全规则')
+const groupable = computed(() => active.value !== 'rules')
 
 const grouped = <T extends { accountId: string }>(rows: T[]) =>
   groupByAccount(rows, state.groupByAccount, accountById)
@@ -179,8 +180,8 @@ const listGroups = computed<SelectGroup[]>(() => {
 /** 模板追加到哪个安全列表——按钮是写操作，目标必须一眼可见。 */
 const templateTargetNote = computed(() => {
   const l = selectedList.value
-  if (!l) return '请先在下方选择要编辑的安全列表'
-  return `追加到 ${accountById(l.accountId).alias} · ${l.region} · ${l.item.displayName}`
+  if (!l) return t.networkPage.pickListFirst
+  return t.networkPage.appendTo(accountById(l.accountId).alias, l.region, l.item.displayName)
 })
 
 const listKey = (l: Located<SecurityListDTO>) => `${l.accountId}|${l.region}|${l.item.id}`
@@ -191,7 +192,7 @@ const selectedList = computed(() =>
 
 /** 把入站/出站规则摊平成表格行，保留原始下标以便删除。 */
 interface RuleRow {
-  dir: '入站' | '出站'
+  dir: 'ingress' | 'egress'
   index: number
   proto: string
   cidr: string
@@ -206,7 +207,7 @@ function portsText(rule: IngressRuleDTO | EgressRuleDTO): string {
   const range = rule.tcpOptions?.destinationPortRange ?? rule.udpOptions?.destinationPortRange
   if (range) return range.min === range.max ? String(range.min) : `${range.min}–${range.max}`
   if (rule.icmpOptions) return `type ${rule.icmpOptions.type}`
-  return '全部端口'
+  return t.networkPage.allPorts
 }
 
 const ruleRows = computed<RuleRow[]>(() => {
@@ -218,7 +219,7 @@ const ruleRows = computed<RuleRow[]>(() => {
 
   ;(list.ingressSecurityRules ?? []).forEach((rule, index) => {
     rows.push({
-      dir: '入站', index,
+      dir: 'ingress', index,
       proto: PROTO_NAME[rule.protocol] ?? rule.protocol,
       cidr: rule.source,
       ports: portsText(rule),
@@ -228,7 +229,7 @@ const ruleRows = computed<RuleRow[]>(() => {
   })
   ;(list.egressSecurityRules ?? []).forEach((rule, index) => {
     rows.push({
-      dir: '出站', index,
+      dir: 'egress', index,
       proto: PROTO_NAME[rule.protocol] ?? rule.protocol,
       cidr: rule.destination,
       ports: portsText(rule),
@@ -257,7 +258,7 @@ async function saveRules(ingress: IngressRuleDTO[], egress: EgressRuleDTO[], suc
     target.item = { ...updated, allowAllRules: updated.allowAllRules ?? null }
     toast({ tone: 'success', title: successText })
   } catch (err) {
-    toastError('保存安全规则失败', err)
+    toastError(t.networkPage.saveFailed, err)
     await loadNetwork()
   } finally {
     savingRules.value = false
@@ -296,10 +297,10 @@ function buildEgress(protocol: string, cidr: string, desc: string, range?: { min
   }
 }
 
-function addTemplate(t: RuleTemplateDTO) {
+function addTemplate(tpl: RuleTemplateDTO) {
   const list = selectedList.value?.item
   if (!list) {
-    toast({ tone: 'warning', title: '请先选择一个安全列表' })
+    toast({ tone: 'warning', title: t.networkPage.selectListFirst })
     return
   }
 
@@ -307,20 +308,20 @@ function addTemplate(t: RuleTemplateDTO) {
     const ingress = [...(list.ingressSecurityRules ?? [])]
     const egress = [...(list.egressSecurityRules ?? [])]
     // ALL / ICMP 模板的 port 是 0，按"不限端口"处理。
-    const range = t.port > 0 ? { min: t.port, max: t.port } : undefined
-    if (t.direction === 'egress') {
-      egress.push(buildEgress(t.protocol, '0.0.0.0/0', t.description, range))
+    const range = tpl.port > 0 ? { min: tpl.port, max: tpl.port } : undefined
+    if (tpl.direction === 'egress') {
+      egress.push(buildEgress(tpl.protocol, '0.0.0.0/0', tpl.description, range))
     } else {
-      ingress.push(buildIngress(t.protocol, '0.0.0.0/0', t.description, range))
+      ingress.push(buildIngress(tpl.protocol, '0.0.0.0/0', tpl.description, range))
     }
-    void saveRules(ingress, egress, `已追加 ${t.label} 规则`)
+    void saveRules(ingress, egress, t.networkPage.templateAdded(tpl.label))
   }
 
-  if (t.dangerous) {
+  if (tpl.dangerous) {
     ask({
-      level: 2, title: '追加全放行规则',
-      body: '该规则会把实例的所有端口暴露在公网，任何人都可以尝试连接。这通常不是你想要的。',
-      okLabel: '仍然追加',
+      level: 2, title: t.networkPage.allowAllTitle,
+      body: t.networkPage.allowAllBody,
+      okLabel: t.networkPage.addAnyway,
       onConfirm: commit
     })
     return
@@ -339,9 +340,9 @@ function restoreEgress() {
   if (!list) return
   const egress = [
     ...(list.egressSecurityRules ?? []),
-    buildEgress('all', '0.0.0.0/0', '允许所有出站流量（OCI 默认）')
+    buildEgress('all', '0.0.0.0/0', t.networkPage.defaultEgressDesc)
   ]
-  void saveRules(list.ingressSecurityRules ?? [], egress, '已恢复默认出站规则')
+  void saveRules(list.ingressSecurityRules ?? [], egress, t.networkPage.egressRestored)
 }
 
 /* ---------- 手动规则 ---------- */
@@ -361,13 +362,13 @@ const manual = reactive({
 })
 
 /** 下拉选项。label 为空表示不画分组标题。 */
-const DIRECTION_GROUPS: SelectGroup[] = [{
+const DIRECTION_GROUPS = computed<SelectGroup[]>(() => [{
   label: '',
   options: [
-    { value: 'ingress', label: '入站' },
-    { value: 'egress', label: '出站' }
+    { value: 'ingress', label: t.networkPage.dir.ingress },
+    { value: 'egress', label: t.networkPage.dir.egress }
   ]
-}]
+}])
 
 const PROTOCOL_GROUPS: SelectGroup[] = [{
   label: '',
@@ -390,23 +391,23 @@ const manualHasPorts = computed(() => manual.protocol === '6' || manual.protocol
  */
 function cidrError(cidr: string): string {
   const v = cidr.trim()
-  if (!v) return '请填写 CIDR'
+  if (!v) return t.networkPage.cidrRequired
   const parts = v.split('/')
-  if (parts.length !== 2 || parts[1] === '') return 'CIDR 要写成 地址/掩码位数，例如 203.0.113.0/24'
+  if (parts.length !== 2 || parts[1] === '') return t.networkPage.cidrFormat
   const [addr, maskText] = parts
   const mask = Number(maskText)
-  if (!Number.isInteger(mask) || mask < 0) return '掩码位数不合法'
+  if (!Number.isInteger(mask) || mask < 0) return t.networkPage.maskInvalid
 
   if (addr.includes(':')) {
-    if (mask > 128) return 'IPv6 掩码位数不能超过 128'
-    if (!/^[0-9a-fA-F:]+$/.test(addr)) return 'IPv6 地址不合法'
+    if (mask > 128) return t.networkPage.v6MaskMax
+    if (!/^[0-9a-fA-F:]+$/.test(addr)) return t.networkPage.v6Invalid
     return ''
   }
-  if (mask > 32) return 'IPv4 掩码位数不能超过 32'
+  if (mask > 32) return t.networkPage.v4MaskMax
   const octets = addr.split('.')
-  if (octets.length !== 4) return 'IPv4 地址要有四段，例如 203.0.113.0'
+  if (octets.length !== 4) return t.networkPage.v4Octets
   for (const o of octets) {
-    if (!/^[0-9]{1,3}$/.test(o) || Number(o) > 255) return `IPv4 每段取值 0–255，${o || '空'} 超出范围`
+    if (!/^[0-9]{1,3}$/.test(o) || Number(o) > 255) return t.networkPage.v4Range(o)
   }
   return ''
 }
@@ -419,13 +420,13 @@ function parsePorts(text: string): { min: number; max: number } | null | string 
   if (m) {
     const min = Number(m[1])
     const max = Number(m[2])
-    if (min < 1 || max > 65535) return '端口取值 1–65535'
-    if (min > max) return '端口区间的起始值大于结束值'
+    if (min < 1 || max > 65535) return t.networkPage.portRange
+    if (min > max) return t.networkPage.portOrder
     return { min, max }
   }
-  if (!/^[0-9]{1,5}$/.test(v)) return '端口写成 22 或 8000-9000'
+  if (!/^[0-9]{1,5}$/.test(v)) return t.networkPage.portFormat
   const port = Number(v)
-  if (port < 1 || port > 65535) return '端口取值 1–65535'
+  if (port < 1 || port > 65535) return t.networkPage.portRange
   return { min: port, max: port }
 }
 
@@ -440,17 +441,17 @@ const manualError = computed(() => {
 
 /** 提交前把这条规则用人话念一遍——方向或 CIDR 写错的代价是断网或暴露端口。 */
 const manualPreview = computed(() => {
-  const dir = manual.direction === 'egress' ? '出站' : '入站'
+  const dir = t.networkPage.dir[manual.direction]
   const proto = PROTO_NAME[manual.protocol] ?? manual.protocol
-  const ports = manualHasPorts.value ? (manual.ports.trim() || '全部端口') : '全部端口'
-  const side = manual.direction === 'egress' ? '目标' : '来源'
+  const ports = manualHasPorts.value ? (manual.ports.trim() || t.networkPage.allPorts) : t.networkPage.allPorts
+  const side = manual.direction === 'egress' ? t.networkPage.target : t.networkPage.source
   return `${dir} · ${proto} · ${side} ${manual.cidr.trim() || '?'} · ${ports}`
 })
 
 function addManualRule() {
   const list = selectedList.value?.item
   if (!list) {
-    toast({ tone: 'warning', title: '请先选择一个安全列表' })
+    toast({ tone: 'warning', title: t.networkPage.selectListFirst })
     return
   }
   if (manualError.value) {
@@ -471,7 +472,7 @@ function addManualRule() {
     } else {
       ingress.push(buildIngress(manual.protocol, cidr, desc, range ?? undefined))
     }
-    void saveRules(ingress, egress, '已追加自定义规则')
+    void saveRules(ingress, egress, t.networkPage.customAdded)
     manual.description = ''
   }
 
@@ -484,9 +485,9 @@ function addManualRule() {
 
   if (wideOpen) {
     ask({
-      level: 2, title: '这条规则会把端口暴露给整个公网',
-      body: `${manualPreview.value}。来源是 ${cidr} 且覆盖全部端口，任何人都可以尝试连接。`,
-      okLabel: '仍然追加',
+      level: 2, title: t.networkPage.wideOpenTitle,
+      body: t.networkPage.wideOpenBody(manualPreview.value, cidr),
+      okLabel: t.networkPage.addAnyway,
       onConfirm: commit
     })
     return
@@ -499,15 +500,15 @@ function removeRule(row: RuleRow) {
   if (!list) return
 
   ask({
-    level: 2, title: '删除安全规则',
-    body: `${row.dir} ${row.proto} ${row.cidr} ${row.ports} —— 删除后依赖该规则的连接会立即中断。`,
-    okLabel: '删除规则',
+    level: 2, title: t.networkPage.deleteRuleTitle,
+    body: t.networkPage.deleteRuleBody(`${t.networkPage.dir[row.dir]} ${row.proto} ${row.cidr} ${row.ports}`),
+    okLabel: t.networkPage.deleteRule,
     onConfirm: () => {
       const ingress = [...(list.ingressSecurityRules ?? [])]
       const egress = [...(list.egressSecurityRules ?? [])]
-      if (row.dir === '入站') ingress.splice(row.index, 1)
+      if (row.dir === 'ingress') ingress.splice(row.index, 1)
       else egress.splice(row.index, 1)
-      void saveRules(ingress, egress, '规则已删除')
+      void saveRules(ingress, egress, t.networkPage.ruleDeleted)
     }
   })
 }
@@ -524,15 +525,15 @@ function changeIp(id: string) {
 
   ask({
     level: 2,
-    title: `更换公网 IP ${inst.publicIp}`,
-    body: `更换后原 IP 不可找回，${inst.name} 的 SSH 连接将中断，DNS 记录需要手动更新。`,
-    okLabel: '更换 IP',
+    title: t.networkPage.changeIpTitle(inst.publicIp),
+    body: t.networkPage.changeIpBody(inst.name),
+    okLabel: t.networkPage.changeIp,
     onConfirm: async () => {
       try {
         const { job } = await (await import('@/api')).instances.changeIp(id)
         trackJob(job)
       } catch (err) {
-        toastError('更换 IP 失败', err)
+        toastError(t.networkPage.changeIpFailed, err)
       }
     }
   })
@@ -575,9 +576,9 @@ watch(
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">网络</h1>
+        <h1 class="page-title">{{ t.networkPage.title }}</h1>
         <p class="page-sub">
-          跨账号聚合 · VCN {{ vcns.length }} · 子网 {{ subnets.length }} · 安全列表 {{ securityLists.length }}
+          {{ t.networkPage.subtitle(vcns.length, subnets.length, securityLists.length) }}
         </p>
       </div>
       <div class="net-actions">
@@ -585,53 +586,53 @@ watch(
              公网 IP 与 IPv6 是扁平清单，分组对它们没有意义；开关一直挂着
              却点了没反应，比没有更糟。 -->
         <button v-if="groupable" class="pill" :class="{ 'is-active': state.groupByAccount }"
-                @click="state.groupByAccount = !state.groupByAccount">按账号分组</button>
+                @click="state.groupByAccount = !state.groupByAccount">{{ t.networkPage.groupByAccount }}</button>
         <button class="btn" :disabled="loading" @click="loadNetwork">
-          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? '加载中' : '刷新' }}
+          <span v-if="loading" class="btn-spin" aria-hidden="true" />{{ loading ? t.networkPage.loadingShort : t.common.refresh }}
         </button>
       </div>
     </header>
     <LoadingBar :active="loading && hasNet" />
 
-    <PageTabs :tabs="TABS" v-model:active="active" />
+    <PageTabs :tabs="TABS" :labels="t.networkPage.tabs" v-model:active="active" />
 
     <p v-if="loadError" class="net-warn">{{ loadError }}</p>
 
     <!-- 外层按标签换 key：切标签时整块淡入淡出；安全规则页有多个根，Transition 需要单一子元素 -->
     <Transition name="swap" mode="out-in">
     <div :key="active" class="stale-able" :class="{ 'is-stale': loading && hasNet }">
-    <SectionCard v-if="active === 'VCN'" title="VCN" note="跨账号聚合，带身份色条">
+    <SectionCard v-if="active === 'vcn'" title="VCN" :note="t.networkPage.vcnNote">
       <SkeletonRows v-if="loading && !hasNet" :rows="3" />
-      <EmptyState v-else-if="vcns.length === 0" title="所选账号下暂无 VCN"
-                  body="创建实例时勾选「自动创建网络」即可自动建好一套。" />
+      <EmptyState v-else-if="vcns.length === 0" :title="t.networkPage.noVcns"
+                  :body="t.networkPage.noVcnsBody" />
       <template v-else>
         <div class="head cols-vcn">
-          <span>名称</span><span>账号</span><span>区域</span><span>CIDR</span><span>子网</span><span>实例</span>
+          <span>{{ t.networkPage.colName }}</span><span>{{ t.networkPage.colAccount }}</span><span>{{ t.networkPage.colRegion }}</span><span>CIDR</span><span>{{ t.networkPage.colSubnets }}</span><span>{{ t.networkPage.colInstances }}</span>
         </div>
         <template v-for="g in vcnGroups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个 VCN" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="vcn" />
         <div v-for="v in g.rows" :key="v.accountId + v.item.id" class="row cols-vcn">
           <span class="acct-bar" :style="{ background: acctColor(accountById(v.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ v.item.displayName }}</span>
           <AccountChip :account="accountById(v.accountId)" />
           <span class="mono t-xs dim">{{ v.region }}</span>
           <span class="mono t-xs">{{ v.item.cidrBlock }}</span>
-          <span class="mono t-xs dim">{{ subnetsOfVcn(v.item.id) }} 个</span>
-          <span class="mono t-xs dim">{{ instancesIn(v.accountId, v.region) }} 台</span>
+          <span class="mono t-xs dim">{{ t.networkPage.countSubnets(subnetsOfVcn(v.item.id)) }}</span>
+          <span class="mono t-xs dim">{{ t.networkPage.countInstances(instancesIn(v.accountId, v.region)) }}</span>
         </div>
         </template>
       </template>
     </SectionCard>
 
-    <SectionCard v-else-if="active === '子网'" title="子网">
+    <SectionCard v-else-if="active === 'subnet'" :title="t.networkPage.subnetTitle">
       <SkeletonRows v-if="loading && !hasNet" :rows="3" />
-      <EmptyState v-else-if="subnets.length === 0" title="所选账号下暂无子网" />
+      <EmptyState v-else-if="subnets.length === 0" :title="t.networkPage.noSubnets" />
       <template v-else>
         <div class="head cols-subnet">
-          <span>名称</span><span>账号</span><span>区域</span><span>CIDR</span><span>类型</span><span>IPv6</span>
+          <span>{{ t.networkPage.colName }}</span><span>{{ t.networkPage.colAccount }}</span><span>{{ t.networkPage.colRegion }}</span><span>CIDR</span><span>{{ t.networkPage.colType }}</span><span>IPv6</span>
         </div>
         <template v-for="g in subnetGroups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个子网" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="subnet" />
         <div v-for="s in g.rows" :key="s.accountId + s.item.id" class="row cols-subnet">
           <span class="acct-bar" :style="{ background: acctColor(accountById(s.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ s.item.displayName }}</span>
@@ -639,7 +640,7 @@ watch(
           <span class="mono t-xs dim">{{ s.region }}</span>
           <span class="mono t-xs">{{ s.item.cidrBlock }}</span>
           <span class="t-xs" :class="{ dim: s.item.prohibitPublicIpOnVnic }">
-            {{ s.item.prohibitPublicIpOnVnic ? '私有' : '公共' }}
+            {{ s.item.prohibitPublicIpOnVnic ? t.networkPage.private : t.networkPage.public }}
           </span>
           <span class="mono t-xs dim">{{ s.item.ipv6CidrBlock || '—' }}</span>
         </div>
@@ -647,65 +648,65 @@ watch(
       </template>
     </SectionCard>
 
-    <template v-else-if="active === '安全规则'">
+    <template v-else-if="active === 'rules'">
       <!-- note 必须写明追加目标：这几个按钮是往某个安全列表里写规则的，
            多账号时不写清楚，用户很可能给错的租户开了一个 0.0.0.0/0 的端口。 -->
       <!-- 没有出站规则 = 该子网完全断网，而实例本身看起来一切正常。
            这种故障排查起来很费劲，界面必须主动说出来并给出一键修复。 -->
       <div v-if="selectedList?.item.noEgress" class="warn-bar">
         <span class="t-xs">
-          ⚠ 该安全列表没有任何出站规则。OCI 的安全列表是白名单，这意味着子网内的实例
-          <strong>无法访问外网</strong>——装不了软件包、解析不了 DNS，但实例状态一切正常。
+          {{ t.networkPage.noEgressWarn }}
+          <strong>{{ t.networkPage.noInternet }}</strong>{{ t.networkPage.noEgressTail }}
         </span>
         <button class="btn btn--sm btn--primary" :disabled="savingRules" @click="restoreEgress">
-          恢复默认出站规则
+          {{ t.networkPage.restoreEgress }}
         </button>
       </div>
 
-      <SectionCard title="常用规则模板" :note="templateTargetNote">
-        <div v-for="t in templates" :key="t.key" class="row cols-tpl">
-          <span class="acct-bar" :style="{ background: t.dangerous ? 'var(--danger)' : 'var(--success)' }" />
-          <span class="t-xs" :style="{ color: t.dangerous ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }">
-            {{ t.dangerous ? '⚠ ' : '' }}{{ t.label }}
+      <SectionCard :title="t.networkPage.templatesTitle" :note="templateTargetNote">
+        <div v-for="tpl in templates" :key="tpl.key" class="row cols-tpl">
+          <span class="acct-bar" :style="{ background: tpl.dangerous ? 'var(--danger)' : 'var(--success)' }" />
+          <span class="t-xs" :style="{ color: tpl.dangerous ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }">
+            {{ tpl.dangerous ? '⚠ ' : '' }}{{ tpl.label }}
           </span>
-          <span class="t-xs dim">{{ t.description }}</span>
+          <span class="t-xs dim">{{ tpl.description }}</span>
           <span class="mono t-xs dim">
-            {{ t.direction === 'egress' ? '出站' : '入站' }}
-            {{ PROTO_NAME[t.protocol] ?? t.protocol }} 0.0.0.0/0{{ t.port ? ' : ' + t.port : '' }}
+            {{ t.networkPage.dir[tpl.direction === 'egress' ? 'egress' : 'ingress'] }}
+            {{ PROTO_NAME[tpl.protocol] ?? tpl.protocol }} 0.0.0.0/0{{ tpl.port ? ' : ' + tpl.port : '' }}
           </span>
-          <button class="btn btn--sm" :class="t.dangerous ? 'btn--danger' : ''"
-                  :disabled="savingRules || !selectedList" @click="addTemplate(t)">追加</button>
+          <button class="btn btn--sm" :class="tpl.dangerous ? 'btn--danger' : ''"
+                  :disabled="savingRules || !selectedList" @click="addTemplate(tpl)">{{ t.networkPage.add }}</button>
         </div>
       </SectionCard>
 
-      <SectionCard title="自定义规则" class="mt" :note="templateTargetNote">
+      <SectionCard :title="t.networkPage.customTitle" class="mt" :note="templateTargetNote">
         <div class="manual">
           <!-- 用 SelectMenu 而不是原生 <select>：原生下拉展开后的那张列表是
                浏览器画的，CSS 碰不到，深色主题下会弹出一片系统浅色。 -->
           <div class="field">
-            <span class="lbl">方向</span>
+            <span class="lbl">{{ t.networkPage.direction }}</span>
             <SelectMenu :model-value="manual.direction" :groups="DIRECTION_GROUPS" :min-width="120"
-                        aria-label="规则方向"
+                        :aria-label="t.networkPage.ruleDirection"
                         @update:model-value="manual.direction = $event as RuleDirection" />
           </div>
           <div class="field">
-            <span class="lbl">协议</span>
+            <span class="lbl">{{ t.networkPage.protocol }}</span>
             <SelectMenu v-model="manual.protocol" :groups="PROTOCOL_GROUPS" :min-width="120"
-                        aria-label="规则协议" />
+                        :aria-label="t.networkPage.ruleProtocol" />
           </div>
           <div class="field">
-            <label for="rule-cidr">{{ manual.direction === 'egress' ? '目标 CIDR' : '来源 CIDR' }}</label>
+            <label for="rule-cidr">{{ manual.direction === 'egress' ? t.networkPage.targetCidr : t.networkPage.sourceCidr }}</label>
             <input id="rule-cidr" v-model="manual.cidr" class="input mono" placeholder="0.0.0.0/0" />
           </div>
           <div class="field">
-            <label for="rule-ports">端口</label>
+            <label for="rule-ports">{{ t.networkPage.ports }}</label>
             <input id="rule-ports" v-model="manual.ports" class="input mono"
                    :disabled="!manualHasPorts"
-                   :placeholder="manualHasPorts ? '留空为全部，如 22 或 8000-9000' : '该协议不区分端口'" />
+                   :placeholder="manualHasPorts ? t.networkPage.portsPlaceholder : t.networkPage.noPorts" />
           </div>
           <div class="field manual-desc">
-            <label for="rule-desc">描述</label>
-            <input id="rule-desc" v-model="manual.description" class="input" placeholder="选填，写清楚这条是给谁用的" />
+            <label for="rule-desc">{{ t.networkPage.description }}</label>
+            <input id="rule-desc" v-model="manual.description" class="input" :placeholder="t.networkPage.descPlaceholder" />
           </div>
         </div>
 
@@ -717,49 +718,49 @@ watch(
           </span>
           <button class="btn btn--sm btn--primary"
                   :disabled="savingRules || !selectedList || !!manualError" @click="addManualRule">
-            追加规则
+            {{ t.networkPage.addRule }}
           </button>
         </div>
       </SectionCard>
 
-      <SectionCard title="安全列表" class="mt"
+      <SectionCard :title="t.networkPage.listTitle" class="mt"
                    :note="selectedList ? `${accountById(selectedList.accountId).code} · ${selectedList.region}` : ''">
         <div class="picker">
-          <span class="t-xs dim">编辑目标</span>
+          <span class="t-xs dim">{{ t.networkPage.editTarget }}</span>
           <SelectMenu v-model="selectedListKey" :groups="listGroups" :min-width="360"
-                      aria-label="编辑目标安全列表" placeholder="没有可编辑的安全列表" />
+                      :aria-label="t.networkPage.editTargetLabel" :placeholder="t.networkPage.noEditable" />
         </div>
 
         <SkeletonRows v-if="loading && !hasNet" :rows="4" />
-        <EmptyState v-else-if="!selectedList" title="所选账号下暂无安全列表" />
+        <EmptyState v-else-if="!selectedList" :title="t.networkPage.noLists" />
         <template v-else>
           <div class="head cols-rule">
-            <span>方向</span><span>协议</span><span>源 / 目标 CIDR</span><span>端口</span><span>描述</span><span />
+            <span>{{ t.networkPage.colDir }}</span><span>{{ t.networkPage.colProto }}</span><span>{{ t.networkPage.colCidr }}</span><span>{{ t.networkPage.colPorts }}</span><span>{{ t.networkPage.colDesc }}</span><span />
           </div>
           <div v-for="r in ruleRows" :key="r.dir + r.index" class="row cols-rule">
             <span class="acct-bar" :style="{ background: r.danger ? 'var(--danger)' : 'var(--success)' }" />
-            <span class="t-xs" :style="{ color: r.danger ? 'var(--danger)' : 'var(--text-primary)' }">{{ r.dir }}</span>
+            <span class="t-xs" :style="{ color: r.danger ? 'var(--danger)' : 'var(--text-primary)' }">{{ t.networkPage.dir[r.dir] }}</span>
             <span class="mono t-xs">{{ r.proto }}</span>
             <span class="mono t-xs">{{ r.cidr }}</span>
             <span class="mono t-xs">{{ r.ports }}</span>
             <span class="t-xs" :style="{ color: r.danger ? 'var(--danger)' : 'var(--text-secondary)' }">
-              {{ r.danger ? '⚠ 全部端口对公网开放，建议收紧' : r.desc }}
+              {{ r.danger ? t.networkPage.openWarn : r.desc }}
             </span>
-            <button class="btn btn--sm btn--danger" :disabled="savingRules" @click="removeRule(r)">删除</button>
+            <button class="btn btn--sm btn--danger" :disabled="savingRules" @click="removeRule(r)">{{ t.common.delete }}</button>
           </div>
         </template>
       </SectionCard>
     </template>
 
-    <SectionCard v-else-if="active === '公网 IP'" title="公网 IPv4"
-                 note="更换即删除并重新分配，原 IP 不可找回">
-      <EmptyState v-if="publicIps.length === 0" title="所选账号下暂无带公网 IP 的实例" />
+    <SectionCard v-else-if="active === 'publicIp'" :title="t.networkPage.ipTitle"
+                 :note="t.networkPage.ipNote">
+      <EmptyState v-if="publicIps.length === 0" :title="t.networkPage.noIps" />
       <template v-else>
         <div class="head cols-ip">
-          <span>IP</span><span>账号</span><span>区域</span><span>绑定实例</span><span>状态</span><span />
+          <span>IP</span><span>{{ t.networkPage.colAccount }}</span><span>{{ t.networkPage.colRegion }}</span><span>{{ t.networkPage.colBoundInstance }}</span><span>{{ t.networkPage.colState }}</span><span />
         </div>
         <template v-for="g in ipGroups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个公网 IP" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="publicIp" />
         <div v-for="i in g.rows" :key="i.id" class="row cols-ip">
           <span class="acct-bar" :style="{ background: acctColor(accountById(i.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ i.publicIp }}</span>
@@ -767,29 +768,29 @@ watch(
           <span class="mono t-xs dim">{{ i.region }}</span>
           <span class="t-xs">{{ i.name }}</span>
           <span class="t-xs" :style="{ color: i.state === 'STOPPED' ? 'var(--warning)' : 'var(--text-secondary)' }">
-            {{ i.state === 'STOPPED' ? '实例已停止' : '已绑定' }}
+            {{ i.state === 'STOPPED' ? t.networkPage.instanceStopped : t.networkPage.bound }}
           </span>
-          <button class="btn btn--sm btn--warning" @click="changeIp(i.id)">更换</button>
+          <button class="btn btn--sm btn--warning" @click="changeIp(i.id)">{{ t.networkPage.change }}</button>
         </div>
         </template>
       </template>
     </SectionCard>
 
-    <SectionCard v-else title="IPv6 前缀" note="Oracle 免费分配 /56，可按子网切 /64">
+    <SectionCard v-else :title="t.networkPage.v6Title" :note="t.networkPage.v6Note">
       <SkeletonRows v-if="loading && !hasNet" :rows="2" />
-      <EmptyState v-else-if="ipv6Prefixes.length === 0" title="尚未启用 IPv6"
-                  body="在实例详情的「网络」页可以为单台实例启用；创建实例时勾选 IPv6 会自动配好整套。" />
+      <EmptyState v-else-if="ipv6Prefixes.length === 0" :title="t.networkPage.noV6"
+                  :body="t.networkPage.noV6Body" />
       <template v-else>
-        <div class="head cols-ipv6"><span>前缀</span><span>账号</span><span>区域</span><span>VCN</span><span>已分配子网</span></div>
+        <div class="head cols-ipv6"><span>{{ t.networkPage.colPrefix }}</span><span>{{ t.networkPage.colAccount }}</span><span>{{ t.networkPage.colRegion }}</span><span>VCN</span><span>{{ t.networkPage.colAssigned }}</span></div>
         <template v-for="g in ipv6Groups" :key="g.key">
-        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="个前缀" />
+        <AccountGroupRow v-if="g.account" :account="g.account" :count="g.rows.length" unit="prefix" />
         <div v-for="p in g.rows" :key="p.prefix" class="row cols-ipv6">
           <span class="acct-bar" :style="{ background: acctColor(accountById(p.accountId).colorIndex) }" />
           <span class="mono t-xs">{{ p.prefix }}</span>
           <AccountChip :account="accountById(p.accountId)" />
           <span class="mono t-xs dim">{{ p.region }}</span>
           <span class="mono t-xs dim">{{ p.vcn }}</span>
-          <span class="t-xs dim">{{ p.assigned }} 个</span>
+          <span class="t-xs dim">{{ t.networkPage.countPrefix(p.assigned) }}</span>
         </div>
         </template>
       </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.4.2 行内操作安全分级：L1 直接 / L2 确认 / L3 输名确认（藏在 ⋯ 底部） */
+import { t } from '@/i18n'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { isTransitional } from '@/lib/lifecycle'
@@ -96,9 +97,9 @@ function forceRestart() {
   const run = () => useStore().forceRestart(i.id)
   if (!options.confirmForceRestart) return run()
   ask({
-    level: 2, title: `强制重启 ${i.name}`,
-    body: '相当于直接断电重启，未落盘的数据会丢失，文件系统可能需要自检。',
-    okLabel: '强制重启', onConfirm: run
+    level: 2, title: t.rowActions.forceRebootTitle(i.name),
+    body: t.rowActions.forceRebootBody,
+    okLabel: t.rowActions.forceReboot, onConfirm: run
   })
 }
 
@@ -106,15 +107,15 @@ const hasPublicIp = computed(() => !!props.instance.publicIp && props.instance.p
 
 function copySsh() {
   const cmd = `ssh ${props.instance.sshUser}@${props.instance.publicIp}`
-  copy(cmd).then(() => toast({ tone: 'accent', title: '已复制 SSH 命令', body: cmd }))
+  copy(cmd).then(() => toast({ tone: 'accent', title: t.rowActions.sshCopied, body: cmd }))
 }
 
 function changeIp() {
   const i = props.instance
   ask({
-    level: 2, title: `更换 ${i.name} 的公网 IP`,
-    body: `更换后原 IP ${i.publicIp} 不可找回，当前 SSH 连接将中断，DNS 记录需要手动更新。`,
-    okLabel: '更换 IP',
+    level: 2, title: t.rowActions.changeIpTitle(i.name),
+    body: t.rowActions.changeIpBody(i.publicIp),
+    okLabel: t.rowActions.changeIp,
     onConfirm: async () => {
       try {
         const { instances } = await import('@/api')
@@ -123,7 +124,7 @@ function changeIp() {
         const { job } = await instances.changeIp(i.id)
         trackJob(job)
       } catch (err) {
-        toastError('更换 IP 失败', err)
+        toastError(t.rowActions.changeIpFailed, err)
       }
     }
   })
@@ -135,21 +136,21 @@ function changeIp() {
  */
 function detachBoot() {
   menuOpen.value = false
-  openDrawer({ kind: 'instance', id: props.instance.id, tab: '存储' })
+  openDrawer({ kind: 'instance', id: props.instance.id, tab: 'storage' })
 }
 
 function askTerminate() {
   const i = props.instance
   ask({
-    level: 3, title: `终止实例 ${i.name}`,
-    body: '该操作会立即销毁实例与其挂载的引导卷。',
-    noun: i.name, nounLabel: '实例名称',
+    level: 3, title: t.rowActions.terminateTitle(i.name),
+    body: t.rowActions.terminateBody,
+    noun: i.name, nounLabel: t.rowActions.instanceName,
     losses: [
-      '实例本身及其全部系统数据',
-      `${i.name}-boot（${i.bootGb} GB 引导卷）`,
-      `临时公网 IP ${i.publicIp}`
+      t.rowActions.lossInstance,
+      t.rowActions.lossBoot(i.name, i.bootGb),
+      t.rowActions.lossIp(i.publicIp)
     ],
-    okLabel: '永久终止',
+    okLabel: t.rowActions.terminatePermanently,
     onConfirm: () => terminate(i.id)
   })
 }
@@ -160,52 +161,52 @@ function askTerminate() {
     <!-- 开机与关机共用电源图标，靠颜色和 title / aria-label 区分：
          颜色不能是唯一的信息载体 -->
     <button v-if="instance.state === 'STOPPED'" class="icon-btn" :disabled="locked"
-            title="开机" aria-label="开机" style="color: var(--success)" @click="start(instance.id)">
+            :title="t.rowActions.start" :aria-label="t.rowActions.start" style="color: var(--success)" @click="start(instance.id)">
       <span :class="{ 'is-spinning': busy }"><ActionIcon name="power" /></span>
     </button>
-    <button v-else class="icon-btn" :disabled="locked" title="关机" aria-label="关机" @click="stop(instance.id)">
+    <button v-else class="icon-btn" :disabled="locked" :title="t.rowActions.stop" :aria-label="t.rowActions.stop" @click="stop(instance.id)">
       <span :class="{ 'is-spinning': busy }"><ActionIcon name="power" /></span>
     </button>
-    <button class="icon-btn" :disabled="locked" title="软重启" aria-label="软重启" @click="restart(instance.id)">
+    <button class="icon-btn" :disabled="locked" :title="t.rowActions.softReboot" :aria-label="t.rowActions.softReboot" @click="restart(instance.id)">
       <ActionIcon name="restart" />
     </button>
     <button class="icon-btn" :disabled="!hasPublicIp"
-            :title="hasPublicIp ? `复制 SSH 命令（${instance.sshUser}@）` : '没有公网 IP'"
-            aria-label="复制 SSH 命令" @click="copySsh()">
+            :title="hasPublicIp ? t.rowActions.copySsh(instance.sshUser) : t.rowActions.noPublicIp"
+            :aria-label="t.rowActions.copySshLabel" @click="copySsh()">
       <ActionIcon name="terminal" />
     </button>
 
-    <button ref="dotsEl" class="icon-btn" aria-haspopup="menu" aria-label="更多操作"
+    <button ref="dotsEl" class="icon-btn" aria-haspopup="menu" :aria-label="t.rowActions.moreActions"
             :aria-expanded="menuOpen" @click="toggleMenu()">⋯</button>
 
     <Teleport to="body">
     <div v-if="menuOpen" class="acts__scrim" @click="menuOpen = false" />
     <div v-if="menuOpen" ref="menuEl" class="acts__menu" role="menu"
          :style="{ top: `${pos.top}px`, right: `${pos.right}px` }">
-      <button role="menuitem" @click="menuOpen = false; openDrawer({ kind: 'instance', id: instance.id, tab: '概览' })">
-        查看详情
+      <button role="menuitem" @click="menuOpen = false; openDrawer({ kind: 'instance', id: instance.id, tab: 'overview' })">
+        {{ t.rowActions.viewDetails }}
       </button>
-      <button role="menuitem" @click="menuOpen = false; openDrawer({ kind: 'instance', id: instance.id, tab: '存储' })">
-        修改配置<span v-if="instance.state === 'RUNNING'" class="acts__hint">会重启</span>
+      <button role="menuitem" @click="menuOpen = false; openDrawer({ kind: 'instance', id: instance.id, tab: 'storage' })">
+        {{ t.rowActions.changeShape }}<span v-if="instance.state === 'RUNNING'" class="acts__hint">{{ t.rowActions.willReboot }}</span>
       </button>
       <hr />
       <button role="menuitem" class="is-warning" :disabled="locked" @click="menuOpen = false; forceRestart()">
-        强制重启<span class="acts__hint">L2</span>
+        {{ t.rowActions.forceReboot }}<span class="acts__hint">L2</span>
       </button>
       <button role="menuitem" class="is-warning" :disabled="locked" @click="menuOpen = false; changeIp()">
-        更换公网 IP<span class="acts__hint">L2</span>
+        {{ t.rowActions.changePublicIp }}<span class="acts__hint">L2</span>
       </button>
       <button role="menuitem" class="is-warning" :disabled="locked" @click="menuOpen = false; detachBoot()">
-        分离引导卷<span class="acts__hint">L2</span>
+        {{ t.rowActions.detachBoot }}<span class="acts__hint">L2</span>
       </button>
       <hr />
       <!-- L3：红色文字，菜单最底部，可在设置中全局禁用 -->
       <button v-if="state.options.allowTerminate" role="menuitem" class="is-danger"
               :disabled="locked" @click="menuOpen = false; askTerminate()">
-        终止实例<span class="acts__hint">L3</span>
+        {{ t.rowActions.terminate }}<span class="acts__hint">L3</span>
       </button>
       <button v-else role="menuitem" class="is-disabled" disabled>
-        终止实例<span class="acts__hint">已在设置中禁用</span>
+        {{ t.rowActions.terminate }}<span class="acts__hint">{{ t.rowActions.disabledInSettings }}</span>
       </button>
     </div>
     </Teleport>

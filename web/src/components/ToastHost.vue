@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { copy } from '@/lib/format'
@@ -28,12 +29,12 @@ async function onCopy() {
       <div class="toast__head">
         <span class="toast__dot" />
         <strong class="toast__title">{{ state.toast.title }}</strong>
-        <button class="toast__close" aria-label="关闭" @click="dismissToast()">✕</button>
+        <button class="toast__close" :aria-label="t.common.close" @click="dismissToast()">✕</button>
       </div>
       <p v-if="state.toast.body" class="toast__body">{{ state.toast.body }}</p>
       <button v-if="state.toast.command" class="toast__cmd" @click="onCopy">
         <span class="mono">{{ state.toast.command }}</span>
-        <span class="toast__cmd-action">{{ copied ? '已复制' : '复制' }}</span>
+        <span class="toast__cmd-action">{{ copied ? t.ui.copied : t.common.copy }}</span>
       </button>
       <RouterLink v-if="state.toast.link" :to="state.toast.link.to" class="toast__link" @click="dismissToast()">
         {{ state.toast.link.label }} →

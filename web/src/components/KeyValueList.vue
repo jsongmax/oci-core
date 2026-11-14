@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 import { copy } from '@/lib/format'
 import { useStore } from '@/store'
 import type { KvItem } from '@/types'
@@ -16,7 +17,7 @@ const { toast } = useStore()
 async function onCopy(item: KvItem) {
   if (!item.copyable) return
   await copy(item.v)
-  toast({ tone: 'accent', title: '已复制到剪贴板' })
+  toast({ tone: 'accent', title: t.common.copied })
 }
 </script>
 

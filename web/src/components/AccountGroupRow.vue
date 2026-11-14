@@ -7,8 +7,10 @@
  */
 import { acctColor } from '@/lib/format'
 import type { Account } from '@/types'
+import { t, type Messages } from '@/i18n'
 
-defineProps<{ account: Account; count: number; unit: string }>()
+/** unit 是计数单位的键，见 i18n/messages/units.ts */
+defineProps<{ account: Account; count: number; unit: keyof Messages['units'] }>()
 </script>
 
 <template>
@@ -16,7 +18,7 @@ defineProps<{ account: Account; count: number; unit: string }>()
     <span class="agr__dot" :style="{ background: acctColor(account.colorIndex) }" />
     <span class="mono" :style="{ color: acctColor(account.colorIndex) }">{{ account.code }}</span>
     <span class="dim t-xs">{{ account.alias }}</span>
-    <span class="dim-3 t-2xs">{{ count }} {{ unit }}</span>
+    <span class="dim-3 t-2xs">{{ t.units[unit](count) }}</span>
   </div>
 </template>
 

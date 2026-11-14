@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.7 QuotaMeter —— ≥90% warning，=100% danger 并标注已满 */
+import { t } from '@/i18n'
 import { computed, onMounted, ref } from 'vue'
 import { pct, usageTone } from '@/lib/format'
 
@@ -40,11 +41,11 @@ const over = computed(() =>
       <!-- 上限是 Oracle 的哨兵值（一亿），画成进度条永远贴着 0%，
            显示出来也只是一长串数字。直接说"不限"。 -->
       <span class="meter__track meter__track--none" />
-      <span class="meter__value mono">{{ used }}{{ unit ?? '' }} · 不限</span>
+      <span class="meter__value mono">{{ used }}{{ unit ?? '' }} · {{ t.ui.unlimited }}</span>
     </template>
     <template v-else>
       <span class="meter__track"><span class="meter__fill" :style="{ width }" /></span>
-      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="over"> 超出 {{ over }}</template><template v-else-if="full">{{ fullOk ? ' 用满' : ' 已满' }}</template></span>
+      <span class="meter__value mono">{{ used }} / {{ limit }}{{ unit ?? '' }}<template v-if="over">{{ t.ui.over(over) }}</template><template v-else-if="full">{{ fullOk ? t.ui.usedUp : t.ui.full }}</template></span>
     </template>
   </div>
 </template>

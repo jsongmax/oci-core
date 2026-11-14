@@ -5,6 +5,7 @@
  * 渠道的配置字段由后端下发（kinds），前端据此动态渲染表单——
  * 这样后端新增一种渠道时前端不用跟着改。
  */
+import { t } from '@/i18n'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useStore } from '@/store'
 import SelectMenu from '@/components/SelectMenu.vue'
@@ -55,7 +56,7 @@ async function load() {
       form.kind = kinds.value[0]?.kind ?? ''
     }
   } catch (err) {
-    toastError('读取通知渠道失败', err)
+    toastError(t.capNotify.ntf.loadFailed, err)
   } finally {
     loading.value = false
   }
@@ -83,7 +84,7 @@ function openEdit(ch: ChannelDTO) {
 
 async function save() {
   if (!form.name.trim()) {
-    toast({ tone: 'danger', title: '请填写渠道名称' })
+    toast({ tone: 'danger', title: t.capNotify.ntf.nameRequired })
     return
   }
   saving.value = true
@@ -99,9 +100,9 @@ async function save() {
     }
     formOpen.value = false
     await load()
-    toast({ tone: 'success', title: editingId.value ? '渠道已更新' : '渠道已添加' })
+    toast({ tone: 'success', title: editingId.value ? t.capNotify.ntf.updated : t.capNotify.ntf.added })
   } catch (err) {
-    toastError('保存渠道失败', err)
+    toastError(t.capNotify.ntf.saveFailed, err)
   } finally {
     saving.value = false
   }
@@ -112,23 +113,23 @@ async function toggleEnabled(ch: ChannelDTO) {
     await notifyApi.update(ch.id, { enabled: !ch.enabled })
     await load()
   } catch (err) {
-    toastError('操作失败', err)
+    toastError(t.capNotify.ntf.actionFailed, err)
   }
 }
 
 function removeChannel(ch: ChannelDTO) {
   ask({
     level: 2,
-    title: `删除渠道 ${ch.name}`,
-    body: '删除后订阅该渠道的事件将不再推送。',
-    okLabel: '删除',
+    title: t.capNotify.ntf.deleteTitle(ch.name),
+    body: t.capNotify.ntf.deleteBody,
+    okLabel: t.common.delete,
     onConfirm: async () => {
       try {
         await notifyApi.remove(ch.id)
         await load()
-        toast({ tone: 'warning', title: `${ch.name} 已删除` })
+        toast({ tone: 'warning', title: t.capNotify.ntf.deleted(ch.name) })
       } catch (err) {
-        toastError('删除失败', err)
+        toastError(t.capNotify.ntf.deleteFailed, err)
       }
     }
   })
@@ -141,15 +142,15 @@ async function sendTest(ch: ChannelDTO) {
     const result = await notifyApi.test(ch.id)
     if (result.ok) {
       toast({
-        tone: 'success', title: `${ch.name} 测试已发送`,
-        body: '请检查该渠道是否收到「OCI Core 测试通知」'
+        tone: 'success', title: t.capNotify.ntf.testSent(ch.name),
+        body: t.capNotify.ntf.testSentBody
       })
     } else {
-      toast({ tone: 'danger', title: `${ch.name} 测试失败`, body: result.error }, 9000)
+      toast({ tone: 'danger', title: t.capNotify.ntf.testFailed(ch.name), body: result.error }, 9000)
     }
     await load()
   } catch (err) {
-    toastError('测试失败', err)
+    toastError(t.capNotify.ntf.testFailedShort, err)
   } finally {
     testing.value = null
   }
@@ -168,7 +169,7 @@ async function toggleSubscription(ch: ChannelDTO, eventKey: string) {
     await notifyApi.update(ch.id, { events: next })
     ch.events = next
   } catch (err) {
-    toastError('保存订阅失败', err)
+    toastError(t.capNotify.ntf.subFailed, err)
   }
 }
 
@@ -179,7 +180,7 @@ function configSummary(ch: ChannelDTO): string {
   const parts = Object.entries(ch.config)
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}=${v}`)
-  return parts.length ? parts.join(' · ') : '未配置'
+  return parts.length ? parts.join(' · ') : t.capNotify.ntf.notConfigured
 }
 
 onMounted(load)
@@ -189,17 +190,17 @@ onMounted(load)
   <div class="page">
     <header class="page-head">
       <div>
-        <h1 class="page-title">通知</h1>
-        <p class="page-sub">事件推送渠道与订阅矩阵</p>
+        <h1 class="page-title">{{ t.capNotify.ntf.title }}</h1>
+        <p class="page-sub">{{ t.capNotify.ntf.subtitle }}</p>
       </div>
-      <button class="btn btn--primary" @click="openCreate()">添加渠道</button>
+      <button class="btn btn--primary" @click="openCreate()">{{ t.capNotify.ntf.addChannel }}</button>
     </header>
 
-    <SectionCard title="渠道" note="机密字段在服务端打码，不会回传完整值">
+    <SectionCard :title="t.capNotify.ntf.channels" :note="t.capNotify.ntf.channelsNote">
       <!-- 只在还没有数据时画骨架：每次保存后都会重拉，若一律显示骨架，列表会闪一下 -->
       <SkeletonRows v-if="loading && channels.length === 0" :rows="3" />
-      <EmptyState v-else-if="channels.length === 0" title="还没有配置任何通知渠道"
-                  body="配置后，下方列出的事件会推送到这里。" />
+      <EmptyState v-else-if="channels.length === 0" :title="t.capNotify.ntf.emptyTitle"
+                  :body="t.capNotify.ntf.emptyBody" />
       <div v-else class="cards reveal">
         <article v-for="ch in channels" :key="ch.id" class="chcard" :class="{ 'is-on': ch.enabled }">
           <header class="chcard__head">
@@ -216,31 +217,31 @@ onMounted(load)
 
           <div class="chcard__foot">
             <button class="btn btn--sm" :disabled="testing === ch.id" @click="sendTest(ch)">
-              {{ testing === ch.id ? '发送中…' : '发送测试' }}
+              {{ testing === ch.id ? t.capNotify.ntf.sending : t.capNotify.ntf.sendTest }}
             </button>
-            <button class="btn btn--sm" @click="openEdit(ch)">编辑</button>
-            <button class="btn btn--sm btn--danger" @click="removeChannel(ch)">删除</button>
+            <button class="btn btn--sm" @click="openEdit(ch)">{{ t.common.edit }}</button>
+            <button class="btn btn--sm btn--danger" @click="removeChannel(ch)">{{ t.common.delete }}</button>
             <span class="t-2xs chcard__state" :style="{
               color: ch.lastError ? 'var(--danger)' : ch.enabled ? 'var(--success)' : 'var(--text-tertiary)'
             }">
-              {{ ch.lastError ? '上次发送失败' : ch.enabled ? '已启用' : '已关闭' }}
+              {{ ch.lastError ? t.capNotify.ntf.lastFailed : ch.enabled ? t.capNotify.ntf.on : t.capNotify.ntf.off }}
             </span>
           </div>
         </article>
       </div>
     </SectionCard>
 
-    <SectionCard v-if="formOpen" :title="editingId ? '编辑渠道' : '添加渠道'" class="mt">
+    <SectionCard v-if="formOpen" :title="editingId ? t.capNotify.ntf.editChannel : t.capNotify.ntf.addChannel" class="mt">
       <div class="form">
         <div v-if="!editingId" class="field">
-          <span class="t-xs dim">类型</span>
+          <span class="t-xs dim">{{ t.capNotify.ntf.type }}</span>
           <SelectMenu v-model="form.kind" :groups="kindGroups" :min-width="200"
-                      aria-label="渠道类型" />
+                      :aria-label="t.capNotify.ntf.channelType" />
         </div>
 
         <div class="field">
-          <label for="cname">名称</label>
-          <input id="cname" v-model="form.name" class="input" placeholder="例如：我的 Telegram" />
+          <label for="cname">{{ t.capNotify.ntf.name }}</label>
+          <input id="cname" v-model="form.name" class="input" :placeholder="t.capNotify.ntf.namePlaceholder" />
         </div>
 
         <div v-for="f in currentKind?.fields ?? []" :key="f.key" class="field">
@@ -256,7 +257,7 @@ onMounted(load)
         </div>
 
         <div class="field">
-          <label>订阅事件</label>
+          <label>{{ t.capNotify.ntf.subscribedEvents }}</label>
           <div class="evt-list">
             <label v-for="e in events" :key="e.key" class="evt">
               <input type="checkbox" :value="e.key" v-model="form.events" />
@@ -269,9 +270,9 @@ onMounted(load)
         </div>
 
         <div class="form__foot">
-          <button class="btn" @click="formOpen = false">取消</button>
+          <button class="btn" @click="formOpen = false">{{ t.common.cancel }}</button>
           <button class="btn btn--primary" :disabled="saving" @click="save()">
-            {{ saving ? '保存中…' : '保存' }}
+            {{ saving ? t.common.saving : t.common.save }}
           </button>
         </div>
       </div>
@@ -280,11 +281,11 @@ onMounted(load)
     <!-- 还没有启用的渠道时订阅矩阵没有列，整块不显示；但用户正是在这时候
          决定要不要配渠道，得先让他知道能收到什么。 -->
     <SectionCard v-if="!loading && enabledChannels.length === 0 && events.length > 0"
-                 title="可推送的事件" note="添加并启用渠道后，可按渠道逐项订阅" class="mt">
+                 :title="t.capNotify.ntf.eventsTitle" :note="t.capNotify.ntf.eventsNote" class="mt">
       <CheckList :items="events.map(e => ({ tone: 'info', text: `${e.label} —— ${e.description}` }))" />
     </SectionCard>
 
-    <SectionCard v-if="enabledChannels.length > 0" title="事件订阅" note="行为事件，列为渠道" class="mt">
+    <SectionCard v-if="enabledChannels.length > 0" :title="t.capNotify.ntf.matrixTitle" :note="t.capNotify.ntf.matrixNote" class="mt">
       <div class="matrix" :style="{ gridTemplateColumns: `1fr repeat(${enabledChannels.length}, 88px)` }">
         <span />
         <span v-for="c in enabledChannels" :key="c.id" class="matrix__col">{{ c.name }}</span>

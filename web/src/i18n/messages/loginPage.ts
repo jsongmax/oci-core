@@ -1,0 +1,58 @@
+/** 登录页（首次设置、登录、绑定两步验证、输入验证码）与账号列表页。 */
+const zh = {
+  usernameRequired: '请填写用户名',
+  passwordTooShort: '口令至少需要 10 个字符',
+  passwordMismatch: '两次输入的口令不一致',
+  credentialsRequired: '用户名或口令不能为空',
+  totpEnabled: '两步验证已启用',
+  codeReused: '该验证码已被使用，请等待验证器刷新出下一个',
+  skippedTitle: '已跳过两步验证',
+  skippedBody: '强烈建议稍后在「设置 → 账户安全」中完成绑定。',
+  setupTitle: '首次设置',
+  setupSub: '创建管理员账户。口令至少 10 个字符。',
+  username: '用户名',
+  password: '口令',
+  passwordConfirm: '确认口令',
+  creating: '创建中…',
+  createAccount: '创建账户',
+  signingIn: '登录中…',
+  signIn: '登录',
+  enrollTitle: '绑定两步验证',
+  enrollSub: '用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。',
+  enrollQr: '两步验证绑定二维码',
+  openInApp: '在本机验证器中打开',
+  digit: (i: number) => `第 ${i} 位`,
+  enrollLater: '稍后再绑定',
+  totpTitle: '输入两步验证码',
+  totpSub: '来自验证器应用的 6 位数字，填满自动提交'
+}
+
+const en: typeof zh = {
+  usernameRequired: 'Enter a username',
+  passwordTooShort: 'The password must be at least 10 characters',
+  passwordMismatch: 'The passwords don\'t match',
+  credentialsRequired: 'Username and password are required',
+  totpEnabled: '2FA enabled',
+  codeReused: 'This code was already used. Wait for your authenticator to show the next one.',
+  skippedTitle: '2FA skipped',
+  skippedBody: 'We strongly recommend setting it up later in Settings → Account security.',
+  setupTitle: 'Initial setup',
+  setupSub: 'Create the admin account. The password must be at least 10 characters.',
+  username: 'Username',
+  password: 'Password',
+  passwordConfirm: 'Confirm password',
+  creating: 'Creating…',
+  createAccount: 'Create account',
+  signingIn: 'Signing in…',
+  signIn: 'Sign in',
+  enrollTitle: 'Set up two-factor authentication',
+  enrollSub: 'Scan the QR code with an authenticator app, then enter the code it shows. If you can\'t scan, type in the key below.',
+  enrollQr: '2FA setup QR code',
+  openInApp: 'Open in an authenticator on this device',
+  digit: (i: number) => `Digit ${i}`,
+  enrollLater: 'Set up later',
+  totpTitle: 'Enter 2FA code',
+  totpSub: 'The 6-digit code from your authenticator app; submits automatically when complete'
+}
+
+export default { zh, en }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §4.3.1 添加账号抽屉（520）：整段粘贴 OCI config 自动解析 + 逐项校验 */
+import { t } from '@/i18n'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
@@ -52,13 +53,13 @@ function proxyLabel(p: ProxyDTO): string {
   const addr = `${p.host}:${p.port}`
   const shown = state.privacyMode ? mask(addr, 'hostport') : addr
   const status = p.lastStatus === 'ok' ? `${p.lastLatencyMs} ms`
-    : p.lastStatus === 'fail' ? '上次检测不通' : '未检测'
+    : p.lastStatus === 'fail' ? t.addAcctProxy.add.lastFail : t.addAcctProxy.add.unchecked
   return `${p.label ? p.label + ' · ' : ''}${shown} · ${status}`
 }
 
 const egressGroups = computed(() => [
-  { label: '代理池', options: freeProxies.value.map(p => ({ value: p.id, label: proxyLabel(p) })) },
-  { label: '', options: [{ value: DIRECT, label: '直连（使用本机 IP）' }] }
+  { label: t.addAcctProxy.add.proxyPool, options: freeProxies.value.map(p => ({ value: p.id, label: proxyLabel(p) })) },
+  { label: '', options: [{ value: DIRECT, label: t.addAcctProxy.add.direct }] }
 ])
 
 async function loadProxies() {
@@ -122,19 +123,19 @@ async function parseConfig() {
     if (p.hasPassPhrase) {
       toast({
         tone: 'warning',
-        title: '该私钥带有口令',
-        body: '本工具不支持带口令的私钥，请先解密：\nopenssl rsa -in oci_api_key.pem -out oci_api_key_plain.pem'
+        title: t.addAcctProxy.add.passphraseTitle,
+        body: t.addAcctProxy.add.passphraseBody
       }, 12000)
       return
     }
 
     toast({
       tone: p.complete ? 'success' : 'warning',
-      title: `已解析 ${found.length} 个字段`,
-      body: p.complete ? found.join(' · ') : `仍缺少：${(p.missing ?? []).join('、')}`
+      title: t.addAcctProxy.add.parsed(found.length),
+      body: p.complete ? found.join(' · ') : t.addAcctProxy.add.stillMissing((p.missing ?? []).join(t.addAcctProxy.add.listSep))
     })
   } catch (err) {
-    toastError('解析失败', err)
+    toastError(t.addAcctProxy.add.parseFailed, err)
   }
 }
 
@@ -155,12 +156,12 @@ const canSave = computed(() =>
 /** 把后端的逐项校验结果映射成 CheckList 的条目。 */
 const checks = computed<CheckItem[]>(() => {
   if (testing.value && steps.value.length === 0) {
-    return [{ tone: 'info', text: '校验中…' }]
+    return [{ tone: 'info', text: t.addAcctProxy.add.checking }]
   }
   if (steps.value.length === 0) {
     return [{ tone: 'info', text: form.egress
-      ? '点击「测试连接」逐项校验凭据与权限'
-      : '先在上面选好网络出口，再测试连接——测试本身就会访问这个租户' }]
+      ? t.addAcctProxy.add.clickTest
+      : t.addAcctProxy.add.pickEgressFirst }]
   }
 
   const items: CheckItem[] = steps.value.map(s => ({
@@ -229,13 +230,13 @@ async function save() {
     closeDrawer()
     toast({
       tone: 'success',
-      title: `${account.alias} 已接入`,
-      body: `身份色与短代号 ${account.code} 已绑定，正在同步实例列表`
+      title: t.addAcctProxy.add.connected(account.alias),
+      body: t.addAcctProxy.add.connectedBody(account.code)
     })
     // 新账号刚接进来，立刻拉一次它的实例。
     void syncNow(account.id)
   } catch (err) {
-    toastError('保存账号失败', err)
+    toastError(t.addAcctProxy.add.saveFailed, err)
   } finally {
     saving.value = false
   }
@@ -245,33 +246,33 @@ async function save() {
 <template>
   <AppDrawer width="narrow" @close="closeDrawer()">
     <header class="head">
-      <h2 class="head__title">添加 Oracle 账号</h2>
-      <button class="head__close" aria-label="关闭" @click="closeDrawer()">✕</button>
+      <h2 class="head__title">{{ t.addAcctProxy.add.title }}</h2>
+      <button class="head__close" :aria-label="t.common.close" @click="closeDrawer()">✕</button>
     </header>
 
     <DrawerBody>
-      <SectionCard title="粘贴 OCI config" note="从 Oracle 控制台下载的 config 整段粘贴">
+      <SectionCard :title="t.addAcctProxy.add.pasteTitle" :note="t.addAcctProxy.add.pasteNote">
         <div class="pad">
           <textarea v-model="form.paste" class="textarea paste" spellcheck="false"
                     placeholder="[DEFAULT]&#10;user=ocid1.user.oc1..aaaa…&#10;fingerprint=20:3b:97:13:…&#10;tenancy=ocid1.tenancy.oc1..aaaa…&#10;region=ap-tokyo-1&#10;key_file=/path/to/key.pem" />
           <div class="row">
             <button class="btn btn--sm" style="border-color: var(--accent); color: var(--accent)"
-                    :disabled="!form.paste.trim()" @click="parseConfig()">解析并填充</button>
+                    :disabled="!form.paste.trim()" @click="parseConfig()">{{ t.addAcctProxy.add.parseFill }}</button>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="凭据字段" note="已识别项高亮">
+      <SectionCard :title="t.addAcctProxy.add.credTitle" :note="t.addAcctProxy.add.credNote">
         <div class="pad">
           <div v-for="fld in [
-            { key: 'tenancy', label: '租户 OCID', ph: 'ocid1.tenancy.oc1..' },
-            { key: 'user', label: '用户 OCID', ph: 'ocid1.user.oc1..' },
-            { key: 'fingerprint', label: '密钥指纹', ph: '20:3b:97:13:…' },
-            { key: 'region', label: '默认区域', ph: 'ap-tokyo-1' }
+            { key: 'tenancy', label: t.addAcctProxy.add.tenancy, ph: 'ocid1.tenancy.oc1..' },
+            { key: 'user', label: t.addAcctProxy.add.user, ph: 'ocid1.user.oc1..' },
+            { key: 'fingerprint', label: t.addAcctProxy.add.fingerprint, ph: '20:3b:97:13:…' },
+            { key: 'region', label: t.addAcctProxy.add.region, ph: 'ap-tokyo-1' }
           ]" :key="fld.key" class="field">
             <label>
               {{ fld.label }}
-              <span v-if="form.parsed && (form as any)[fld.key]" class="ok-tag">✔ 已识别</span>
+              <span v-if="form.parsed && (form as any)[fld.key]" class="ok-tag">{{ t.addAcctProxy.add.recognized }}</span>
             </label>
             <input v-model="(form as any)[fld.key]" class="input mono"
                    :class="{ 'is-ok': form.parsed && (form as any)[fld.key] }" :placeholder="fld.ph" />
@@ -280,30 +281,30 @@ async function save() {
         </div>
       </SectionCard>
 
-      <SectionCard title="账号身份" note="别名 + 短代号 + 身份色">
+      <SectionCard :title="t.addAcctProxy.add.identityTitle" :note="t.addAcctProxy.add.identityNote">
         <div class="pad">
           <div class="identity">
             <div class="field">
-              <label>别名</label>
-              <input v-model="form.alias" class="input" placeholder="例如：东京主号" />
+              <label>{{ t.addAcctProxy.add.alias }}</label>
+              <input v-model="form.alias" class="input" :placeholder="t.addAcctProxy.add.aliasPlaceholder" />
             </div>
             <div class="field">
-              <label>短代号</label>
+              <label>{{ t.addAcctProxy.add.code }}</label>
               <input v-model="form.code" class="input mono code-input" maxlength="4" placeholder="TYO"
                      :style="{ color: acctColor(form.colorIndex) }"
                      @input="form.code = form.code.toUpperCase()" />
             </div>
           </div>
-          <p v-if="codeTaken" class="warn-note">该短代号已被占用，请换一个（代号必须唯一）</p>
-          <p v-else-if="form.code && (form.code.length < 2)" class="warn-note">代号需要 2–4 个字符</p>
+          <p v-if="codeTaken" class="warn-note">{{ t.addAcctProxy.add.codeTaken }}</p>
+          <p v-else-if="form.code && (form.code.length < 2)" class="warn-note">{{ t.addAcctProxy.add.codeLength }}</p>
 
           <div class="field">
-            <label>身份色 · 已自动分配未被占用的一色</label>
+            <label>{{ t.addAcctProxy.add.color }}</label>
             <div class="swatches">
               <button v-for="n in 8" :key="n" class="swatch"
                       :class="{ 'is-picked': form.colorIndex === n, 'is-taken': takenColors.has(n as AccountColorIndex) }"
                       :style="{ background: acctColor(n) }"
-                      :aria-label="`身份色 ${n}${takenColors.has(n as AccountColorIndex) ? '（已被占用）' : ''}`"
+                      :aria-label="t.addAcctProxy.add.colorN(n, takenColors.has(n as AccountColorIndex))"
                       @click="form.colorIndex = n as AccountColorIndex" />
             </div>
           </div>
@@ -311,33 +312,33 @@ async function save() {
           <div class="preview">
             <span class="preview__bar" :style="{ background: acctColor(form.colorIndex) }" />
             <span class="mono preview__code" :style="{ color: acctColor(form.colorIndex) }">{{ form.code || '???' }}</span>
-            <span class="t-xs dim">{{ form.alias || '未命名账号' }}</span>
-            <span class="preview__hint t-2xs dim-3">列表中的样子</span>
+            <span class="t-xs dim">{{ form.alias || t.addAcctProxy.add.unnamedAccount }}</span>
+            <span class="preview__hint t-2xs dim-3">{{ t.addAcctProxy.add.previewHint }}</span>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="网络出口" note="测试连接与之后的全部请求都走这里">
+      <SectionCard :title="t.addAcctProxy.add.egressTitle" :note="t.addAcctProxy.add.egressNote">
         <div class="pad">
           <SelectMenu v-model="form.egress" :groups="egressGroups"
-                      :placeholder="proxiesLoaded ? '选择代理或直连' : '读取代理池…'"
-                      :disabled="!proxiesLoaded" :min-width="300" aria-label="网络出口" />
+                      :placeholder="proxiesLoaded ? t.addAcctProxy.add.pickEgress : t.addAcctProxy.add.loadingPool"
+                      :disabled="!proxiesLoaded" :min-width="300" :aria-label="t.addAcctProxy.add.egressTitle" />
           <CheckList v-if="proxiesLoaded && !freeProxies.length" :items="[{ tone: 'warn',
             text: proxyList.length
-              ? '代理池里没有空闲的代理（都已绑给其他账号或已停用），只能直连。一条代理只能绑一个账号。'
-              : '代理池为空，只能直连。如需代理，先到代理页导入。' }]" />
+              ? t.addAcctProxy.add.noFreeProxies
+              : t.addAcctProxy.add.emptyPool }]" />
           <CheckList v-else-if="form.egress === DIRECT" :items="[{ tone: 'warn',
-            text: '直连会用本机 IP 访问这个租户。和其他账号用同一个出口，等于给它们加了一条关联线索。' }]" />
+            text: t.addAcctProxy.add.directWarn }]" />
           <button v-if="proxiesLoaded && !freeProxies.length" class="btn btn--sm egress__link"
-                  @click="goProxies()">去代理页导入</button>
+                  @click="goProxies()">{{ t.addAcctProxy.add.goProxies }}</button>
         </div>
       </SectionCard>
 
-      <SectionCard title="连接校验" note="逐项亮起">
+      <SectionCard :title="t.addAcctProxy.add.testTitle" :note="t.addAcctProxy.add.testNote">
         <template #action>
           <button class="btn btn--sm" style="border-color: var(--accent); color: var(--accent)"
                   :disabled="testing || !canTest" @click="runTest()">
-            {{ testing ? '校验中…' : steps.length ? '重新测试' : '测试连接' }}
+            {{ testing ? t.addAcctProxy.add.checking : steps.length ? t.addAcctProxy.add.retest : t.addAcctProxy.add.test }}
           </button>
         </template>
         <CheckList :items="checks" />
@@ -345,10 +346,10 @@ async function save() {
     </DrawerBody>
 
     <footer class="foot">
-      <span class="t-2xs dim-3">私钥以 AES-256-GCM 加密后写入本地数据库，界面永不回显</span>
-      <button class="btn" @click="closeDrawer()">取消</button>
+      <span class="t-2xs dim-3">{{ t.addAcctProxy.add.keyNote }}</span>
+      <button class="btn" @click="closeDrawer()">{{ t.common.cancel }}</button>
       <button class="btn btn--primary" :disabled="!canSave || saving" @click="save()">
-        {{ saving ? '保存中…' : '保存账号' }}
+        {{ saving ? t.common.saving : t.addAcctProxy.add.saveAccount }}
       </button>
     </footer>
   </AppDrawer>

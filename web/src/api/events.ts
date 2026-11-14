@@ -1,3 +1,5 @@
+import { locale } from '@/i18n'
+
 /**
  * SSE 实时事件流。
  *
@@ -59,7 +61,9 @@ export function connectEvents(handlers: EventHandlers): () => void {
 
   const open = () => {
     if (closed) return
-    source = new EventSource('/api/events', { withCredentials: true })
+    // EventSource 不能带自定义请求头，语言放在查询参数里。推送里的任务步骤、
+    // 错误信息由后端按这个语言写；切换语言时 store 会断开重连。
+    source = new EventSource(`/api/events?lang=${encodeURIComponent(locale.value)}`, { withCredentials: true })
 
     source.onopen = () => {
       const reconnected = opened

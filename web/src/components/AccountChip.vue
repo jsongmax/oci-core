@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** §6.1 AccountChip —— 全站最高频组件。身份色永不单独出现，始终带短代号 */
+import { t } from '@/i18n'
 import { computed } from 'vue'
 import type { Account } from '@/types'
 import { acctColor } from '@/lib/format'
@@ -21,7 +22,7 @@ const tooltip = computed(() =>
   <span class="chip" :class="`chip--${variant}`" :title="tooltip" :style="{ '--c': color }">
     <span class="chip__dot" />
     <span v-if="variant !== 'dot'" class="chip__code mono">{{ account.code }}</span>
-    <span v-if="abnormal" class="chip__warn" aria-label="账号异常">⚠</span>
+    <span v-if="abnormal" class="chip__warn" :aria-label="t.ui.accountAbnormal">⚠</span>
     <span v-if="variant === 'full'" class="chip__alias">{{ account.alias }}</span>
   </span>
 </template>

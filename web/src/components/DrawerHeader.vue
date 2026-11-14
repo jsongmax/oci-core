@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '@/i18n'
 defineProps<{ color: string; code: string; title: string; sub: string }>()
 const emit = defineEmits<{ close: [] }>()
 </script>
@@ -11,7 +12,7 @@ const emit = defineEmits<{ close: [] }>()
         <span class="dh__code mono" :style="{ color }">{{ code }}</span>
         <h2 class="dh__title">{{ title }}</h2>
         <slot name="badge" />
-        <button class="dh__close" aria-label="关闭" @click="emit('close')">✕</button>
+        <button class="dh__close" :aria-label="t.common.close" @click="emit('close')">✕</button>
       </div>
       <p class="dh__sub mono">{{ sub }}</p>
       <div class="dh__actions"><slot name="actions" /></div>
