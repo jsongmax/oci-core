@@ -22,6 +22,18 @@ X-OCI-Tools: 1
 
 读操作不需要该头。
 
+### 语言
+
+接口返回给人看的文字（`message`、`advice`、`notice`、任务标题与步骤、预设与模板说明等）按请求语言输出，目前支持 `zh-CN` 与 `en`：
+
+- 普通请求读 `Accept-Language` 请求头，按顺序取第一个 `zh*` 或 `en*` 标签，都没有时用中文；
+- SSE（`EventSource` 不能带自定义头）用查询参数 `?lang=en`；
+- 后台任务记住提交时的语言，之后读取任务详情时按读取方的语言重新渲染；
+- 写进 Oracle 的描述（路由规则、安全规则的 description）在提交时就按请求语言定稿；
+- 通知与服务端日志不对应某个请求，使用设置项 `language`。
+
+`code`、`ociCode` 以及 Oracle 原样返回的错误正文不翻译。
+
 ### 错误格式
 
 ```json
@@ -33,7 +45,7 @@ X-OCI-Tools: 1
 }
 ```
 
-`ociCode` 是 Oracle 的原始错误码，**必须原样展示且可复制**——用户要拿它去搜索。`advice` 是可直接显示给用户的中文建议。
+`ociCode` 是 Oracle 的原始错误码，**必须原样展示且可复制**——用户要拿它去搜索。`advice` 是可直接显示给用户的建议，语言见上文「语言」。
 
 常见 `code`：
 
@@ -781,8 +793,10 @@ Allow group <你的组> to read usage-report in tenancy
 ```json
 { "allowTerminate": true, "allowBulkActions": true,
   "requireTotpForDanger": false, "syncIntervalMinutes": 5,
-  "checkIntervalHours": 6 }
+  "checkIntervalHours": 6, "language": "zh-CN" }
 ```
+
+`language` 是通知与后台日志使用的语言（`zh-CN` / `en`），不影响界面——界面语言由各浏览器自己记住。
 
 `allowTerminate: false` 时终止接口直接返回 403 —— **服务端强制，前端按钮可以被绕过**。
 

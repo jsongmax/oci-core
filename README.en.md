@@ -77,6 +77,7 @@ A single-binary web panel for managing compute instances across multiple Oracle 
 | **Console** | Serial console and VNC tunnel connection strings |
 | **Notifications** | Telegram / WeCom / DingTalk / Email / Webhook plus an event subscription matrix |
 | **Privacy** | Emails, public IPs, OCIDs and fingerprints are masked by default, each with a reveal button plus a one-click global toggle in the top bar. Copying always yields the real value — built for screenshots and screen sharing |
+| **Languages** | The UI comes in Simplified Chinese and English, switchable in Settings and picked from the browser language on first visit; API notices, job steps and error messages follow the UI language, and notifications have their own language setting |
 | **Security** | argon2id password hashing, TOTP two-factor (scan to enrol), session management with force logout, CSRF protection, login rate limiting, audit log (cursor pagination, full export, optional retention), three-tier confirmation for dangerous actions |
 
 ---
