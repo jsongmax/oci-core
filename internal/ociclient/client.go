@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // maxResponseBytes 限制单次响应的读取上限，避免异常响应耗尽内存。
@@ -171,7 +173,7 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	// 在 sink 前显式判一次：既给出能看懂的错误，也让"主机名不受输入控制"
 	// 这个性质在代码里直接可见，而不是只存在于另一个文件的正则里。
 	if NormalizeRegion(region) == "" {
-		return nil, fmt.Errorf("ociclient: 区域名不合法: %q", region)
+		return nil, i18n.Err("oci.region_invalid", region)
 	}
 
 	target := Endpoint(req.Service, region) + "/" + req.Service.Version + req.Path
@@ -400,5 +402,5 @@ func listPages(ctx context.Context, c *Client, req Request, limit int, collect f
 		}
 		req.Query.Set("page", resp.NextPage)
 	}
-	return fmt.Errorf("ociclient: 分页超过 %d 页上限，已中止 (%s)", limit, req.Path)
+	return i18n.Err("oci.too_many_pages", limit, req.Path)
 }

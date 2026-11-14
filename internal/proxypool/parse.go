@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"ocicore/internal/i18n"
 )
 
 // 支持的代理协议。
@@ -79,7 +81,7 @@ func (p Parsed) Masked() string {
 func ParseLine(line string) (Parsed, error) {
 	raw := strings.TrimSpace(line)
 	if raw == "" {
-		return Parsed{}, fmt.Errorf("空行")
+		return Parsed{}, i18n.Err("proxy.empty_line")
 	}
 
 	// 行尾注释当作备注名。放在最前面剥离，免得 # 后面的内容干扰后续解析。
@@ -89,7 +91,7 @@ func ParseLine(line string) (Parsed, error) {
 		raw = strings.TrimSpace(raw[:i])
 	}
 	if raw == "" {
-		return Parsed{}, fmt.Errorf("只有注释没有地址")
+		return Parsed{}, i18n.Err("proxy.comment_only")
 	}
 
 	scheme := SchemeHTTP
@@ -100,9 +102,9 @@ func ParseLine(line string) (Parsed, error) {
 	switch scheme {
 	case SchemeHTTP, SchemeHTTPS, SchemeSOCKS5:
 	case "socks5h":
-		return Parsed{}, fmt.Errorf("不支持 socks5h（Go 的 net/http 只支持 socks5）")
+		return Parsed{}, i18n.Err("proxy.socks5h")
 	default:
-		return Parsed{}, fmt.Errorf("不支持的协议 %q", scheme)
+		return Parsed{}, i18n.Err("proxy.scheme", scheme)
 	}
 
 	user, pass, hostPort, err := splitAuth(raw)
@@ -112,14 +114,14 @@ func ParseLine(line string) (Parsed, error) {
 
 	host, portStr, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return Parsed{}, fmt.Errorf("地址格式无法识别: %s", hostPort)
+		return Parsed{}, i18n.Err("proxy.addr_format", hostPort)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 || port > 65535 {
-		return Parsed{}, fmt.Errorf("端口无效: %s", portStr)
+		return Parsed{}, i18n.Err("proxy.port", portStr)
 	}
 	if strings.TrimSpace(host) == "" {
-		return Parsed{}, fmt.Errorf("缺少主机名")
+		return Parsed{}, i18n.Err("proxy.no_host")
 	}
 
 	return Parsed{
@@ -159,7 +161,7 @@ func splitAuth(raw string) (user, pass, hostPort string, err error) {
 		if strings.HasPrefix(raw, "[") {
 			return "", "", raw, nil
 		}
-		return "", "", "", fmt.Errorf("无法识别的格式（认得 host:port、host:port:user:pass、user:pass@host:port）")
+		return "", "", "", i18n.Err("proxy.format")
 	}
 }
 

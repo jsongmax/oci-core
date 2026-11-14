@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 func testKey(t *testing.T) *rsa.PrivateKey {
@@ -185,7 +187,7 @@ func TestValidateRejectsFingerprintMismatch(t *testing.T) {
 		t.Fatal("指纹不匹配时应当报错")
 	}
 	// 这是 401 的头号成因，报错必须点明是指纹问题。
-	if !strings.Contains(err.Error(), "指纹") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "指纹") {
 		t.Errorf("错误信息应说明是指纹问题，实际为: %v", err)
 	}
 }
@@ -245,7 +247,7 @@ func TestParsePrivateKeyRejectsEncrypted(t *testing.T) {
 	if err == nil {
 		t.Fatal("带口令的私钥应当被拒绝")
 	}
-	if !strings.Contains(err.Error(), "openssl") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "openssl") {
 		t.Errorf("错误信息应给出 openssl 解密命令，实际为: %v", err)
 	}
 }

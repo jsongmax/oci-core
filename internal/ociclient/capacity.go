@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 容量报告里的可用状态。
@@ -55,7 +57,7 @@ type CapacityReport struct {
 //
 // 这项权限不含在 instance-family 里，只授了计算/网络/存储三项的 IAM 用户
 // 一定会撞上。Oracle 返回的是笼统的 NotAuthorizedOrNotFound，不点明缺什么。
-const CapacityPermissionHint = "容量查询需要单独授权：Allow group <你的组> to manage compute-capacity-reports in tenancy"
+var CapacityPermissionHint = i18n.M("oci.capacity_perm_hint")
 
 // CapacityErrorText 把容量报告的错误压成一行；无权限时附上需要补的策略。
 func CapacityErrorText(err error) string {
@@ -64,7 +66,7 @@ func CapacityErrorText(err error) string {
 		return err.Error()
 	}
 	if apiErr.Class == ClassNotAuthorized {
-		return apiErr.Message + "（" + CapacityPermissionHint + "）"
+		return apiErr.Message + " (" + CapacityPermissionHint + ")"
 	}
 	if advice := apiErr.Advice(); advice != "" {
 		return apiErr.Message + "（" + advice + "）"
@@ -142,13 +144,13 @@ func (r *CapacityReport) StatusOf(shape string) string {
 func CapacityStatusText(status string) string {
 	switch status {
 	case CapacityAvailable:
-		return "有容量"
+		return i18n.M("oci.cap.available")
 	case CapacityOutOfHost:
-		return "暂时没有容量"
+		return i18n.M("oci.cap.out")
 	case CapacityHardwareNotSupported:
-		return "该区域未部署此硬件"
+		return i18n.M("oci.cap.no_hardware")
 	case "":
-		return "未知"
+		return i18n.M("oci.cap.unknown")
 	default:
 		return status
 	}

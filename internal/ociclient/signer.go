@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 需要签名的请求头集合。OCI 对带 body 的方法要求额外签三个头。
@@ -48,19 +50,19 @@ func (c *Credentials) KeyID() string {
 func (c *Credentials) Validate() error {
 	switch {
 	case !strings.HasPrefix(c.TenancyOCID, "ocid1.tenancy."):
-		return fmt.Errorf("tenancy OCID 格式不对，应以 ocid1.tenancy. 开头，实际为 %q", truncate(c.TenancyOCID, 32))
+		return i18n.Err("oci.tenancy_ocid_bad", truncate(c.TenancyOCID, 32))
 	case !strings.HasPrefix(c.UserOCID, "ocid1.user."):
-		return fmt.Errorf("user OCID 格式不对，应以 ocid1.user. 开头，实际为 %q", truncate(c.UserOCID, 32))
+		return i18n.Err("oci.user_ocid_bad", truncate(c.UserOCID, 32))
 	case c.PrivateKey == nil:
-		return errors.New("私钥为空")
+		return i18n.Err("oci.key_empty")
 	case c.Region == "":
-		return errors.New("region 为空")
+		return i18n.Err("oci.region_empty")
 	}
 	// 指纹和私钥必须是同一对。这是 401 NotAuthenticated 的头号成因：
 	// 用户换了密钥却忘了同步更新指纹。离线就能查出来，不用等服务端拒绝。
 	actual := FingerprintOf(&c.PrivateKey.PublicKey)
 	if !strings.EqualFold(normalizeFingerprint(c.Fingerprint), actual) {
-		return fmt.Errorf("指纹与私钥不匹配：配置为 %s，私钥实际指纹为 %s", c.Fingerprint, actual)
+		return i18n.Err("oci.fingerprint_mismatch", c.Fingerprint, actual)
 	}
 	return nil
 }
@@ -158,14 +160,13 @@ func methodHasBody(method string) bool {
 func ParsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
-		return nil, errors.New("不是有效的 PEM 内容，请确认粘贴了完整的 -----BEGIN ... KEY----- 区块")
+		return nil, i18n.Err("oci.pem_invalid")
 	}
 
 	// 带口令的私钥：旧式 PEM 加密已被 Go 弃用，新式 PKCS#8 加密 Go 标准库不支持。
 	// 与其半支持，不如给一条能直接照抄的解密命令。
 	if x509.IsEncryptedPEMBlock(block) || strings.Contains(string(pemBytes), "ENCRYPTED") { //nolint:staticcheck // 仅用于检测，不解密
-		return nil, errors.New("检测到带口令的私钥，请先解密后再导入：" +
-			"openssl rsa -in oci_api_key.pem -out oci_api_key_plain.pem")
+		return nil, i18n.Err("oci.pem_encrypted")
 	}
 
 	switch block.Type {
@@ -178,11 +179,11 @@ func ParsePrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 		}
 		rsaKey, ok := key.(*rsa.PrivateKey)
 		if !ok {
-			return nil, fmt.Errorf("私钥类型为 %T，OCI API 密钥必须是 RSA", key)
+			return nil, i18n.Err("oci.key_not_rsa", fmt.Sprintf("%T", key))
 		}
 		return rsaKey, nil
 	default:
-		return nil, fmt.Errorf("不支持的 PEM 类型 %q，应为 RSA PRIVATE KEY 或 PRIVATE KEY", block.Type)
+		return nil, i18n.Err("oci.pem_type", block.Type)
 	}
 }
 

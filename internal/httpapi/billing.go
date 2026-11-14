@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"ocicore/internal/billingsvc"
+	"ocicore/internal/i18n"
 	"ocicore/internal/store"
 )
 
@@ -93,7 +94,7 @@ func (s *Server) handleBilling(w http.ResponseWriter, r *http.Request) {
 		"noPermissionCount": noPermission,
 		// 数据延迟必须写在接口里而不是只写在前端：这是 Oracle 的事实约束，
 		// 不是某一个页面的展示细节。
-		"notice": "用量数据由 Oracle 每隔几小时结算一次，最新一天通常不完整。这里显示的不是实时消费。",
+		"notice": i18n.M("api.billing_notice"),
 	})
 }
 

@@ -6,11 +6,10 @@ package netsvc
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -64,7 +63,7 @@ func EnsureNetwork(ctx context.Context, client *ociclient.Client, opts EnsureNet
 
 	subnets, err := client.ListSubnets(ctx, opts.Region, opts.CompartmentID, "")
 	if err != nil {
-		return nil, fmt.Errorf("读取子网列表失败: %w", err)
+		return nil, i18n.Wrap(err, "net.list_subnets_failed")
 	}
 	// ProhibitPublicIpOnVnic 为 true 的是私有子网，实例起来也没有公网 IP。
 	var pick *ociclient.Subnet
@@ -86,7 +85,7 @@ func EnsureNetwork(ctx context.Context, client *ociclient.Client, opts EnsureNet
 		result.VcnID = pick.VcnID
 		result.SubnetID = pick.ID
 		result.SubnetName = pick.DisplayName
-		result.Steps = append(result.Steps, "复用已有公网子网 "+pick.DisplayName)
+		result.Steps = append(result.Steps, i18n.M("net.step.reuse_subnet", pick.DisplayName))
 		return result, nil
 	}
 
@@ -107,11 +106,11 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 		IsIpv6Enabled: opts.EnableIPv6,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("创建 VCN 失败: %w", err)
+		return nil, i18n.Wrap(err, "net.create_vcn_failed")
 	}
 	result.VcnID = vcn.ID
 	result.VcnName = vcn.DisplayName
-	result.Steps = append(result.Steps, "已创建 VCN "+vcn.DisplayName+" ("+defaultVcnCidr+")")
+	result.Steps = append(result.Steps, i18n.M("net.step.vcn_created", vcn.DisplayName, defaultVcnCidr))
 
 	// VCN 刚创建时处于 PROVISIONING，此时挂网关会失败。
 	if err := waitVcnAvailable(ctx, client, opts.Region, vcn.ID); err != nil {
@@ -120,9 +119,9 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 
 	gateway, err := client.CreateInternetGateway(ctx, opts.Region, opts.CompartmentID, vcn.ID, autoGatewayName)
 	if err != nil {
-		return nil, fmt.Errorf("创建互联网网关失败: %w", err)
+		return nil, i18n.Wrap(err, "net.create_igw_failed")
 	}
-	result.Steps = append(result.Steps, "已创建互联网网关")
+	result.Steps = append(result.Steps, i18n.M("net.step.igw_created"))
 
 	// 没有这条默认路由，实例即使有公网 IP 也出不去。
 	if vcn.DefaultRouteTableID != "" {
@@ -130,12 +129,12 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 			Destination:     "0.0.0.0/0",
 			DestinationType: "CIDR_BLOCK",
 			NetworkEntityID: gateway.ID,
-			Description:     "OCI Core 自动创建的默认路由",
+			Description:     i18n.T(i18n.FromContext(ctx), "net.desc.default_route"),
 		}})
 		if err != nil {
-			return nil, fmt.Errorf("配置默认路由失败: %w", err)
+			return nil, i18n.Wrap(err, "net.route_failed")
 		}
-		result.Steps = append(result.Steps, "已配置默认路由 0.0.0.0/0")
+		result.Steps = append(result.Steps, i18n.M("net.step.route"))
 	}
 
 	// 区域级子网（不指定可用域）比 AD 级子网更灵活：
@@ -148,11 +147,11 @@ func createNetwork(ctx context.Context, client *ociclient.Client,
 		DnsLabel:      "sub",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("创建子网失败: %w", err)
+		return nil, i18n.Wrap(err, "net.create_subnet_failed")
 	}
 	result.SubnetID = subnet.ID
 	result.SubnetName = subnet.DisplayName
-	result.Steps = append(result.Steps, "已创建子网 "+subnet.DisplayName+" ("+defaultSubnetCidr+")")
+	result.Steps = append(result.Steps, i18n.M("net.step.subnet_created", subnet.DisplayName, defaultSubnetCidr))
 
 	// IPv6 不在这里处理：VCN 创建时已经带上前缀，子网前缀与路由由调用方
 	// 接着调 PrepareIPv6 完成。以前这里还会再给 VCN 申请一次前缀——每个
@@ -176,14 +175,14 @@ func waitVcnAvailable(ctx context.Context, client *ociclient.Client, region, vcn
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("等待 VCN 就绪超时，请稍后在网络页面确认状态")
+			return i18n.Err("net.vcn_wait_timeout")
 		case <-ticker.C:
 		}
 	}
 }
 
 // ErrReservedIP 表示目标公网 IP 是保留 IP，不能用"删了重建"的方式更换。
-var ErrReservedIP = errors.New("该实例使用的是保留公网 IP，删除后将永久释放，请在网络页面手动处理")
+var ErrReservedIP = i18n.Err("net.reserved_ip")
 
 // ChangePublicIPResult 描述一次换 IP 的结果。
 type ChangePublicIPResult struct {
@@ -198,7 +197,7 @@ type ChangePublicIPResult struct {
 func ChangePublicIP(ctx context.Context, client *ociclient.Client, region, vnicID, compartmentID string) (*ChangePublicIPResult, error) {
 	privateIPs, err := client.ListPrivateIPs(ctx, region, vnicID)
 	if err != nil {
-		return nil, fmt.Errorf("读取私网 IP 失败: %w", err)
+		return nil, i18n.Wrap(err, "net.read_private_ip_failed")
 	}
 
 	var primary *ociclient.PrivateIP
@@ -209,14 +208,14 @@ func ChangePublicIP(ctx context.Context, client *ociclient.Client, region, vnicI
 		}
 	}
 	if primary == nil {
-		return nil, errors.New("未找到主私网 IP，无法更换公网 IP")
+		return nil, i18n.Err("net.no_primary_ip")
 	}
 
 	result := &ChangePublicIPResult{}
 
 	existing, err := client.GetPublicIPByPrivateIP(ctx, region, primary.ID)
 	if err != nil {
-		return nil, fmt.Errorf("读取当前公网 IP 失败: %w", err)
+		return nil, i18n.Wrap(err, "net.read_public_ip_failed")
 	}
 	if existing != nil {
 		// 保留 IP 是独立计费资源，删掉就再也拿不回来了，绝不能顺手删。
@@ -225,7 +224,7 @@ func ChangePublicIP(ctx context.Context, client *ociclient.Client, region, vnicI
 		}
 		result.OldIP = existing.IPAddress
 		if err := client.DeletePublicIP(ctx, region, existing.ID); err != nil {
-			return nil, fmt.Errorf("释放原公网 IP 失败: %w", err)
+			return nil, i18n.Wrap(err, "net.release_ip_failed")
 		}
 	}
 
@@ -240,7 +239,7 @@ func ChangePublicIP(ctx context.Context, client *ociclient.Client, region, vnicI
 			break
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("申请新公网 IP 失败: %w", err)
+			return nil, i18n.Wrap(err, "net.new_ip_failed")
 		}
 		select {
 		case <-ctx.Done():
@@ -278,16 +277,16 @@ func EnableIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, s
 	// 已经有地址就直接返回，重复调用不该产生第二个地址。
 	if existing, err := client.ListIpv6s(ctx, region, vnicID); err == nil && len(existing) > 0 {
 		result.Address = existing[0].IPAddress
-		result.Steps = append(result.Steps, "该网卡已有 IPv6 地址")
+		result.Steps = append(result.Steps, i18n.M("net.step.has_v6"))
 		return result, nil
 	}
 
 	ipv6, err := client.CreateIpv6(ctx, region, vnicID)
 	if err != nil {
-		return nil, fmt.Errorf("分配 IPv6 地址失败: %w", err)
+		return nil, i18n.Wrap(err, "net.assign_v6_failed")
 	}
 	result.Address = ipv6.IPAddress
-	result.Steps = append(result.Steps, "已分配 IPv6 地址 "+ipv6.IPAddress)
+	result.Steps = append(result.Steps, i18n.M("net.step.v6_assigned", ipv6.IPAddress))
 	return result, nil
 }
 
@@ -309,10 +308,10 @@ func AddIPv6(ctx context.Context, client *ociclient.Client, region, vnicID, subn
 
 	ipv6, err := client.CreateIpv6(ctx, region, vnicID)
 	if err != nil {
-		return nil, fmt.Errorf("分配 IPv6 地址失败: %w", err)
+		return nil, i18n.Wrap(err, "net.assign_v6_failed")
 	}
 	result.Address = ipv6.IPAddress
-	result.Steps = append(result.Steps, "已分配 IPv6 地址 "+ipv6.IPAddress)
+	result.Steps = append(result.Steps, i18n.M("net.step.v6_assigned", ipv6.IPAddress))
 	return result, nil
 }
 
@@ -345,17 +344,17 @@ func (t RuleTemplate) IsEgress() bool { return t.Direction == DirEgress }
 // 一切正常。面板此前只能删出站不能加，用户删掉之后就卡在这个状态里出不来。
 func RuleTemplates() []RuleTemplate {
 	return []RuleTemplate{
-		{Key: "ssh", Label: "SSH", Direction: DirIngress, Protocol: "6", Port: 22, Description: "远程登录"},
-		{Key: "http", Label: "HTTP", Direction: DirIngress, Protocol: "6", Port: 80, Description: "网站服务"},
-		{Key: "https", Label: "HTTPS", Direction: DirIngress, Protocol: "6", Port: 443, Description: "加密网站服务"},
-		{Key: "icmp", Label: "ICMP", Direction: DirIngress, Protocol: "1", Port: 0, Description: "允许 ping"},
-		{Key: "all", Label: "全部放行", Direction: DirIngress, Protocol: "all", Port: 0,
-			Description: "放行所有入站流量。除非你清楚自己在做什么，否则不要开启。", Dangerous: true},
+		{Key: "ssh", Label: "SSH", Direction: DirIngress, Protocol: "6", Port: 22, Description: i18n.M("net.tpl.ssh")},
+		{Key: "http", Label: "HTTP", Direction: DirIngress, Protocol: "6", Port: 80, Description: i18n.M("net.tpl.http")},
+		{Key: "https", Label: "HTTPS", Direction: DirIngress, Protocol: "6", Port: 443, Description: i18n.M("net.tpl.https")},
+		{Key: "icmp", Label: "ICMP", Direction: DirIngress, Protocol: "1", Port: 0, Description: i18n.M("net.tpl.icmp")},
+		{Key: "all", Label: i18n.M("net.tpl.all"), Direction: DirIngress, Protocol: "all", Port: 0,
+			Description: i18n.M("net.tpl.all.desc"), Dangerous: true},
 
 		// 出站全放行是 OCI 新建安全列表的默认值，也是绝大多数场景该有的样子。
 		// 它不标 Dangerous：限制出站属于进阶收紧，而缺了它才是故障。
-		{Key: "egress-all", Label: "出站全放行", Direction: DirEgress, Protocol: "all", Port: 0,
-			Description: "放行所有出站流量。这是 OCI 的默认配置——没有出站规则时实例无法访问外网。"},
+		{Key: "egress-all", Label: i18n.M("net.tpl.egress_all"), Direction: DirEgress, Protocol: "all", Port: 0,
+			Description: i18n.M("net.tpl.egress_all.desc")},
 	}
 }
 

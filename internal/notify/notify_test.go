@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/store"
 )
 
@@ -141,7 +142,7 @@ func TestSendDetectsBusinessErrorInBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("响应体里的 errcode 应当被识别为失败")
 	}
-	if !strings.Contains(err.Error(), "93000") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "93000") {
 		t.Errorf("错误信息应包含业务错误码: %v", err)
 	}
 }
@@ -285,7 +286,7 @@ func TestSendMailRequiredStartTLSRejectsPlainServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err = sendMail(ctx, host, port, SecurityStartTLS, nil, "a@x", []string{"b@x"}, []byte("x"))
-	if err == nil || !strings.Contains(err.Error(), "STARTTLS") {
+	if err == nil || !strings.Contains(i18n.Message(i18n.ZH, err), "STARTTLS") {
 		t.Errorf("err = %v, 期望提示不支持 STARTTLS", err)
 	}
 }

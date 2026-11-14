@@ -6,12 +6,12 @@ package ociconn
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -105,7 +105,7 @@ func (f *Factory) build(ctx context.Context, acc *store.Account) (*ociclient.Cli
 	if proxyURL != "" {
 		u, err := url.Parse(proxyURL)
 		if err != nil {
-			return nil, fmt.Errorf("账号 %s 的代理地址无效: %w", acc.Alias, err)
+			return nil, i18n.Wrap(err, "conn.proxy_invalid", acc.Alias)
 		}
 		// 用 ociclient 那份带 8 秒拨号超时的传输层，而不是
 		// http.DefaultTransport —— 代理是最容易不通的一环，
@@ -138,7 +138,7 @@ func (f *Factory) proxyFor(ctx context.Context, acc *store.Account) (string, err
 	}
 	u, err := f.st.ProxyURL(ctx, proxyID)
 	if err != nil {
-		return "", fmt.Errorf("账号 %s 的代理不可用: %w", acc.Alias, err)
+		return "", i18n.Wrap(err, "conn.proxy_unavailable", acc.Alias)
 	}
 	return u, nil
 }

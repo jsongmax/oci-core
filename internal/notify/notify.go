@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/store"
 )
 
@@ -51,12 +52,12 @@ type EventDef struct {
 // 加回来之后自动生效。
 func EventDefs() []EventDef {
 	return []EventDef{
-		{EventAccountAuthFail, "账号认证失败", "API 密钥失效或权限不足"},
-		{EventInstanceCreated, "实例创建完成", "新实例已就绪并分配到公网 IP"},
-		{EventDangerOperation, "危险操作已执行", "终止实例、删除账号、更换 IP 等操作"},
-		{EventHuntSucceeded, "守候任务抢到实例", "容量守候任务成功创建出实例"},
-		{EventHuntStopped, "守候任务停止", "任务因配额已满、凭据失效或到期而停止"},
-		{EventCapacityChanged, "容量状态变化", "监控的规格从没有容量变成有容量（或反之）"},
+		{EventAccountAuthFail, i18n.M("notify.ev.auth_fail"), i18n.M("notify.ev.auth_fail.desc")},
+		{EventInstanceCreated, i18n.M("notify.ev.created"), i18n.M("notify.ev.created.desc")},
+		{EventDangerOperation, i18n.M("notify.ev.danger"), i18n.M("notify.ev.danger.desc")},
+		{EventHuntSucceeded, i18n.M("notify.ev.hunt_ok"), i18n.M("notify.ev.hunt_ok.desc")},
+		{EventHuntStopped, i18n.M("notify.ev.hunt_stop"), i18n.M("notify.ev.hunt_stop.desc")},
+		{EventCapacityChanged, i18n.M("notify.ev.capacity"), i18n.M("notify.ev.capacity.desc")},
 	}
 }
 
@@ -98,33 +99,33 @@ func KindDefs() []KindDef {
 	return []KindDef{
 		{Kind: KindTelegram, Label: "Telegram", Fields: []FieldDef{
 			{Key: "token", Label: "Bot Token", Required: true, Secret: true,
-				Hint: "向 @BotFather 申请"},
+				Hint: i18n.M("notify.hint.botfather")},
 			{Key: "chatId", Label: "Chat ID", Required: true,
-				Hint: "向 @userinfobot 发消息可获取"},
+				Hint: i18n.M("notify.hint.userinfobot")},
 		}},
-		{Kind: KindWeCom, Label: "企业微信", Fields: []FieldDef{
-			{Key: "webhook", Label: "群机器人 Webhook", Required: true, Secret: true},
+		{Kind: KindWeCom, Label: i18n.M("notify.kind.wecom"), Fields: []FieldDef{
+			{Key: "webhook", Label: i18n.M("notify.f.group_webhook"), Required: true, Secret: true},
 		}},
-		{Kind: KindDingTalk, Label: "钉钉", Fields: []FieldDef{
-			{Key: "webhook", Label: "群机器人 Webhook", Required: true, Secret: true},
-			{Key: "secret", Label: "加签密钥", Secret: true, Hint: "启用加签时填写"},
+		{Kind: KindDingTalk, Label: i18n.M("notify.kind.dingtalk"), Fields: []FieldDef{
+			{Key: "webhook", Label: i18n.M("notify.f.group_webhook"), Required: true, Secret: true},
+			{Key: "secret", Label: i18n.M("notify.f.sign_secret"), Secret: true, Hint: i18n.M("notify.hint.sign_secret")},
 		}},
-		{Kind: KindEmail, Label: "邮件", Fields: []FieldDef{
-			{Key: "host", Label: "SMTP 服务器", Required: true},
-			{Key: "port", Label: "端口", Required: true, Hint: "587（STARTTLS）或 465（SSL）"},
-			{Key: "security", Label: "加密方式", Options: []FieldOption{
-				{Value: SecurityAuto, Label: "自动（465 用 SSL，其余尝试 STARTTLS）"},
-				{Value: SecuritySSL, Label: "SSL/TLS（隐式加密）"},
-				{Value: SecurityStartTLS, Label: "STARTTLS（必须升级加密）"},
+		{Kind: KindEmail, Label: i18n.M("notify.kind.email"), Fields: []FieldDef{
+			{Key: "host", Label: i18n.M("notify.f.smtp_host"), Required: true},
+			{Key: "port", Label: i18n.M("notify.f.port"), Required: true, Hint: i18n.M("notify.hint.port")},
+			{Key: "security", Label: i18n.M("notify.f.security"), Options: []FieldOption{
+				{Value: SecurityAuto, Label: i18n.M("notify.opt.auto")},
+				{Value: SecuritySSL, Label: i18n.M("notify.opt.ssl")},
+				{Value: SecurityStartTLS, Label: i18n.M("notify.opt.starttls")},
 			}},
-			{Key: "username", Label: "用户名", Required: true},
-			{Key: "password", Label: "密码", Required: true, Secret: true},
-			{Key: "from", Label: "发件人", Required: true},
-			{Key: "to", Label: "收件人", Required: true, Hint: "多个用逗号分隔"},
+			{Key: "username", Label: i18n.M("notify.f.username"), Required: true},
+			{Key: "password", Label: i18n.M("notify.f.password"), Required: true, Secret: true},
+			{Key: "from", Label: i18n.M("notify.f.from"), Required: true},
+			{Key: "to", Label: i18n.M("notify.f.to"), Required: true, Hint: i18n.M("notify.hint.to")},
 		}},
-		{Kind: KindWebhook, Label: "自定义 Webhook", Fields: []FieldDef{
+		{Kind: KindWebhook, Label: i18n.M("notify.kind.webhook"), Fields: []FieldDef{
 			{Key: "url", Label: "URL", Required: true},
-			{Key: "method", Label: "方法", Hint: "留空为 POST"},
+			{Key: "method", Label: i18n.M("notify.f.method"), Hint: i18n.M("notify.hint.method")},
 		}},
 	}
 }
@@ -213,6 +214,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, msg Message) {
 // 渠道一旦卡住，前端就一直停在"发送中"。
 func (d *Dispatcher) Send(ctx context.Context, ch *store.Channel, msg Message) error {
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	msg = d.localize(ctx, msg)
 	defer cancel()
 
 	switch ch.Kind {
@@ -227,7 +229,7 @@ func (d *Dispatcher) Send(ctx context.Context, ch *store.Channel, msg Message) e
 	case KindWebhook:
 		return d.sendWebhook(ctx, ch.Config, msg)
 	default:
-		return fmt.Errorf("不支持的渠道类型 %q", ch.Kind)
+		return i18n.Err("notify.err.unsupported_kind", ch.Kind)
 	}
 }
 
@@ -260,7 +262,7 @@ func plainText(msg Message) string {
 func (d *Dispatcher) sendTelegram(ctx context.Context, cfg map[string]string, msg Message) error {
 	token, chatID := cfg["token"], cfg["chatId"]
 	if token == "" || chatID == "" {
-		return fmt.Errorf("Telegram 渠道缺少 token 或 chatId")
+		return i18n.Err("notify.err.telegram_cfg")
 	}
 	payload := map[string]any{
 		"chat_id": chatID,
@@ -272,7 +274,7 @@ func (d *Dispatcher) sendTelegram(ctx context.Context, cfg map[string]string, ms
 func (d *Dispatcher) sendWeCom(ctx context.Context, cfg map[string]string, msg Message) error {
 	webhook := cfg["webhook"]
 	if webhook == "" {
-		return fmt.Errorf("企业微信渠道缺少 webhook")
+		return i18n.Err("notify.err.wecom_cfg")
 	}
 	payload := map[string]any{
 		"msgtype": "text",
@@ -284,7 +286,7 @@ func (d *Dispatcher) sendWeCom(ctx context.Context, cfg map[string]string, msg M
 func (d *Dispatcher) sendDingTalk(ctx context.Context, cfg map[string]string, msg Message) error {
 	webhook := cfg["webhook"]
 	if webhook == "" {
-		return fmt.Errorf("钉钉渠道缺少 webhook")
+		return i18n.Err("notify.err.dingtalk_cfg")
 	}
 	payload := map[string]any{
 		"msgtype": "text",
@@ -296,7 +298,7 @@ func (d *Dispatcher) sendDingTalk(ctx context.Context, cfg map[string]string, ms
 func (d *Dispatcher) sendWebhook(ctx context.Context, cfg map[string]string, msg Message) error {
 	target := cfg["url"]
 	if target == "" {
-		return fmt.Errorf("Webhook 渠道缺少 url")
+		return i18n.Err("notify.err.webhook_cfg")
 	}
 	payload := map[string]any{
 		"event":  msg.Event,
@@ -342,10 +344,10 @@ func (d *Dispatcher) postJSON(ctx context.Context, url string, payload any) erro
 	}
 	if json.Unmarshal(body, &result) == nil {
 		if result.ErrCode != 0 {
-			return fmt.Errorf("渠道返回错误 %d: %s", result.ErrCode, result.ErrMsg)
+			return i18n.Err("notify.err.channel_code", result.ErrCode, result.ErrMsg)
 		}
 		if result.OK != nil && !*result.OK {
-			return fmt.Errorf("渠道返回失败: %s", result.Desc)
+			return i18n.Err("notify.err.channel_failed", result.Desc)
 		}
 	}
 	return nil
@@ -357,7 +359,7 @@ func (d *Dispatcher) sendEmail(ctx context.Context, cfg map[string]string, msg M
 	from, to := cfg["from"], cfg["to"]
 
 	if host == "" || port == "" || from == "" || to == "" {
-		return fmt.Errorf("邮件渠道缺少必要配置")
+		return i18n.Err("notify.err.email_cfg")
 	}
 
 	recipients := make([]string, 0, 4)
@@ -367,7 +369,7 @@ func (d *Dispatcher) sendEmail(ctx context.Context, cfg map[string]string, msg M
 		}
 	}
 	if len(recipients) == 0 {
-		return fmt.Errorf("邮件渠道没有有效的收件人")
+		return i18n.Err("notify.err.email_to")
 	}
 
 	var body bytes.Buffer
@@ -440,7 +442,7 @@ func sendMail(ctx context.Context, host, port, security string, auth smtp.Auth, 
 	if !implicitTLS {
 		ok, _ := c.Extension("STARTTLS")
 		if !ok && security == SecurityStartTLS {
-			return fmt.Errorf("SMTP 服务器不支持 STARTTLS")
+			return i18n.Err("notify.err.no_starttls")
 		}
 		if ok {
 			if err := c.StartTLS(tlsConfig); err != nil {
@@ -450,7 +452,7 @@ func sendMail(ctx context.Context, host, port, security string, auth smtp.Auth, 
 	}
 	if auth != nil {
 		if ok, _ := c.Extension("AUTH"); !ok {
-			return fmt.Errorf("SMTP 服务器不支持认证")
+			return i18n.Err("notify.err.no_auth")
 		}
 		if err := c.Auth(auth); err != nil {
 			return err
@@ -475,4 +477,27 @@ func sendMail(ctx context.Context, host, port, security string, auth smtp.Auth, 
 		return err
 	}
 	return c.Quit()
+}
+
+// localize 按设置里的通知语言把消息定稿。
+//
+// 消息在业务代码里写成消息信封（见 internal/i18n），推送出去之前必须展开——
+// Telegram、邮件那头没有人替我们渲染。语言读不到时用默认语言。
+func (d *Dispatcher) localize(ctx context.Context, msg Message) Message {
+	lang := i18n.Default
+	if d.st != nil {
+		if s, err := d.st.Settings(ctx); err == nil {
+			lang = i18n.Lang(s.Language)
+		}
+	}
+	msg.Title = i18n.Render(lang, msg.Title)
+	msg.Body = i18n.Render(lang, msg.Body)
+	if len(msg.Fields) > 0 {
+		fields := make(map[string]string, len(msg.Fields))
+		for k, v := range msg.Fields {
+			fields[i18n.Render(lang, k)] = i18n.Render(lang, v)
+		}
+		msg.Fields = fields
+	}
+	return msg
 }

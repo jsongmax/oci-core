@@ -3,13 +3,13 @@ package proxypool
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -69,13 +69,13 @@ func (c *Checker) Check(ctx context.Context, proxyURL, region string) CheckResul
 
 	u, err := url.Parse(proxyURL)
 	if err != nil {
-		res.Error = "代理地址无效: " + err.Error()
+		res.Error = i18n.M("proxy.addr_invalid", err.Error())
 		return res
 	}
 
 	target := ociclient.Endpoint(ociclient.ServiceCore, region)
 	if target == "" || strings.Contains(target, "..") {
-		res.Error = "区域无效: " + region
+		res.Error = i18n.M("proxy.region_invalid", region)
 		return res
 	}
 
@@ -147,26 +147,26 @@ func describeErr(err error) string {
 		strings.Contains(low, "timeout"),
 		strings.Contains(low, "deadline exceeded"):
 		if strings.Contains(low, "proxyconnect") {
-			return "连接代理超时——代理地址或端口不对，或者代理已经挂了"
+			return i18n.M("proxy.connect_timeout")
 		}
-		return "通过代理访问 OCI 超时——代理能连上，但到不了 Oracle"
+		return i18n.M("proxy.oci_timeout")
 	case strings.Contains(low, "proxy authentication required"), strings.Contains(msg, "407"):
-		return "代理认证失败——用户名或密码不对"
+		return i18n.M("proxy.auth_failed")
 	// "connection refused" 是 Unix 的措辞，Windows 说的是 "actively refused"。
 	// 部署目标虽是 Linux，但不少人在 Windows 上本地跑，两种都认。
 	case strings.Contains(low, "connection refused"),
 		strings.Contains(low, "actively refused"):
-		return "代理拒绝连接——端口不对，或者代理服务没在跑"
+		return i18n.M("proxy.refused")
 	case strings.Contains(low, "no such host"):
-		return "代理主机名解析不了——地址拼错了，或者域名已失效"
+		return i18n.M("proxy.dns")
 	// 连上了却立刻断开，几乎总是协议对不上：最常见的是把 socks5 端口
 	// 配成了 http://，或者反过来。这条如果不点破，用户会以为代理挂了，
 	// 去找代理商而不是检查那一行开头写的是什么。
 	case strings.Contains(low, "unexpected eof"),
 		strings.Contains(low, "malformed http response"):
-		return "连上了但握手失败——多半是协议写错了（把 socks5 端口配成 http://，或反过来）"
+		return i18n.M("proxy.handshake")
 	case strings.Contains(low, "socks"):
-		return "SOCKS 握手失败: " + msg
+		return i18n.M("proxy.socks", msg)
 	}
 	// 认不出来就保留原文。宁可长一点，也不要把排障线索吃掉。
 	return msg
@@ -193,4 +193,4 @@ func DuplicateOf(bindings map[string]string, proxyID, exceptAccountID string) []
 }
 
 // ErrDuplicateBinding 表示这条代理已经绑给别的账号了。
-var ErrDuplicateBinding = fmt.Errorf("该代理已绑定其他账号")
+var ErrDuplicateBinding = i18n.Err("proxy.dup_binding")

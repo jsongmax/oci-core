@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -107,7 +108,7 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		defer wg.Done()
 		inst, err := client.GetInstance(ctx, cached.Region, instanceID)
 		if err != nil {
-			warn("读取实例信息失败：" + shortErr(err))
+			warn(i18n.M("inst.warn.read_instance", shortErr(err)))
 			return
 		}
 		mu.Lock()
@@ -125,7 +126,7 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		defer wg.Done()
 		vnics, err := s.collectVnicDetail(ctx, client, acc, cached)
 		if err != nil {
-			warn("读取网络信息失败：" + shortErr(err))
+			warn(i18n.M("inst.warn.read_network", shortErr(err)))
 			return
 		}
 		mu.Lock()
@@ -142,7 +143,7 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		}
 		bv, err := client.GetBootVolume(ctx, cached.Region, cached.BootVolumeID)
 		if err != nil {
-			warn("读取引导卷失败：" + shortErr(err))
+			warn(i18n.M("inst.warn.read_boot", shortErr(err)))
 			return
 		}
 		mu.Lock()
@@ -171,7 +172,7 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		defer wg.Done()
 		vols, err := s.collectBlockVolumes(ctx, client, acc, cached)
 		if err != nil {
-			warn("读取块存储失败：" + shortErr(err))
+			warn(i18n.M("inst.warn.read_block", shortErr(err)))
 			return
 		}
 		mu.Lock()

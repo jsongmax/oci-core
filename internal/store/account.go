@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/proxypool"
 )
@@ -136,7 +137,7 @@ const accountColumns = `id, alias, code, color_index, tenancy_ocid, user_ocid, f
 func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, error) {
 	key, err := ociclient.ParsePrivateKey([]byte(in.PrivateKeyPEM))
 	if err != nil {
-		return nil, fmt.Errorf("私钥解析失败: %w", err)
+		return nil, i18n.Wrap(err, "store.key_parse_failed")
 	}
 
 	creds := &ociclient.Credentials{
@@ -156,7 +157,7 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 	}
 	alias := strings.TrimSpace(in.Alias)
 	if alias == "" {
-		return nil, errors.New("账号别名不能为空")
+		return nil, i18n.Err("store.alias_required")
 	}
 
 	colorIndex := in.ColorIndex
@@ -166,7 +167,7 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 		}
 	}
 	if colorIndex < 1 || colorIndex > ColorCount {
-		return nil, fmt.Errorf("身份色序号必须在 1..%d 之间", ColorCount)
+		return nil, i18n.Err("store.color_range", ColorCount)
 	}
 
 	id, err := newID()
@@ -223,7 +224,7 @@ func (s *Store) CreateAccount(ctx context.Context, in NewAccount) (*Account, err
 			_, _ = s.db.ExecContext(ctx, `DELETE FROM proxies WHERE id = ?`, adoptedProxy)
 		}
 		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("%w: 该租户或代号已被占用", ErrConflict)
+			return nil, fmt.Errorf("%w: %s", ErrConflict, i18n.M("store.tenancy_or_code_taken"))
 		}
 		return nil, fmt.Errorf("store: 写入账号失败: %w", err)
 	}
@@ -278,7 +279,7 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 	if up.Alias != nil {
 		alias := strings.TrimSpace(*up.Alias)
 		if alias == "" {
-			return nil, errors.New("账号别名不能为空")
+			return nil, i18n.Err("store.alias_required")
 		}
 		add("alias = ?", alias)
 	}
@@ -291,14 +292,14 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 	}
 	if up.ColorIndex != nil {
 		if *up.ColorIndex < 1 || *up.ColorIndex > ColorCount {
-			return nil, fmt.Errorf("身份色序号必须在 1..%d 之间", ColorCount)
+			return nil, i18n.Err("store.color_range", ColorCount)
 		}
 		add("color_index = ?", *up.ColorIndex)
 	}
 	if up.DefaultRegion != nil {
 		region := ociclient.NormalizeRegion(*up.DefaultRegion)
 		if region == "" {
-			return nil, errors.New("默认区域不能为空")
+			return nil, i18n.Err("store.region_required")
 		}
 		add("default_region = ?", region)
 	}
@@ -327,7 +328,7 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 	if up.PrivateKeyPEM != nil {
 		key, err := ociclient.ParsePrivateKey([]byte(*up.PrivateKeyPEM))
 		if err != nil {
-			return nil, fmt.Errorf("私钥解析失败: %w", err)
+			return nil, i18n.Wrap(err, "store.key_parse_failed")
 		}
 		fingerprint := current.Fingerprint
 		if up.Fingerprint != nil {
@@ -335,7 +336,7 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 		}
 		actual := ociclient.FingerprintOf(&key.PublicKey)
 		if !strings.EqualFold(fingerprint, actual) {
-			return nil, fmt.Errorf("指纹与新私钥不匹配：配置为 %s，私钥实际指纹为 %s", fingerprint, actual)
+			return nil, i18n.Err("store.fingerprint_mismatch", fingerprint, actual)
 		}
 
 		ciphertext, nonce, err := s.box.Seal([]byte(*up.PrivateKeyPEM), id)
@@ -349,14 +350,14 @@ func (s *Store) UpdateAccount(ctx context.Context, id string, up AccountUpdate) 
 		add("status = ?", StatusUnchecked)
 		add("status_message = ?", "")
 	} else if up.Fingerprint != nil {
-		return nil, errors.New("修改指纹必须同时提供匹配的新私钥")
+		return nil, i18n.Err("store.fingerprint_needs_key")
 	}
 
 	args = append(args, id)
 	_, err = s.db.ExecContext(ctx, `UPDATE accounts SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("%w: 该代号已被占用", ErrConflict)
+			return nil, fmt.Errorf("%w: %s", ErrConflict, i18n.M("store.code_taken"))
 		}
 		return nil, fmt.Errorf("store: 更新账号失败: %w", err)
 	}
@@ -400,7 +401,7 @@ func (s *Store) Credentials(ctx context.Context, id string) (*ociclient.Credenti
 	}
 	key, err := ociclient.ParsePrivateKey(pem)
 	if err != nil {
-		return nil, fmt.Errorf("已存储的私钥无法解析: %w", err)
+		return nil, i18n.Wrap(err, "store.stored_key_unparseable")
 	}
 
 	return &ociclient.Credentials{
@@ -468,13 +469,13 @@ func (s *Store) nextColorIndex(ctx context.Context) (int, error) {
 func NormalizeCode(code string) (string, error) {
 	c := strings.ToUpper(strings.TrimSpace(code))
 	if len(c) < 2 || len(c) > 4 {
-		return "", errors.New("账号代号必须是 2–4 个字符")
+		return "", i18n.Err("store.code_length")
 	}
 	for _, r := range c {
 		isLetter := r >= 'A' && r <= 'Z'
 		isDigit := r >= '0' && r <= '9'
 		if !isLetter && !isDigit {
-			return "", errors.New("账号代号只能包含字母和数字")
+			return "", i18n.Err("store.code_charset")
 		}
 	}
 	return c, nil

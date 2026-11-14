@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ocicore/internal/auth"
+	"ocicore/internal/i18n"
 	"ocicore/internal/store"
 )
 
@@ -64,7 +65,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if count > 0 {
-		writeError(w, http.StatusConflict, "already_initialized", "系统已完成初始化")
+		writeError(w, http.StatusConflict, "already_initialized", i18n.M("api.already_initialized"))
 		return
 	}
 
@@ -74,12 +75,12 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
-		writeError(w, http.StatusBadRequest, "invalid_username", "用户名不能为空")
+		writeError(w, http.StatusBadRequest, "invalid_username", i18n.M("api.username_required"))
 		return
 	}
 	if len([]rune(req.Password)) < minPasswordLen {
 		writeError(w, http.StatusBadRequest, "weak_password",
-			"口令至少需要 10 个字符")
+			i18n.M("api.password_too_short"))
 		return
 	}
 
@@ -91,7 +92,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	// 上面的 count 只是提前拒绝，真正守住"零用户"的是这条原子插入。
 	user, err := s.st.CreateFirstUser(r.Context(), req.Username, hash)
 	if errors.Is(err, store.ErrAlreadyInitialized) {
-		writeError(w, http.StatusConflict, "already_initialized", "系统已完成初始化")
+		writeError(w, http.StatusConflict, "already_initialized", i18n.M("api.already_initialized"))
 		return
 	}
 	if err != nil {
@@ -117,11 +118,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 // 损坏之类的内部问题。
 func writeHashError(w http.ResponseWriter, what string, err error) {
 	if errors.Is(err, auth.ErrBusy) {
-		writeError(w, http.StatusServiceUnavailable, "busy", "请求过多，请稍后再试")
+		writeError(w, http.StatusServiceUnavailable, "busy", i18n.M("api.busy"))
 		return
 	}
 	slog.Error(what, "err", err)
-	writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+	writeError(w, http.StatusInternalServerError, "internal", i18n.M("api.internal"))
 }
 
 // ---- 登录 ----
@@ -141,7 +142,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	allowed, remaining := s.logins.Reserve(ip)
 	if !allowed {
 		writeError(w, http.StatusTooManyRequests, "rate_limited",
-			"登录失败次数过多，请 15 分钟后再试")
+			i18n.M("api.login_locked"))
 		return
 	}
 
@@ -158,7 +159,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		writeJSON(w, http.StatusUnauthorized, errorBody{
 			Code:    "invalid_credentials",
-			Message: "用户名或口令错误，还可尝试 " + itoa(remaining) + " 次",
+			Message: i18n.M("api.login_failed", remaining),
 		})
 	}
 
@@ -191,7 +192,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.NewToken()
 	if err != nil {
 		slog.Error("生成会话令牌失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeError(w, http.StatusInternalServerError, "internal", i18n.M("api.internal"))
 		return
 	}
 
@@ -200,7 +201,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// 快照已过时，拒绝这次登录而不是按旧状态放行。
 	if err := s.st.CreateLoginSession(r.Context(), user, token, ip, r.UserAgent(), s.cfg.SessionTTL); err != nil {
 		if errors.Is(err, store.ErrAuthStateChanged) {
-			writeError(w, http.StatusConflict, "auth_state_changed", "账户的认证设置刚刚发生变化，请重新登录")
+			writeError(w, http.StatusConflict, "auth_state_changed", i18n.M("api.auth_changed"))
 			return
 		}
 		writeStoreError(w, err)
@@ -229,13 +230,13 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 
 	if !user.TOTPEnabled {
-		writeError(w, http.StatusBadRequest, "totp_not_enabled", "该账户未启用两步验证")
+		writeError(w, http.StatusBadRequest, "totp_not_enabled", i18n.M("api.totp_not_enabled"))
 		return
 	}
 
 	allowed, _ := s.logins.Reserve("totp:" + ip)
 	if !allowed {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后再试")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", i18n.M("api.rate_limited"))
 		return
 	}
 
@@ -249,7 +250,7 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 		_ = s.st.Audit(r.Context(), store.AuditEntry{
 			UserID: user.ID, Action: "totp_verify", IP: ip, Result: store.ResultFail,
 		})
-		writeError(w, http.StatusUnauthorized, "invalid_code", "验证码不正确")
+		writeError(w, http.StatusUnauthorized, "invalid_code", i18n.M("api.invalid_code"))
 		return
 	}
 
@@ -261,7 +262,7 @@ func (s *Server) handleTOTPVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	if !fresh {
 		writeError(w, http.StatusUnauthorized, "code_reused",
-			"该验证码已被使用，请等待下一个验证码")
+			i18n.M("api.code_reused"))
 		return
 	}
 
@@ -320,14 +321,14 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	if user.TOTPEnabled {
 		writeError(w, http.StatusConflict, "already_enabled",
-			"两步验证已启用。如需重新绑定，请先关闭。")
+			i18n.M("api.totp_rebind"))
 		return
 	}
 
 	secret, err := auth.GenerateTOTPSecret()
 	if err != nil {
 		slog.Error("生成 TOTP 密钥失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeError(w, http.StatusInternalServerError, "internal", i18n.M("api.internal"))
 		return
 	}
 	if err := s.st.SetTOTPSecret(r.Context(), user.ID, secret); err != nil {
@@ -343,11 +344,11 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	if user.TOTPEnabled {
-		writeError(w, http.StatusConflict, "already_enabled", "两步验证已启用")
+		writeError(w, http.StatusConflict, "already_enabled", i18n.M("api.totp_already"))
 		return
 	}
 	if user.TOTPSecret == "" {
-		writeError(w, http.StatusBadRequest, "no_secret", "请先获取绑定密钥")
+		writeError(w, http.StatusBadRequest, "no_secret", i18n.M("api.no_secret"))
 		return
 	}
 
@@ -358,7 +359,7 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	counter, ok := auth.VerifyTOTPWithCounter(user.TOTPSecret, req.Code, time.Now())
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_code",
-			"验证码不正确。请确认手机时间准确，并使用当前显示的验证码。")
+			i18n.M("api.invalid_code_clock"))
 		return
 	}
 	// EnableTOTP 会撤销该用户的全部会话：启用前的会话只通过了口令，
@@ -386,7 +387,7 @@ func (s *Server) reissueSession(w http.ResponseWriter, r *http.Request, userID s
 	token, err := auth.NewToken()
 	if err != nil {
 		slog.Error("生成会话令牌失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeError(w, http.StatusInternalServerError, "internal", i18n.M("api.internal"))
 		return false
 	}
 	ip, ua := s.clientIP(r), r.UserAgent()
@@ -398,7 +399,7 @@ func (s *Server) reissueSession(w http.ResponseWriter, r *http.Request, userID s
 	if err != nil {
 		if errors.Is(err, store.ErrAuthStateChanged) {
 			s.clearSessionCookie(w, r)
-			writeError(w, http.StatusConflict, "auth_state_changed", "账户的认证设置刚刚发生变化，请重新登录")
+			writeError(w, http.StatusConflict, "auth_state_changed", i18n.M("api.auth_changed"))
 			return false
 		}
 		writeStoreError(w, err)
@@ -423,14 +424,14 @@ type disableTOTPRequest struct {
 func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	if !user.TOTPEnabled {
-		writeError(w, http.StatusBadRequest, "totp_not_enabled", "该账户未启用两步验证")
+		writeError(w, http.StatusBadRequest, "totp_not_enabled", i18n.M("api.totp_not_enabled"))
 		return
 	}
 
 	ip := s.clientIP(r)
 	allowed, _ := s.logins.Reserve("totp:" + ip)
 	if !allowed {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后再试")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", i18n.M("api.rate_limited"))
 		return
 	}
 
@@ -445,13 +446,13 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "口令不正确")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", i18n.M("api.wrong_password"))
 		return
 	}
 
 	counter, valid := auth.VerifyTOTPWithCounter(user.TOTPSecret, req.Code, time.Now())
 	if !valid {
-		writeError(w, http.StatusUnauthorized, "invalid_code", "验证码不正确")
+		writeError(w, http.StatusUnauthorized, "invalid_code", i18n.M("api.invalid_code"))
 		return
 	}
 	// 消费时间窗、关闭 TOTP、撤销全部会话在同一事务里完成。
@@ -465,7 +466,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	}
 	if !fresh {
 		writeError(w, http.StatusUnauthorized, "code_reused",
-			"该验证码已被使用，请等待下一个验证码")
+			i18n.M("api.code_reused"))
 		return
 	}
 	// DisableTOTP 已在同一事务里关掉了危险操作复核开关。
@@ -479,7 +480,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"message": "两步验证已关闭。这个面板持有全部 Oracle 租户的控制权，建议尽快重新绑定。",
+		"message": i18n.M("api.totp_disabled_msg"),
 	})
 }
 
@@ -503,11 +504,11 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "当前口令不正确")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", i18n.M("api.wrong_current_password"))
 		return
 	}
 	if len([]rune(req.New)) < minPasswordLen {
-		writeError(w, http.StatusBadRequest, "weak_password", "新口令至少需要 10 个字符")
+		writeError(w, http.StatusBadRequest, "weak_password", i18n.M("api.new_password_short"))
 		return
 	}
 
@@ -527,7 +528,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"message": "口令已更新，所有会话已下线，请重新登录",
+		"message": i18n.M("api.password_updated"),
 	})
 }
 

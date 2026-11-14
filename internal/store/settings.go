@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+
+	"ocicore/internal/i18n"
 )
 
 // 设置项的键名。用常量而非散落的字面量，避免拼写错误导致读到默认值却不报错。
@@ -15,6 +17,7 @@ const (
 	SettingSyncIntervalMinutes  = "sync.interval_minutes"
 	SettingCheckIntervalHours   = "check.interval_hours"
 	SettingAuditRetentionDays   = "audit.retention_days"
+	SettingLanguage             = "ui.language"
 )
 
 // Settings 是操作策略与运行参数。
@@ -40,6 +43,11 @@ type Settings struct {
 	// 一旦被自动删掉就再也追不回来了——这种事必须由用户显式选择，
 	// 不能替他决定。存储压力也不构成理由：按几十行/天算，一年不过几 MB。
 	AuditRetentionDays int `json:"auditRetentionDays"`
+	// Language 是通知与后台任务文案用的语言（zh-CN / en）。
+	//
+	// 界面语言跟着各自的浏览器走，存在前端；但推送到 Telegram 等渠道的消息
+	// 没有「读者的浏览器」可问，只能按这里的设置写。
+	Language string `json:"language"`
 }
 
 // DefaultSettings 返回出厂默认值。
@@ -54,6 +62,7 @@ func DefaultSettings() Settings {
 		CheckIntervalHours: 6,
 		// 0 = 永久保留。见字段注释。
 		AuditRetentionDays: 0,
+		Language:           string(i18n.Default),
 	}
 }
 
@@ -92,6 +101,10 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 			if n, err := strconv.Atoi(value); err == nil && n >= 0 {
 				out.AuditRetentionDays = n
 			}
+		case SettingLanguage:
+			if i18n.Valid(value) {
+				out.Language = value
+			}
 		}
 	}
 	return out, rows.Err()
@@ -105,6 +118,7 @@ type SettingsUpdate struct {
 	SyncIntervalMinutes  *int
 	CheckIntervalHours   *int
 	AuditRetentionDays   *int
+	Language             *string
 }
 
 // UpdateSettings 写入设置并返回更新后的完整配置。
@@ -145,7 +159,7 @@ func (s *Store) UpdateSettings(ctx context.Context, up SettingsUpdate) (Settings
 		// 而实时性本来就由 SSE 与生命周期轮询保证，全量同步只是兜底对账。
 		// 下限放在这里而不是前端：前端能绕过，这里绕不过。
 		if n < 2 || n > 1440 {
-			return Settings{}, fmt.Errorf("同步间隔必须在 2–1440 分钟之间，当前 %d", n)
+			return Settings{}, i18n.Err("store.sync_interval_range", n)
 		}
 		if err := put(SettingSyncIntervalMinutes, strconv.Itoa(n)); err != nil {
 			return Settings{}, fmt.Errorf("store: 写入设置失败: %w", err)
@@ -158,7 +172,7 @@ func (s *Store) UpdateSettings(ctx context.Context, up SettingsUpdate) (Settings
 		// 其余下限 1 小时：凭据失效是低频事件，比这更密没有意义。
 		// 上限一周：再长就等于没有，不如直接关掉说得明白。
 		if n != 0 && (n < 1 || n > 168) {
-			return Settings{}, fmt.Errorf("校验间隔必须是 0（关闭）或 1–168 小时，当前 %d", n)
+			return Settings{}, i18n.Err("store.check_interval_range", n)
 		}
 		if err := put(SettingCheckIntervalHours, strconv.Itoa(n)); err != nil {
 			return Settings{}, fmt.Errorf("store: 写入设置失败: %w", err)
@@ -169,9 +183,18 @@ func (s *Store) UpdateSettings(ctx context.Context, up SettingsUpdate) (Settings
 		n := *up.AuditRetentionDays
 		// 下限 7 天：比这更短就等于没有审计了。0 是"永久保留"，单独放行。
 		if n != 0 && (n < 7 || n > 3650) {
-			return Settings{}, fmt.Errorf("审计保留天数必须是 0（永久）或 7–3650 天，当前 %d", n)
+			return Settings{}, i18n.Err("store.retention_range", n)
 		}
 		if err := put(SettingAuditRetentionDays, strconv.Itoa(n)); err != nil {
+			return Settings{}, fmt.Errorf("store: 写入设置失败: %w", err)
+		}
+	}
+
+	if up.Language != nil {
+		if !i18n.Valid(*up.Language) {
+			return Settings{}, i18n.Err("store.language_invalid", *up.Language)
+		}
+		if err := put(SettingLanguage, *up.Language); err != nil {
 			return Settings{}, fmt.Errorf("store: 写入设置失败: %w", err)
 		}
 	}

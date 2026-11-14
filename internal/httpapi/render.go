@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/store"
 )
 
@@ -16,7 +17,7 @@ const maxRequestBytes = 256 << 10 // 256 KiB
 
 // errorBody 是统一的错误响应格式。
 //
-// Code 是稳定的机器可读标识，Message 是给用户看的中文说明。
+// Code 是稳定的机器可读标识，Message 是给用户看的说明，按请求语言渲染。
 // 涉及 OCI 调用失败时额外带上 OciCode —— 设计稿要求原始错误码必须
 // 原样可见、可复制，用户需要拿它去搜索。
 type errorBody struct {
@@ -32,9 +33,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if v == nil {
 		return
 	}
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+	data, err := json.Marshal(v)
+	if err != nil {
 		slog.Error("写入响应失败", "err", err)
+		return
 	}
+	// 服务端生成的文字是消息信封，到这里才按请求语言展开。
+	data = i18n.RenderJSON(langOf(w), data)
+	_, _ = w.Write(append(data, '\n'))
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
@@ -45,12 +51,12 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "记录不存在")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.not_found"))
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	default:
 		slog.Error("数据库操作失败", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+		writeError(w, http.StatusInternalServerError, "internal", i18n.M("api.internal"))
 	}
 }
 
@@ -65,10 +71,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		// 排查时会往 JSON 语法上想，而实际是前端漏传了参数。
 		if errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "empty_body",
-				"请求没有携带任何内容。这通常是前端漏传了参数，不是格式问题。")
+				i18n.M("api.empty_body"))
 			return false
 		}
-		writeError(w, http.StatusBadRequest, "bad_request", "请求内容格式有误: "+err.Error())
+		writeError(w, http.StatusBadRequest, "bad_request", i18n.M("api.bad_body", err.Error()))
 		return false
 	}
 	return true

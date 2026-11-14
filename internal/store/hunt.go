@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 任务状态。
@@ -82,7 +84,7 @@ func (t *HuntTask) ADList() []string {
 }
 
 // ErrHuntNotFound 表示任务不存在。
-var ErrHuntNotFound = errors.New("任务不存在")
+var ErrHuntNotFound = i18n.Err("store.task_missing")
 
 // CreateHuntTask 写入一个新任务。
 func (s *Store) CreateHuntTask(ctx context.Context, t HuntTask) (*HuntTask, error) {

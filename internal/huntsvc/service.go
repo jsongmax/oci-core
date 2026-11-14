@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/ociconn"
@@ -216,7 +217,7 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 	client, acc, err := s.conns.ForID(ctx, t.AccountID)
 	if err != nil {
 		// 凭据拿不到属于账号级问题，重试没有意义。
-		s.finish(ctx, t, store.HuntFailed, "AuthFailed", "读取账号凭据失败："+err.Error())
+		s.finish(ctx, t, store.HuntFailed, "AuthFailed", i18n.M("hunt.creds_failed", err.Error()))
 		return
 	}
 
@@ -241,14 +242,14 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 
 	ad, err := s.pickAD(ctx, client, acc, t)
 	if err != nil {
-		s.reschedule(ctx, t, "Transient", "读取可用域失败："+err.Error(), t.LastAD)
+		s.reschedule(ctx, t, "Transient", i18n.M("hunt.ads_failed", err.Error()), t.LastAD)
 		return
 	}
 
 	subnetID := spec.SubnetID
 	if subnetID == "" {
 		if !spec.AutoCreateNetwork {
-			s.finish(ctx, t, store.HuntFailed, "BadRequest", "任务没有子网，也没有勾选自动创建网络")
+			s.finish(ctx, t, store.HuntFailed, "BadRequest", i18n.M("hunt.no_subnet"))
 			return
 		}
 		netResult, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
@@ -257,7 +258,7 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 			EnableIPv6:    spec.EnableIPv6,
 		})
 		if err != nil {
-			s.reschedule(ctx, t, "Transient", "准备网络失败："+shortErr(err), ad)
+			s.reschedule(ctx, t, "Transient", i18n.M("hunt.network_failed", shortErr(err)), ad)
 			return
 		}
 		subnetID = netResult.SubnetID
@@ -268,7 +269,7 @@ func (s *Service) attempt(ctx context.Context, t *store.HuntTask) {
 	if spec.EnableIPv6 && !s.ipv6Prepared(t.ID, subnetID) {
 		prep, err := netsvc.PrepareIPv6(ctx, client, t.Region, subnetID)
 		if err != nil {
-			s.reschedule(ctx, t, "Transient", "为子网开通 IPv6 失败："+shortErr(err), ad)
+			s.reschedule(ctx, t, "Transient", i18n.M("hunt.v6_failed", shortErr(err)), ad)
 			return
 		}
 		for _, warn := range prep.Warnings {
@@ -322,10 +323,10 @@ func (s *Service) markIPv6Prepared(taskID, subnetID string) {
 // shouldStop 判断任务是否已经该停了。
 func (s *Service) shouldStop(t *store.HuntTask) (bool, string) {
 	if t.MaxAttempts > 0 && t.Attempts >= t.MaxAttempts {
-		return true, fmt.Sprintf("已达到最大尝试次数 %d，任务停止", t.MaxAttempts)
+		return true, i18n.M("hunt.max_attempts", t.MaxAttempts)
 	}
 	if !t.ExpiresAt.IsZero() && time.Now().After(t.ExpiresAt) {
-		return true, "任务已到期，自动停止"
+		return true, i18n.M("hunt.expired")
 	}
 	return false, ""
 }
@@ -374,7 +375,7 @@ func (s *Service) pickAD(ctx context.Context, client *ociclient.Client,
 		}
 	}
 	if len(ads) == 0 {
-		return "", errors.New("该区域没有可用域")
+		return "", i18n.Err("hunt.no_ads")
 	}
 
 	// 从上次用过的那个往后挪一格。找不到（首次、或 AD 列表变了）就从头开始。
@@ -458,7 +459,7 @@ func (s *Service) handleLaunchError(ctx context.Context, t *store.HuntTask,
 	switch class {
 	case ociclient.ClassQuotaExceeded:
 		s.finish(ctx, t, store.HuntFailed, name,
-			"配额已满，继续重试没有意义："+msg)
+			i18n.M("hunt.quota_full", msg))
 		return
 
 	case ociclient.ClassAuthFailed, ociclient.ClassNotAuthorized, ociclient.ClassBadRequest:
@@ -476,7 +477,7 @@ func (s *Service) handleLaunchError(ctx context.Context, t *store.HuntTask,
 			slog.Warn("守候：账号级降速失败", "account", acc.ID, "err", e)
 		}
 		s.record(ctx, t, store.HuntAttempt{
-			Class: name, Error: "被 Oracle 限流，该账号全部任务已降速：" + msg,
+			Class: name, Error: i18n.M("hunt.throttled", msg),
 			AD: ad, NextAt: until,
 		})
 		return
@@ -529,7 +530,7 @@ func (s *Service) finish(ctx context.Context, t *store.HuntTask, state, class, m
 		NextAt: time.Time{},
 	})
 	if s.onEvent != nil {
-		s.onEvent(ctx, "hunt.stopped", "守候任务已停止："+t.Name, msg)
+		s.onEvent(ctx, "hunt.stopped", i18n.M("hunt.stopped_title", t.Name), msg)
 	}
 	slog.Info("守候：任务停止", "task", t.ID, "state", state, "reason", msg)
 }
@@ -547,8 +548,8 @@ func (s *Service) succeed(ctx context.Context, t *store.HuntTask, client *ocicli
 		s.onLaunch(ctx, t, inst, t.Region, spec.SubnetID, spec.ImageID)
 	}
 	if s.onEvent != nil {
-		s.onEvent(ctx, "hunt.succeeded", "守候成功："+t.Name,
-			fmt.Sprintf("已在 %s 创建 %s（尝试 %d 次）", ad, inst.DisplayName, t.Attempts+1))
+		s.onEvent(ctx, "hunt.succeeded", i18n.M("hunt.ok_title", t.Name),
+			i18n.M("hunt.ok_body", ad, inst.DisplayName, t.Attempts+1))
 	}
 	slog.Info("守候：抢到了", "task", t.ID, "instance", inst.ID, "ad", ad, "attempts", t.Attempts+1)
 }
@@ -595,9 +596,9 @@ func (s *Service) noCapacity(ctx context.Context, client *ociclient.Client,
 
 	switch report.StatusOf(spec.Shape) {
 	case ociclient.CapacityOutOfHost:
-		return true, "容量预检：该可用域暂时没有容量，已跳过本轮创建请求"
+		return true, i18n.M("hunt.precheck_out")
 	case ociclient.CapacityHardwareNotSupported:
-		return true, "容量预检：该区域未部署此规格的硬件。这个状态不会自行改变，请换规格或换区域"
+		return true, i18n.M("hunt.precheck_no_hw")
 	default:
 		return false, ""
 	}

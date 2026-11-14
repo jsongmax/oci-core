@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // Channel 是一个通知渠道。
@@ -83,10 +85,10 @@ func (s *Store) GetChannel(ctx context.Context, id string) (*Channel, error) {
 // CreateChannel 新建通知渠道。
 func (s *Store) CreateChannel(ctx context.Context, in NewChannel) (*Channel, error) {
 	if strings.TrimSpace(in.Name) == "" {
-		return nil, errors.New("渠道名称不能为空")
+		return nil, i18n.Err("store.channel_name_required")
 	}
 	if strings.TrimSpace(in.Kind) == "" {
-		return nil, errors.New("渠道类型不能为空")
+		return nil, i18n.Err("store.channel_kind_required")
 	}
 
 	id, err := newID()
@@ -125,7 +127,7 @@ func (s *Store) UpdateChannel(ctx context.Context, id string, up ChannelUpdate) 
 	if up.Name != nil {
 		name := strings.TrimSpace(*up.Name)
 		if name == "" {
-			return nil, errors.New("渠道名称不能为空")
+			return nil, i18n.Err("store.channel_name_required")
 		}
 		sets = append(sets, "name = ?")
 		args = append(args, name)
@@ -216,7 +218,7 @@ func (s *Store) scanChannel(sc rowScanner) (*Channel, error) {
 	// 解不开时不让整张渠道列表跟着失败：配置置空、原因写进 LastError，
 	// 发送会因缺少字段报错，用户在通知页能看到并重新填写。
 	if plain, err := s.openText(configJSON, aadChannelConfig+ch.ID); err != nil {
-		ch.LastError = "渠道配置解密失败（主密钥是否换过？），请重新填写配置"
+		ch.LastError = i18n.M("store.channel_decrypt_failed")
 	} else {
 		_ = json.Unmarshal([]byte(plain), &ch.Config)
 	}

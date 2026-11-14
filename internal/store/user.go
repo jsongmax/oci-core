@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // User 是面板的登录用户。P0 只支持单用户；多用户与 RBAC 在路线图后段。
@@ -41,7 +43,7 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (*User, error) {
 	name := strings.TrimSpace(username)
 	if name == "" {
-		return nil, errors.New("用户名不能为空")
+		return nil, i18n.Err("store.username_required")
 	}
 	id, err := newID()
 	if err != nil {
@@ -53,7 +55,7 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash string) (
 		VALUES (?,?,?,?,?)`, id, name, passwordHash, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return nil, fmt.Errorf("%w: 用户名已存在", ErrConflict)
+			return nil, fmt.Errorf("%w: %s", ErrConflict, i18n.M("store.username_taken"))
 		}
 		return nil, fmt.Errorf("store: 创建用户失败: %w", err)
 	}
@@ -71,7 +73,7 @@ var ErrAlreadyInitialized = errors.New("store: 系统已完成初始化")
 func (s *Store) CreateFirstUser(ctx context.Context, username, passwordHash string) (*User, error) {
 	name := strings.TrimSpace(username)
 	if name == "" {
-		return nil, errors.New("用户名不能为空")
+		return nil, i18n.Err("store.username_required")
 	}
 	id, err := newID()
 	if err != nil {
@@ -158,7 +160,7 @@ func (s *Store) SetTOTPSecret(ctx context.Context, userID, secret string) error 
 		if _, err := s.GetUser(ctx, userID); err != nil {
 			return err
 		}
-		return fmt.Errorf("%w: 两步验证已启用，请先关闭再重新绑定", ErrConflict)
+		return fmt.Errorf("%w: %s", ErrConflict, i18n.M("store.totp_already_enabled"))
 	}
 	return nil
 }

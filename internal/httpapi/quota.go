@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -97,9 +98,9 @@ var quotaSpecs = []struct {
 	scope   ociclient.LimitScope
 }{
 	{"ocpu", ociclient.LimitServiceCompute, ociclient.LimitARMCores, "ARM OCPU", ociclient.ScopeRegion},
-	{"memory", ociclient.LimitServiceCompute, ociclient.LimitARMMemory, "ARM 内存 (GB)", ociclient.ScopeRegion},
-	{"micro", ociclient.LimitServiceCompute, ociclient.LimitE2MicroVMs, "AMD 微型实例", ociclient.ScopeAD},
-	{"block", ociclient.LimitServiceBlockStorage, ociclient.LimitStorageGB, "块存储 · 免费额度 (GB)", ociclient.ScopeRegion},
+	{"memory", ociclient.LimitServiceCompute, ociclient.LimitARMMemory, i18n.M("api.quota.arm_mem"), ociclient.ScopeRegion},
+	{"micro", ociclient.LimitServiceCompute, ociclient.LimitE2MicroVMs, i18n.M("api.quota.micro"), ociclient.ScopeAD},
+	{"block", ociclient.LimitServiceBlockStorage, ociclient.LimitStorageGB, i18n.M("api.quota.block"), ociclient.ScopeRegion},
 }
 
 func (s *Server) handleQuota(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +158,7 @@ func (s *Server) accountQuota(ctx context.Context, acc *store.Account, refresh b
 
 	result := AccountQuota{AccountID: acc.ID, Region: region, FetchedAt: time.Now()}
 	if !acc.Enabled {
-		result.Error = "账号已禁用"
+		result.Error = i18n.M("api.quota.disabled")
 		return result
 	}
 
@@ -268,7 +269,7 @@ func (s *Server) handleInstanceMetrics(w http.ResponseWriter, r *http.Request) {
 		"series":     out,
 		// 没装 Oracle Cloud Agent 的实例查不到任何数据，接口会正常返回空序列。
 		// 前端要能区分"没数据"与"调用失败"，因此这里给一句说明。
-		"notice": "监控数据依赖实例内运行的 Oracle Cloud Agent。若所有序列均为空，请确认该服务已启用。",
+		"notice": i18n.M("api.metrics_notice"),
 	})
 }
 
@@ -288,7 +289,7 @@ func fetchQuotaItem(ctx context.Context, client *ociclient.Client,
 		return item
 	}
 	if len(values) == 0 {
-		item.Error = "该区域没有这项限额"
+		item.Error = i18n.M("api.quota.no_limit")
 		return item
 	}
 
@@ -310,7 +311,7 @@ func fetchQuotaItem(ctx context.Context, client *ociclient.Client,
 	if scope != ociclient.ScopeAD {
 		domains = []string{""}
 	} else if len(domains) == 0 {
-		item.Error = "限额未返回可用区，无法查询用量"
+		item.Error = i18n.M("api.quota.no_ad")
 		return item
 	}
 
@@ -346,7 +347,7 @@ func fetchQuotaItem(ctx context.Context, client *ociclient.Client,
 		item.Used = usedSum
 	} else if firstErr != "" {
 		// 上限是可信的，用量不是——把原因留下，但不要因此把整项标成未知。
-		item.Error = "用量查询失败: " + firstErr
+		item.Error = i18n.M("api.quota.usage_failed", firstErr)
 	}
 	return item
 }

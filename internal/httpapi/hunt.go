@@ -5,11 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"ocicore/internal/huntsvc"
+	"ocicore/internal/i18n"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -104,16 +104,16 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AccountID == "" || req.Shape == "" || req.ImageID == "" {
 		writeError(w, http.StatusBadRequest, "missing_fields",
-			"accountId、shape 与 imageId 为必填项")
+			i18n.M("api.need_account_shape_image"))
 		return
 	}
 	if strings.TrimSpace(req.DisplayName) == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "请填写实例名称")
+		writeError(w, http.StatusBadRequest, "missing_fields", i18n.M("api.name_required"))
 		return
 	}
 	if req.SubnetID == "" && !req.AutoCreateNetwork {
 		writeError(w, http.StatusBadRequest, "missing_subnet",
-			"请选择子网，或勾选自动创建网络——任务在后台跑，中途没法再问你要参数")
+			i18n.M("api.hunt_need_subnet"))
 		return
 	}
 
@@ -137,8 +137,7 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if active > 0 {
 		writeError(w, http.StatusConflict, "hunt_already_running",
-			"该账号已有一个守候任务在运行。容量是账号级共享的，并行不会更快，"+
-				"只会让请求量翻倍。请先停掉现有任务。")
+			i18n.M("api.hunt_running"))
 		return
 	}
 
@@ -154,7 +153,7 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(ads) == 0 {
-			writeError(w, http.StatusBadRequest, "no_ad", "该区域没有可用域")
+			writeError(w, http.StatusBadRequest, "no_ad", i18n.M("api.no_ads"))
 			return
 		}
 		ad = ads[0].Name
@@ -174,7 +173,7 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == nil {
 		writeError(w, http.StatusBadRequest, "invalid_shape",
-			"该可用域不提供规格 "+req.Shape)
+			i18n.M("api.shape_not_in_ad", req.Shape))
 		return
 	}
 	if target.IsFlexible {
@@ -247,14 +246,13 @@ func (s *Server) handleCreateHuntTask(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "hunt_create", AccountID: acc.ID,
-		Target: name, Detail: req.Shape + " · " + region + " · 每 " + strconv.Itoa(interval) + " 秒",
+		Target: name, Detail: i18n.M("api.hunt_detail", req.Shape, region, interval),
 		IP: s.clientIP(r),
 	})
 
-	notice := "任务已启动，第一次尝试会立刻进行。"
+	notice := i18n.M("api.hunt_started")
 	if interval < huntsvc.WarnIntervalSeconds {
-		notice += "注意：你设置的间隔低于 " + strconv.Itoa(huntsvc.WarnIntervalSeconds) +
-			" 秒，被 Oracle 限流的概率明显更高。"
+		notice += i18n.M("api.hunt_fast_warn", huntsvc.WarnIntervalSeconds)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"task":   toHuntDTO(*task),
@@ -273,13 +271,13 @@ func (s *Server) handleSetHuntState(w http.ResponseWriter, r *http.Request) {
 	case "resume":
 		state = store.HuntRunning
 	default:
-		writeError(w, http.StatusBadRequest, "bad_action", "只支持 pause 或 resume")
+		writeError(w, http.StatusBadRequest, "bad_action", i18n.M("api.hunt_bad_action"))
 		return
 	}
 
 	task, err := s.st.SetHuntState(r.Context(), id, state)
 	if errors.Is(err, store.ErrHuntNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.hunt_missing"))
 		return
 	}
 	if err != nil {
@@ -301,7 +299,7 @@ func (s *Server) handleDeleteHuntTask(w http.ResponseWriter, r *http.Request) {
 	// 先读一次拿名字与账号，删完就查不到了，审计日志会缺关键信息。
 	task, err := s.st.GetHuntTask(r.Context(), id)
 	if errors.Is(err, store.ErrHuntNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "任务不存在")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.hunt_missing"))
 		return
 	}
 	if err != nil {
@@ -321,7 +319,7 @@ func (s *Server) handleDeleteHuntTask(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
-		"notice": "任务已删除。已抢到的实例不受影响，要销毁请去实例页终止。",
+		"notice": i18n.M("api.hunt_deleted"),
 	})
 }
 

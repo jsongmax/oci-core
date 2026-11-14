@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"ocicore/internal/i18n"
 )
 
 // redirectTransport 把所有请求改发到测试服务器，路径与请求体原样保留。
@@ -131,7 +133,7 @@ func TestCapacityStatusTextCoversKnownStates(t *testing.T) {
 func TestCapacityErrorTextNamesMissingPolicy(t *testing.T) {
 	err := &APIError{StatusCode: 404, Code: "NotAuthorizedOrNotFound",
 		Message: "Authorization failed or requested resource not found.", Class: ClassNotAuthorized}
-	if got := CapacityErrorText(err); !strings.Contains(got, "compute-capacity-reports") {
+	if got := i18n.Render(i18n.ZH, CapacityErrorText(err)); !strings.Contains(got, "compute-capacity-reports") {
 		t.Errorf("无权限的提示里应包含所需策略，实际 %q", got)
 	}
 }

@@ -2,12 +2,12 @@ package instancesvc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -22,13 +22,13 @@ const (
 
 var (
 	// ErrVnicLimit 表示已达到规格允许的网卡数上限。
-	ErrVnicLimit = errors.New("已达到该规格的网卡数上限")
+	ErrVnicLimit = i18n.Err("vnic.limit")
 	// ErrPrimaryVnic 表示试图分离主网卡。OCI 本身也会拒绝，这里提前拦下给出人话。
-	ErrPrimaryVnic = errors.New("主网卡不能分离，只能分离附属网卡")
+	ErrPrimaryVnic = i18n.Err("vnic.primary")
 	// ErrVnicNotFound 表示挂载关系不属于该实例，或已经分离。
-	ErrVnicNotFound = errors.New("这张网卡不属于该实例，或已经分离")
+	ErrVnicNotFound = i18n.Err("vnic.not_found")
 	// ErrVnicInvalid 表示请求本身不成立（子网不匹配、子网禁公网 IP 等）。
-	ErrVnicInvalid = errors.New("网卡参数无效")
+	ErrVnicInvalid = i18n.Err("vnic.invalid")
 )
 
 // AttachVnicRequest 是添加附属网卡的参数。
@@ -58,11 +58,11 @@ func (s *Service) AttachVnic(ctx context.Context, instanceID string, req AttachV
 		return nil, nil, err
 	}
 	if cached.LifecycleState == ociclient.LifecycleTerminating || cached.LifecycleState == ociclient.LifecycleTerminated {
-		return nil, nil, fmt.Errorf("%w：实例已终止", ErrVnicInvalid)
+		return nil, nil, fmt.Errorf("%w: %s", ErrVnicInvalid, i18n.M("vnic.terminated"))
 	}
 	req.SubnetID = strings.TrimSpace(req.SubnetID)
 	if req.SubnetID == "" {
-		return nil, nil, fmt.Errorf("%w：请选择子网", ErrVnicInvalid)
+		return nil, nil, fmt.Errorf("%w: %s", ErrVnicInvalid, i18n.M("vnic.subnet_required"))
 	}
 
 	client, acc, err := s.conns.ForID(ctx, cached.AccountID)
@@ -85,8 +85,8 @@ func (s *Service) AttachVnic(ctx context.Context, instanceID string, req AttachV
 		}
 	}
 	if inst.ShapeConfig != nil && inst.ShapeConfig.MaxVnicAttachments > 0 && used >= inst.ShapeConfig.MaxVnicAttachments {
-		return nil, nil, fmt.Errorf("%w：%s 当前配置最多 %d 张网卡，已有 %d 张",
-			ErrVnicLimit, inst.Shape, inst.ShapeConfig.MaxVnicAttachments, used)
+		return nil, nil, fmt.Errorf("%w: %s", ErrVnicLimit,
+			i18n.M("vnic.limit_detail", inst.Shape, inst.ShapeConfig.MaxVnicAttachments, used))
 	}
 
 	subnet, err := client.GetSubnet(ctx, cached.Region, req.SubnetID)
@@ -95,12 +95,12 @@ func (s *Service) AttachVnic(ctx context.Context, instanceID string, req AttachV
 	}
 	// 可用域专属子网只能给同一可用域的实例用；区域子网（AD 为空）不受限。
 	if subnet.AvailabilityDomain != "" && subnet.AvailabilityDomain != cached.AvailabilityDomain {
-		return nil, nil, fmt.Errorf("%w：子网 %s 属于另一个可用域，实例在 %s",
-			ErrVnicInvalid, subnet.DisplayName, cached.AvailabilityDomain)
+		return nil, nil, fmt.Errorf("%w: %s", ErrVnicInvalid,
+			i18n.M("vnic.other_ad", subnet.DisplayName, cached.AvailabilityDomain))
 	}
 	if req.AssignPublicIP && subnet.ProhibitPublicIPOnVnic {
-		return nil, nil, fmt.Errorf("%w：子网 %s 禁止分配公网 IP，请换一个子网或不分配公网 IPv4",
-			ErrVnicInvalid, subnet.DisplayName)
+		return nil, nil, fmt.Errorf("%w: %s", ErrVnicInvalid,
+			i18n.M("vnic.no_public", subnet.DisplayName))
 	}
 
 	result := &AttachVnicResult{}
@@ -109,7 +109,7 @@ func (s *Service) AttachVnic(ctx context.Context, instanceID string, req AttachV
 	if req.AssignIPv6 {
 		prep, err := netsvc.PrepareIPv6(ctx, client, cached.Region, req.SubnetID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("没能为子网开通 IPv6，网卡未添加：%w", err)
+			return nil, nil, i18n.Wrap(err, "vnic.v6_failed")
 		}
 		result.Warnings = prep.Warnings
 	}

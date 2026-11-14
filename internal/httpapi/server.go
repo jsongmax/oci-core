@@ -14,6 +14,7 @@ import (
 	"ocicore/internal/capacitysvc"
 	"ocicore/internal/config"
 	"ocicore/internal/huntsvc"
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
@@ -268,7 +269,7 @@ func (s *Server) routes() {
 
 // Handler 返回带全局中间件的处理器。
 func (s *Server) Handler() http.Handler {
-	return securityHeaders(s.mux)
+	return securityHeaders(withLang(s.mux))
 }
 
 // ServeHTTP 让 Server 本身可以作为 http.Handler 使用。
@@ -296,7 +297,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(csrfHeader) != csrfValue {
 			writeError(w, http.StatusForbidden, "csrf",
-				"缺少 "+csrfHeader+" 请求头。跨站请求已被拒绝。")
+				i18n.M("api.csrf", csrfHeader))
 			return
 		}
 		next(w, r)
@@ -352,7 +353,7 @@ func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 		sess, user, token, ok := s.loadSession(r)
 		if !ok {
 			s.clearSessionCookie(w, r)
-			writeError(w, http.StatusUnauthorized, "unauthenticated", "请先登录")
+			writeError(w, http.StatusUnauthorized, "unauthenticated", i18n.M("api.login_required"))
 			return
 		}
 		next(w, r.WithContext(withSession(r.Context(), sess, user, token)))
@@ -365,11 +366,11 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		sess, user, token, ok := s.loadSession(r)
 		if !ok {
 			s.clearSessionCookie(w, r)
-			writeError(w, http.StatusUnauthorized, "unauthenticated", "请先登录")
+			writeError(w, http.StatusUnauthorized, "unauthenticated", i18n.M("api.login_required"))
 			return
 		}
 		if user.TOTPEnabled && !sess.TOTPVerified {
-			writeError(w, http.StatusUnauthorized, "totp_required", "请完成两步验证")
+			writeError(w, http.StatusUnauthorized, "totp_required", i18n.M("api.totp_required"))
 			return
 		}
 

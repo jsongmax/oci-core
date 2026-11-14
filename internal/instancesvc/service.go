@@ -3,7 +3,6 @@ package instancesvc
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/ociconn"
@@ -155,7 +155,7 @@ func (s *Service) setSyncing(v bool) {
 // PruneStaleInstances 互相误删对方刚写入的行。
 func (s *Service) SyncAll(ctx context.Context) (*SyncReport, error) {
 	if !s.syncMu.TryLock() {
-		return nil, fmt.Errorf("同步正在进行中，请稍后再试")
+		return nil, i18n.Err("inst.sync_running")
 	}
 	defer s.syncMu.Unlock()
 
@@ -599,12 +599,12 @@ func (s *Service) markFailedAccounts(ctx context.Context, errs []RegionError) {
 		})
 		s.notify(ctx, notify.Message{
 			Event: notify.EventAccountAuthFail,
-			Title: "账号 " + e.AccountAlias + " 凭据校验失败",
+			Title: i18n.M("inst.auth_fail_title", e.AccountAlias),
 			Body:  e.Advice,
 			Fields: map[string]string{
-				"账号":  e.AccountAlias,
-				"错误码": e.OciCode,
-				"详情":  e.Message,
+				i18n.M("f.account"):    e.AccountAlias,
+				i18n.M("f.error_code"): e.OciCode,
+				i18n.M("f.detail"):     e.Message,
 			},
 		})
 	}

@@ -1,13 +1,14 @@
 package notify
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
 	"syscall"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 出网边界。
@@ -42,7 +43,7 @@ var blockedPrefixes = []netip.Prefix{
 }
 
 // ErrEgressBlocked 表示通知目标落在默认禁止的地址范围内。
-var ErrEgressBlocked = errors.New("通知目标属于回环、内网或链路本地地址，默认禁止访问")
+var ErrEgressBlocked = i18n.Err("notify.err.egress_blocked")
 
 // egressGuard 判断一个目的 IP 能否被通知请求访问。
 type egressGuard struct {
@@ -73,7 +74,7 @@ func (g *egressGuard) checkIP(ip netip.Addr) error {
 		}
 	}
 	if !isPublic(ip) {
-		return fmt.Errorf("%w（%s）；如确需推送到内网，请在 OCICORE_NOTIFY_ALLOWED_NETS 中放行该网段", ErrEgressBlocked, ip)
+		return fmt.Errorf("%w%s", ErrEgressBlocked, i18n.M("notify.err.egress_hint", ip.String()))
 	}
 	return nil
 }
@@ -86,7 +87,7 @@ func (g *egressGuard) control(_, address string, _ syscall.RawConn) error {
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
-		return fmt.Errorf("拨号地址 %q 不是 IP", address)
+		return i18n.Err("notify.err.dial_not_ip", address)
 	}
 	return g.checkIP(ip)
 }
@@ -106,10 +107,10 @@ func newHTTPClient(allowed []netip.Prefix) *http.Client {
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
-				return fmt.Errorf("跳转次数超过 %d 次", maxRedirects)
+				return i18n.Err("notify.err.too_many_redirect", maxRedirects)
 			}
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return fmt.Errorf("不允许跳转到 %s 协议", req.URL.Scheme)
+				return i18n.Err("notify.err.bad_redirect", req.URL.Scheme)
 			}
 			return nil
 		},

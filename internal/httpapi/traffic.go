@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -121,7 +122,7 @@ func (s *Server) handleInstanceTraffic(w http.ResponseWriter, r *http.Request) {
 		"last24hOutBytes": out24h,
 		"last24hInBytes":  in24h,
 		"series":          series,
-		"notice":          "取自 VCN 网卡指标，包含 VCN 内网与同区域 OCI 服务的流量，比账单里的计费出站流量偏大。计费口径以账单页为准。",
+		"notice":          i18n.M("api.traffic_notice"),
 	}
 	// 部分网卡查失败时照样返回已有的数，同时带上错误；全部失败才算整体失败。
 	if failed > 0 {

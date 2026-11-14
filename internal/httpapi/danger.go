@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ocicore/internal/auth"
+	"ocicore/internal/i18n"
 )
 
 // 危险操作的 TOTP 复核。
@@ -84,8 +85,7 @@ func (s *Server) requireDangerTOTP(w http.ResponseWriter, r *http.Request) bool 
 	token := tokenFrom(r.Context())
 	if !user.TOTPEnabled {
 		writeError(w, http.StatusForbidden, "danger_totp_not_enrolled",
-			"已开启「危险操作需重新验证 TOTP」，但当前账户没有绑定两步验证。"+
-				"请先绑定，或在设置中关闭该策略。")
+			i18n.M("api.danger_not_enrolled"))
 		return false
 	}
 	if s.elevations.active(token) {
@@ -94,19 +94,19 @@ func (s *Server) requireDangerTOTP(w http.ResponseWriter, r *http.Request) bool 
 
 	code := strings.TrimSpace(r.Header.Get(dangerCodeHeader))
 	if code == "" {
-		writeError(w, http.StatusForbidden, "danger_totp_required", "该操作需要输入两步验证码")
+		writeError(w, http.StatusForbidden, "danger_totp_required", i18n.M("api.danger_totp_required"))
 		return false
 	}
 
 	// 与登录第二步共用限流：复核同样是在猜 6 位数字。
 	ip := s.clientIP(r)
 	if allowed, _ := s.logins.Reserve("totp:" + ip); !allowed {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后再试")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", i18n.M("api.rate_limited"))
 		return false
 	}
 	counter, ok := auth.VerifyTOTPWithCounter(user.TOTPSecret, code, time.Now())
 	if !ok {
-		writeError(w, http.StatusForbidden, "danger_totp_invalid", "验证码不正确")
+		writeError(w, http.StatusForbidden, "danger_totp_invalid", i18n.M("api.invalid_code"))
 		return false
 	}
 	fresh, err := s.st.ConsumeTOTPCounter(r.Context(), user.ID, counter)
@@ -116,7 +116,7 @@ func (s *Server) requireDangerTOTP(w http.ResponseWriter, r *http.Request) bool 
 	}
 	if !fresh {
 		writeError(w, http.StatusForbidden, "danger_totp_reused",
-			"该验证码已被使用，请等待下一个验证码")
+			i18n.M("api.code_reused"))
 		return false
 	}
 

@@ -3,10 +3,11 @@ package ociclient
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 卷的生命周期状态。
@@ -404,16 +405,16 @@ func (c *Client) DetachVolume(ctx context.Context, region, attachmentID string) 
 // 这里提前拦下并说清楚。
 func ValidateVolumeResize(currentGBs, targetGBs int64) error {
 	if targetGBs < currentGBs {
-		return fmt.Errorf("云盘不支持缩容：当前 %d GB，无法调整为 %d GB", currentGBs, targetGBs)
+		return i18n.Err("oci.no_shrink", currentGBs, targetGBs)
 	}
 	if targetGBs == currentGBs {
-		return fmt.Errorf("目标容量与当前容量相同（%d GB），无需调整", currentGBs)
+		return i18n.Err("oci.same_size", currentGBs)
 	}
 	if targetGBs < 50 {
-		return fmt.Errorf("引导卷最小 50 GB，当前请求 %d GB", targetGBs)
+		return i18n.Err("oci.boot_min", targetGBs)
 	}
 	if targetGBs > 32768 {
-		return fmt.Errorf("单卷最大 32768 GB，当前请求 %d GB", targetGBs)
+		return i18n.Err("oci.volume_max", targetGBs)
 	}
 	return nil
 }
@@ -424,7 +425,7 @@ func ValidateVpus(vpus int64) error {
 		return nil
 	}
 	if vpus < 10 || vpus > 120 || vpus%10 != 0 {
-		return fmt.Errorf("VPU 只能是 0 或 10–120 之间 10 的倍数，当前 %d", vpus)
+		return i18n.Err("oci.vpu_invalid", vpus)
 	}
 	return nil
 }

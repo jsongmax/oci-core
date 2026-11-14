@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/ociconn"
 	"ocicore/internal/store"
@@ -98,7 +99,7 @@ func (s *Service) probeOne(ctx context.Context, w *store.CapacityWatch) error {
 	client, _, err := s.conns.ForID(ctx, w.AccountID)
 	if err != nil {
 		// 拿不到凭据就把它排到队尾，不要每轮都优先重试同一个坏项。
-		_ = s.st.TouchCapacityWatch(ctx, w.ID, "读取账号凭据失败："+err.Error())
+		_ = s.st.TouchCapacityWatch(ctx, w.ID, i18n.M("cap.creds_failed", err.Error()))
 		return err
 	}
 

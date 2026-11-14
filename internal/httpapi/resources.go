@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -194,7 +195,7 @@ func (s *Server) handleAccountResources(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !acc.Enabled {
-		writeError(w, http.StatusBadRequest, "account_disabled", "账号已禁用")
+		writeError(w, http.StatusBadRequest, "account_disabled", i18n.M("api.quota.disabled"))
 		return
 	}
 
@@ -399,10 +400,10 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 
 	ads, err := client.ListAvailabilityDomains(ctx, region, "")
 	if err != nil {
-		fail(region, "可用域", err)
+		fail(region, i18n.M("api.res.ad"), err)
 	}
 	for _, ad := range ads {
-		run("引导卷", func() error {
+		run(i18n.M("api.res.boot"), func() error {
 			v, err := client.ListBootVolumes(ctx, region, compartment, ad.Name)
 			mu.Lock()
 			defer mu.Unlock()
@@ -413,7 +414,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 			boots = append(boots, v...)
 			return nil
 		})
-		run("引导卷挂载", func() error {
+		run(i18n.M("api.res.boot_att"), func() error {
 			v, err := client.ListBootVolumeAttachments(ctx, region, compartment, ad.Name, "")
 			if err != nil {
 				return err
@@ -423,7 +424,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 			mu.Unlock()
 			return nil
 		})
-		run("临时公网 IP", func() error {
+		run(i18n.M("api.res.eph_ip"), func() error {
 			v, err := client.ListPublicIPs(ctx, region, compartment, "AVAILABILITY_DOMAIN", ad.Name)
 			if err != nil {
 				return err
@@ -434,21 +435,21 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 			return nil
 		})
 	}
-	run("块存储", func() error {
+	run(i18n.M("api.res.block"), func() error {
 		v, err := client.ListVolumes(ctx, region, compartment)
 		mu.Lock()
 		blocks = v
 		mu.Unlock()
 		return err
 	})
-	run("块存储挂载", func() error {
+	run(i18n.M("api.res.block_att"), func() error {
 		v, err := client.ListVolumeAttachments(ctx, region, compartment, "")
 		mu.Lock()
 		blockAtts = v
 		mu.Unlock()
 		return err
 	})
-	run("保留公网 IP", func() error {
+	run(i18n.M("api.res.reserved_ip"), func() error {
 		v, err := client.ListPublicIPs(ctx, region, compartment, "REGION", "")
 		if err != nil {
 			return err
@@ -458,7 +459,7 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 		mu.Unlock()
 		return nil
 	})
-	run("控制台连接", func() error {
+	run(i18n.M("api.res.console"), func() error {
 		v, err := client.ListConsoleConnections(ctx, region, compartment, "")
 		mu.Lock()
 		consoles = v
@@ -476,14 +477,14 @@ func collectRegion(ctx context.Context, client *ociclient.Client, compartment, r
 		vcns = v
 		return nil
 	})
-	run("子网", func() error {
+	run(i18n.M("api.res.subnet"), func() error {
 		v, err := client.ListSubnets(ctx, region, compartment, "")
 		mu.Lock()
 		subnets = v
 		mu.Unlock()
 		return err
 	})
-	run("互联网网关", func() error {
+	run(i18n.M("api.res.igw"), func() error {
 		v, err := client.ListInternetGateways(ctx, region, compartment, "")
 		mu.Lock()
 		gateways = v

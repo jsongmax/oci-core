@@ -3,6 +3,8 @@ package ociclient
 import (
 	"strings"
 	"testing"
+
+	"ocicore/internal/i18n"
 )
 
 // TestEndpointHostNeverEscapesOracle 锁住「主机名不受输入控制」这个性质。
@@ -61,7 +63,7 @@ func TestDoRejectsBadRegionBeforeRequest(t *testing.T) {
 	if err == nil {
 		t.Fatal("非法区域应当被拒，实际请求发出去了")
 	}
-	if !strings.Contains(err.Error(), "区域名不合法") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "区域名不合法") {
 		t.Errorf("错误信息应点明是区域问题，实际: %v", err)
 	}
 }

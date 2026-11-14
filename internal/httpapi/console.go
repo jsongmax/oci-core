@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -40,12 +41,12 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(req.PublicKey)
 	if key == "" {
 		writeError(w, http.StatusBadRequest, "missing_key",
-			"请提供 SSH 公钥。Oracle 用它鉴权，本工具不会代管你的私钥。")
+			i18n.M("api.console.need_key"))
 		return
 	}
 	if !strings.HasPrefix(key, "ssh-") && !strings.HasPrefix(key, "ecdsa-") {
 		writeError(w, http.StatusBadRequest, "invalid_key",
-			"这看起来不是 SSH 公钥，应以 ssh-rsa / ssh-ed25519 之类开头")
+			i18n.M("api.console.not_ssh_key"))
 		return
 	}
 	// Oracle 的串行控制台只接受 RSA。
@@ -55,9 +56,7 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 	// 也不知道这个限制只针对控制台（实例登录用的密钥没有这个限制）。
 	if !strings.HasPrefix(key, "ssh-rsa") {
 		writeError(w, http.StatusBadRequest, "console_needs_rsa",
-			"Oracle 的串行控制台只接受 RSA 公钥，不支持 ed25519 / ecdsa。"+
-				"请另生成一把：ssh-keygen -t rsa -b 4096 -f ~/.ssh/oci_console"+
-				"（这个限制只针对控制台，实例登录用的密钥不受影响）")
+			i18n.M("api.console.rsa_only"))
 		return
 	}
 
@@ -87,7 +86,7 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 			if err := s.replaceConsoleConnection(r.Context(), client, inst.Region, acc.CompartmentOCID,
 				inst.ID, existing[i].ID); err != nil {
 				writeError(w, http.StatusBadGateway, "console_replace",
-					"已有一条用另一把公钥建立的控制台连接，删除它时失败："+shortOCIError(err))
+					i18n.M("api.console.replace_failed", shortOCIError(err)))
 				return
 			}
 			replaced = true
@@ -104,7 +103,7 @@ func (s *Server) handleCreateConsole(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r.Context())
 	detail := ""
 	if replaced {
-		detail = "替换了用另一把公钥建立的旧连接"
+		detail = i18n.M("api.console.replaced_old")
 	}
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "console_create", AccountID: inst.AccountID,
@@ -163,7 +162,7 @@ func (s *Server) replaceConsoleConnection(ctx context.Context, client *ociclient
 		}
 		select {
 		case <-ctx.Done():
-			return errors.New("等待旧连接删除超时，请稍后重试")
+			return i18n.Err("api.console.wait_delete")
 		case <-time.After(3 * time.Second):
 		}
 	}
@@ -179,19 +178,10 @@ func consoleResponse(conn *ociclient.InstanceConsoleConnection) map[string]any {
 		// Oracle 返回的命令串里没有 -i，它假设你的默认密钥就是注册的那把。
 		// 而控制台要求 RSA，多数人的默认密钥是 ed25519——照抄必然失败，
 		// 且失败信息是代理主机的 Permission denied，看起来像控制台本身的问题。
-		"notice": "串行控制台适合排查「机器起不来」的场景——改坏 fstab、" +
-			"防火墙把自己关在门外时都能救回来。",
+		"notice": i18n.M("api.console.notice"),
 		// 两层 ssh 都要显式 -i：只给外层加，内层的 ProxyCommand 仍然会拿默认密钥
 		// 去试，然后被拒。写进 ~/.ssh/config 比每次记着加两个 -i 靠谱。
-		"keyHint": "命令里是两层 ssh：外层连实例，内层的 ProxyCommand 先连 Oracle 的代理主机，" +
-			"两层都要用你注册的那把 RSA 私钥。写进 ~/.ssh/config 最省事：\n\n" +
-			`Host instance-console.*.oci.oraclecloud.com
-    IdentityFile ~/.ssh/你的私钥
-    IdentitiesOnly yes
-
-Host ocid1.instance.*
-    IdentityFile ~/.ssh/你的私钥
-    IdentitiesOnly yes`,
+		"keyHint": i18n.M("api.console.key_hint"),
 	}
 }
 
@@ -204,7 +194,7 @@ func (s *Server) handleDetachBootVolume(w http.ResponseWriter, r *http.Request) 
 	}
 	attachmentID := r.URL.Query().Get("attachmentId")
 	if attachmentID == "" {
-		writeError(w, http.StatusBadRequest, "missing_attachment", "缺少 attachmentId 参数")
+		writeError(w, http.StatusBadRequest, "missing_attachment", i18n.M("api.missing_attachment"))
 		return
 	}
 
@@ -220,7 +210,7 @@ func (s *Server) handleDetachBootVolume(w http.ResponseWriter, r *http.Request) 
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
-		"notice": "引导卷已分离。该实例在重新挂载引导卷之前无法启动。",
+		"notice": i18n.M("api.boot_detached"),
 	})
 }
 
@@ -233,7 +223,7 @@ func (s *Server) handleAttachBootVolume(w http.ResponseWriter, r *http.Request) 
 	instanceID, bootVolumeID := q.Get("instanceId"), q.Get("bootVolumeId")
 	if instanceID == "" || bootVolumeID == "" {
 		writeError(w, http.StatusBadRequest, "missing_params",
-			"需要 instanceId 与 bootVolumeId 两个参数")
+			i18n.M("api.need_instance_boot"))
 		return
 	}
 
@@ -266,7 +256,7 @@ func (s *Server) handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 	instanceID, volumeID := q.Get("instanceId"), q.Get("volumeId")
 	if instanceID == "" || volumeID == "" {
 		writeError(w, http.StatusBadRequest, "missing_params",
-			"需要 instanceId 与 volumeId 两个参数")
+			i18n.M("api.need_instance_volume"))
 		return
 	}
 
@@ -288,8 +278,7 @@ func (s *Server) handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"attachment": attachment,
-		"notice": "已挂为数据盘。登录目标实例后用 lsblk 找到新增的设备（通常是 /dev/sdb），" +
-			"mount 它的根分区就能改里面的文件。",
+		"notice":     i18n.M("api.attached_as_data"),
 	})
 }
 
@@ -301,7 +290,7 @@ func (s *Server) handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	attachmentID := r.URL.Query().Get("attachmentId")
 	if attachmentID == "" {
-		writeError(w, http.StatusBadRequest, "missing_attachment", "缺少 attachmentId 参数")
+		writeError(w, http.StatusBadRequest, "missing_attachment", i18n.M("api.missing_attachment"))
 		return
 	}
 
@@ -316,9 +305,8 @@ func (s *Server) handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 		AccountID: r.URL.Query().Get("accountId"), Target: attachmentID, IP: s.clientIP(r),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"notice": "已分离。分离前记得先在实例里 umount，否则卷上可能有没落盘的写入。" +
-			"接下来可以把它挂回原实例当引导卷。",
+		"ok":     true,
+		"notice": i18n.M("api.data_detached"),
 	})
 }
 
@@ -358,7 +346,7 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !policy.AllowBulkActions {
-		writeError(w, http.StatusForbidden, "bulk_disabled", "批量操作已在设置中禁用")
+		writeError(w, http.StatusForbidden, "bulk_disabled", i18n.M("api.bulk_disabled"))
 		return
 	}
 
@@ -369,16 +357,16 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if isForcefulAction(action) && !req.Force {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"批量强制操作会直接切断电源，请附带 force=true 确认")
+			i18n.M("api.bulk_force_confirm"))
 		return
 	}
 	if len(req.InstanceIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "empty_selection", "没有选中任何实例")
+		writeError(w, http.StatusBadRequest, "empty_selection", i18n.M("api.empty_selection"))
 		return
 	}
 	if len(req.InstanceIDs) > maxBulkSize {
 		writeError(w, http.StatusBadRequest, "too_many",
-			"单次批量操作最多 "+itoa(maxBulkSize)+" 台，请分批执行")
+			i18n.M("api.bulk_too_many", maxBulkSize))
 		return
 	}
 	// 批量开机不会丢数据也不会断业务，其余批量动作一次波及多台机器，算危险操作。
@@ -391,7 +379,7 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 	ids := append([]string(nil), req.InstanceIDs...)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobBulkAction, Title: "批量" + verb + " · " + itoa(len(ids)) + " 台实例",
+		Kind: jobBulkAction, Title: i18n.M("api.bulk_title", verb, len(ids)),
 		Timeout: 20 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
 		results := make([]bulkResult, len(ids))
@@ -416,14 +404,14 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if _, err := s.instances.Action(ctx, instanceID, action); errors.Is(err, store.ErrNotFound) {
-					entry.Error = "实例不存在或尚未同步"
-					p.Step(entry.Name + "：失败 · " + entry.Error)
+					entry.Error = i18n.M("api.instance_not_found")
+					p.Step(i18n.M("api.bulk.failed_step", entry.Name, entry.Error))
 				} else if err != nil {
 					entry.Error = errorTextOf(err)
-					p.Step(entry.Name + "：失败 · " + entry.Error)
+					p.Step(i18n.M("api.bulk.failed_step", entry.Name, entry.Error))
 				} else {
 					entry.OK = true
-					p.Step(entry.Name + "：已提交" + verb)
+					p.Step(i18n.M("api.bulk.submitted_step", entry.Name, verb))
 				}
 				results[idx] = entry
 				p.Set(int(done.Add(1)) * 30 / len(ids))
@@ -439,13 +427,13 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		}
 		s.audit(who, store.AuditEntry{
 			Action: "instance_bulk_" + strings.ToLower(action),
-			Target: itoa(len(ids)) + " 台实例",
-			Detail: "成功 " + itoa(succeeded) + " 台",
+			Target: i18n.M("api.bulk.target", len(ids)),
+			Detail: i18n.M("api.bulk.detail", succeeded),
 		})
 
 		// 逐台等状态落定，进度条按台数推进。
 		if succeeded > 0 {
-			p.Step("等待实例状态落定")
+			p.Step(i18n.M("api.step.wait_settle"))
 		}
 		waited := 0
 		for _, res := range results {
@@ -463,7 +451,7 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 		}
 
 		out := jobsvc.Outcome{
-			Summary: "成功 " + itoa(succeeded) + " 台，失败 " + itoa(len(ids)-succeeded) + " 台",
+			Summary: i18n.M("api.bulk.summary", succeeded, len(ids)-succeeded),
 			Result: map[string]any{
 				"results":   results,
 				"succeeded": succeeded,
@@ -471,7 +459,7 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 		if succeeded == 0 {
-			return out, errors.New("全部 " + itoa(len(ids)) + " 台都没能提交" + verb)
+			return out, i18n.Err("api.bulk.all_failed", len(ids), verb)
 		}
 		return out, nil
 	})
@@ -481,15 +469,15 @@ func (s *Server) handleBulkAction(w http.ResponseWriter, r *http.Request) {
 func bulkVerb(action string) string {
 	switch action {
 	case ociclient.ActionStart:
-		return "开机"
+		return i18n.M("api.verb.start")
 	case ociclient.ActionStop:
-		return "强制关机"
+		return i18n.M("api.verb.force_stop")
 	case ociclient.ActionReset:
-		return "强制重启"
+		return i18n.M("api.verb.force_reboot")
 	case ociclient.ActionSoftReset:
-		return "重启"
+		return i18n.M("api.verb.reboot")
 	default:
-		return "关机"
+		return i18n.M("api.verb.stop")
 	}
 }
 
@@ -520,6 +508,6 @@ func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"message": "所有会话已下线，请重新登录",
+		"message": i18n.M("api.sessions_revoked"),
 	})
 }

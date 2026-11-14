@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 替换引导卷时「不保留旧盘」必须真的发出 false：omitempty 会把普通 bool 的 false
@@ -103,7 +105,7 @@ func TestValidateShapeConfigRejectsOverLimits(t *testing.T) {
 			if err == nil {
 				t.Fatalf("配置 %+v 应当被拒绝", tc.cfg)
 			}
-			if !strings.Contains(err.Error(), tc.want) {
+			if !strings.Contains(i18n.Message(i18n.ZH, err), tc.want) {
 				t.Errorf("错误信息应提到 %q，实际为: %v", tc.want, err)
 			}
 		})
@@ -135,7 +137,7 @@ func TestValidateVolumeResize(t *testing.T) {
 	if err == nil {
 		t.Fatal("缩容应当被拒绝")
 	}
-	if !strings.Contains(err.Error(), "缩容") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "缩容") {
 		t.Errorf("错误信息应说明不支持缩容: %v", err)
 	}
 

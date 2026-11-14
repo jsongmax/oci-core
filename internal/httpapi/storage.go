@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/ociclient"
@@ -82,10 +83,10 @@ func (s *Server) handleUpdateBootVolume(w http.ResponseWriter, r *http.Request) 
 	name := orText(current.DisplayName, volumeID)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobBootVolume, Title: "修改引导卷 · " + name, AccountID: accountID,
+		Kind: jobBootVolume, Title: i18n.M("api.edit_boot_title", name), AccountID: accountID,
 		Timeout: 5 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("提交修改")
+		p.Step(i18n.M("api.step.submit_change"))
 		updated, err := client.UpdateBootVolume(ctx, region, volumeID, ociclient.UpdateBootVolumeRequest{
 			DisplayName: req.DisplayName,
 			SizeInGBs:   req.SizeInGBs,
@@ -158,10 +159,10 @@ func (s *Server) handleUpdateVolume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobVolumeUpdate, Title: "修改块存储卷 · " + name, AccountID: accountID,
+		Kind: jobVolumeUpdate, Title: i18n.M("api.edit_block_title", name), AccountID: accountID,
 		Timeout: 5 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("提交修改")
+		p.Step(i18n.M("api.step.submit_change"))
 		updated, err := client.UpdateVolume(ctx, region, volumeID, ociclient.UpdateVolumeRequest{
 			DisplayName: req.DisplayName,
 			SizeInGBs:   req.SizeInGBs,
@@ -175,7 +176,7 @@ func (s *Server) handleUpdateVolume(w http.ResponseWriter, r *http.Request) {
 			Action: "volume_update", AccountID: accountID, Target: updated.DisplayName,
 		})
 
-		summary := "已保存"
+		summary := i18n.M("api.saved")
 		var notice string
 		if current != nil {
 			notice = noticeForResize(current.SizeInGBs, updated.SizeInGBs)
@@ -215,8 +216,7 @@ func noticeForResize(oldGB, newGB int64) string {
 	if newGB <= oldGB {
 		return ""
 	}
-	return "云盘已扩容到 " + itoa(int(newGB)) + " GB。" +
-		"还需要登录实例扩展分区与文件系统，容量才会真正可用。"
+	return i18n.M("api.resize_notice", int(newGB))
 }
 
 func describeVolumeChange(oldSize, oldVpus, newSize, newVpus int64) string {
@@ -228,7 +228,7 @@ func describeVolumeChange(oldSize, oldVpus, newSize, newVpus int64) string {
 		parts = append(parts, "VPU "+itoa(int(oldVpus))+" → "+itoa(int(newVpus)))
 	}
 	if len(parts) == 0 {
-		return "仅改名"
+		return i18n.M("api.rename_only")
 	}
 	return joinWith(parts, "，")
 }

@@ -2,12 +2,12 @@ package instancesvc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -25,7 +25,7 @@ const (
 )
 
 // ErrInstanceBusy 表示实例正处于转换中，不接受新操作。
-var ErrInstanceBusy = errors.New("实例正在转换状态，请等待当前操作完成")
+var ErrInstanceBusy = i18n.Err("inst.busy")
 
 // Action 对实例执行开关机等操作。
 //
@@ -104,7 +104,7 @@ func (s *Service) Terminate(ctx context.Context, instanceID string, preserveBoot
 func (s *Service) Rename(ctx context.Context, instanceID, displayName string) (*store.Instance, error) {
 	name := strings.TrimSpace(displayName)
 	if name == "" {
-		return nil, errors.New("实例名称不能为空")
+		return nil, i18n.Err("inst.name_required")
 	}
 
 	cached, err := s.st.GetInstance(ctx, instanceID)
@@ -157,10 +157,10 @@ func (s *Service) Reshape(ctx context.Context, instanceID string, req ReshapeReq
 	//
 	// 仍然挡住过渡态：正在关机/开机的实例上改配置，结果无法预期。
 	if ociclient.IsTransitionalState(cached.LifecycleState) {
-		return nil, fmt.Errorf("实例正在 %s，等状态落定后再修改配置", cached.LifecycleState)
+		return nil, i18n.Err("inst.reshape_transitional", cached.LifecycleState)
 	}
 	if req.Ocpus <= 0 || req.MemoryInGBs <= 0 {
-		return nil, errors.New("OCPU 与内存都必须大于 0")
+		return nil, i18n.Err("inst.reshape_positive")
 	}
 
 	client, acc, err := s.conns.ForID(ctx, cached.AccountID)
@@ -233,10 +233,10 @@ const MinBootVolumeGB = 50
 // 运行中和已关机的实例都可以换；过渡态不行——卡在「关机中」的机器得先强制关机。
 func (s *Service) ReplaceBootVolume(ctx context.Context, instanceID string, req ReplaceBootVolumeRequest) (*store.Instance, error) {
 	if strings.TrimSpace(req.ImageID) == "" {
-		return nil, errors.New("请选择镜像")
+		return nil, i18n.Err("inst.image_required")
 	}
 	if req.BootVolumeGB != 0 && req.BootVolumeGB < MinBootVolumeGB {
-		return nil, fmt.Errorf("引导卷至少 %d GB", MinBootVolumeGB)
+		return nil, i18n.Err("inst.boot_min", MinBootVolumeGB)
 	}
 
 	cached, err := s.st.GetInstance(ctx, instanceID)
@@ -244,7 +244,7 @@ func (s *Service) ReplaceBootVolume(ctx context.Context, instanceID string, req 
 		return nil, err
 	}
 	if ociclient.IsTransitionalState(cached.LifecycleState) {
-		return nil, fmt.Errorf("实例正在 %s，等状态落定后再替换引导卷", cached.LifecycleState)
+		return nil, i18n.Err("inst.replace_transitional", cached.LifecycleState)
 	}
 
 	client, _, err := s.conns.ForID(ctx, cached.AccountID)
@@ -328,7 +328,7 @@ func (s *Service) RefreshBootVolume(ctx context.Context, instanceID string) erro
 		return err
 	}
 	if vol == nil {
-		return errors.New("没有找到挂载中的引导卷")
+		return i18n.Err("inst.no_attached_boot")
 	}
 	fresh, err := s.st.GetInstance(ctx, instanceID)
 	if err != nil {
@@ -556,18 +556,18 @@ func (s *Service) notifyInstanceReady(ctx context.Context, instanceID string) {
 		return
 	}
 	fields := map[string]string{
-		"实例": inst.DisplayName,
-		"区域": inst.Region,
-		"规格": inst.Shape,
+		i18n.M("f.instance"): inst.DisplayName,
+		i18n.M("f.region"):   inst.Region,
+		i18n.M("f.shape"):    inst.Shape,
 	}
 	body := ""
 	if inst.PublicIP != "" {
-		fields["公网 IP"] = inst.PublicIP
+		fields[i18n.M("f.public_ip")] = inst.PublicIP
 		body = "ssh ubuntu@" + inst.PublicIP
 	}
 	s.notify(ctx, notify.Message{
 		Event:  notify.EventInstanceCreated,
-		Title:  "实例 " + inst.DisplayName + " 已就绪",
+		Title:  i18n.M("inst.ready_title", inst.DisplayName),
 		Body:   body,
 		Fields: fields,
 	})

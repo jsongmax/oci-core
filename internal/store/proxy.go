@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/proxypool"
 )
 
@@ -53,7 +54,7 @@ const proxyColumns = `id, label, scheme, host, port, username,
 	last_checked_at, last_ok_at, created_at, updated_at`
 
 // ErrProxyExists 表示同一个出口已经录过了。
-var ErrProxyExists = errors.New("该代理已存在")
+var ErrProxyExists = i18n.Err("store.proxy_exists")
 
 // CreateProxy 落库一条代理，密码加密存储。
 func (s *Store) CreateProxy(ctx context.Context, p proxypool.Parsed) (*Proxy, error) {
@@ -308,7 +309,7 @@ func (s *Store) LegacyProxyURL(ctx context.Context, accountID string) (string, e
 func (s *Store) adoptProxyURL(ctx context.Context, raw, label, accountID string) (id string, created bool, err error) {
 	parsed, err := proxypool.ParseLine(raw)
 	if err != nil {
-		return "", false, errors.New("代理地址无效，支持 host:port、host:port:user:pass、scheme://user:pass@host:port")
+		return "", false, i18n.Err("store.proxy_invalid")
 	}
 	if parsed.Label == "" {
 		parsed.Label = label
@@ -372,7 +373,7 @@ func (s *Store) DeleteProxy(ctx context.Context, id string) error {
 		return fmt.Errorf("store: 检查代理绑定失败: %w", err)
 	}
 	if bound > 0 {
-		return fmt.Errorf("该代理仍被 %d 个账号绑定，请先解绑", bound)
+		return i18n.Err("store.proxy_still_bound", bound)
 	}
 
 	res, err := s.db.ExecContext(ctx, `DELETE FROM proxies WHERE id = ?`, id)

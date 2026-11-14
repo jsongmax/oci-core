@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 后台任务状态。
@@ -63,7 +65,7 @@ type Job struct {
 }
 
 // ErrJobNotFound 表示任务不存在。
-var ErrJobNotFound = errors.New("任务不存在")
+var ErrJobNotFound = i18n.Err("store.job_missing")
 
 const jobColumns = `id, kind, title, account_id, instance_id, status, progress, steps,
 	summary, error, result, created_at, started_at, finished_at`

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/ociconn"
 	"ocicore/internal/store"
@@ -417,7 +418,7 @@ func foldBuckets(items []ociclient.UsageItem, byQuantity bool) []Bucket {
 			key = serviceName(it.Service)
 		}
 		if key == "" {
-			key = "未分类"
+			key = i18n.M("bill.uncategorized")
 		}
 		e := m[key]
 		if e == nil {
@@ -461,7 +462,7 @@ func foldSKUs(items []ociclient.UsageItem) ([]Bucket, *Bucket) {
 			key = strings.TrimSpace(it.SkuPartNumber)
 		}
 		if key == "" {
-			key = "未分类"
+			key = i18n.M("bill.uncategorized")
 		}
 		e := m[key]
 		if e == nil {
@@ -476,7 +477,7 @@ func foldSKUs(items []ociclient.UsageItem) ([]Bucket, *Bucket) {
 
 		if strings.Contains(strings.ToLower(key), "outbound data transfer") {
 			if egress == nil {
-				egress = &Bucket{Key: "出站流量", Unit: it.Unit}
+				egress = &Bucket{Key: i18n.M("bill.egress"), Unit: it.Unit}
 			}
 			egress.Amount += it.Amount()
 			egress.Quantity += it.Quantity()
@@ -517,7 +518,7 @@ func sortBuckets(b []Bucket, byQuantity bool) {
 func serviceName(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "未分类"
+		return i18n.M("bill.uncategorized")
 	}
 	key := strings.ToUpper(s)
 	key = strings.ReplaceAll(key, " ", "_")
@@ -536,29 +537,29 @@ func serviceName(s string) string {
 // 键一律写成全大写下划线形式，由 serviceName 负责把 Oracle 的实际写法
 // （"Block Storage"）归一化过来。
 var serviceLabels = map[string]string{
-	"COMPUTE":               "计算",
-	"BLOCK_STORAGE":         "块存储",
-	"OBJECT_STORAGE":        "对象存储",
-	"ARCHIVE_STORAGE":       "归档存储",
-	"FILE_STORAGE":          "文件存储",
-	"VCN":                   "网络",
-	"NETWORK":               "网络",
-	"VIRTUAL_CLOUD_NETWORK": "网络",
+	"COMPUTE":               i18n.M("bill.svc.compute"),
+	"BLOCK_STORAGE":         i18n.M("bill.svc.block"),
+	"OBJECT_STORAGE":        i18n.M("bill.svc.object"),
+	"ARCHIVE_STORAGE":       i18n.M("bill.svc.archive"),
+	"FILE_STORAGE":          i18n.M("bill.svc.file"),
+	"VCN":                   i18n.M("bill.svc.network"),
+	"NETWORK":               i18n.M("bill.svc.network"),
+	"VIRTUAL_CLOUD_NETWORK": i18n.M("bill.svc.network"),
 	// 出网流量单独计费，超出免费额度后往往是免费号账单上最大的一项，
 	// 不该混进「网络」里看不见。
-	"DATA_TRANSFER":        "数据传输",
-	"LOAD_BALANCER":        "负载均衡",
-	"DATABASE":             "数据库",
-	"AUTONOMOUS_DATABASE":  "自治数据库",
-	"MONITORING":           "监控",
-	"TELEMETRY":            "监控",
-	"LOGGING":              "日志",
-	"NOTIFICATION_SERVICE": "通知",
-	"NOTIFICATIONS":        "通知",
-	"VAULT":                "密钥管理",
-	"KEY_MANAGEMENT":       "密钥管理",
-	"IDENTITY":             "身份",
-	"RESOURCE_MANAGER":     "资源管理器",
+	"DATA_TRANSFER":        i18n.M("bill.svc.transfer"),
+	"LOAD_BALANCER":        i18n.M("bill.svc.lb"),
+	"DATABASE":             i18n.M("bill.svc.database"),
+	"AUTONOMOUS_DATABASE":  i18n.M("bill.svc.adb"),
+	"MONITORING":           i18n.M("bill.svc.monitoring"),
+	"TELEMETRY":            i18n.M("bill.svc.monitoring"),
+	"LOGGING":              i18n.M("bill.svc.logging"),
+	"NOTIFICATION_SERVICE": i18n.M("bill.svc.notification"),
+	"NOTIFICATIONS":        i18n.M("bill.svc.notification"),
+	"VAULT":                i18n.M("bill.svc.vault"),
+	"KEY_MANAGEMENT":       i18n.M("bill.svc.vault"),
+	"IDENTITY":             i18n.M("bill.svc.identity"),
+	"RESOURCE_MANAGER":     i18n.M("bill.svc.rm"),
 }
 
 // classify 把 OCI 错误映射成账单状态。

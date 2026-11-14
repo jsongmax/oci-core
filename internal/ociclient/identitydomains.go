@@ -2,9 +2,10 @@ package ociclient
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
+
+	"ocicore/internal/i18n"
 )
 
 // Identity Domains 是 OCI 在 2022 年后引入的身份层。
@@ -178,7 +179,7 @@ func (c *Client) SetPasswordExpiry(ctx context.Context, domainURL, id string, da
 		op = scimOp{Op: "remove", Path: "passwordExpiresAfter"}
 	} else {
 		if *days < 0 {
-			return nil, fmt.Errorf("ociclient: 密码有效期不能为负: %d", *days)
+			return nil, i18n.Err("oci.pw_days_negative", *days)
 		}
 		op.Value = *days
 	}

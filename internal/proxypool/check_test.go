@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"ocicore/internal/i18n"
 )
 
 // TestDescribeErrMapsCommonFailures 常见失败要翻成能直接照着做的一句话。
@@ -34,7 +36,7 @@ func TestDescribeErrMapsCommonFailures(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := describeErr(c.err)
+			got := i18n.Render(i18n.ZH, describeErr(c.err))
 			if !strings.Contains(got, c.want) {
 				t.Errorf("describeErr(%v)\n得到 %q\n期望包含 %q", c.err, got, c.want)
 			}

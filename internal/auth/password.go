@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
+
+	"ocicore/internal/i18n"
 )
 
 // argon2id 参数。这些值针对"一台 1C1G 小鸡上偶尔登录一次"的场景选取：
@@ -31,7 +33,7 @@ const (
 var ErrInvalidHash = errors.New("auth: 口令散列格式无效")
 
 // ErrBusy 表示同时进行的口令计算已达上限，本次直接拒绝。
-var ErrBusy = errors.New("auth: 口令校验繁忙，请稍后再试")
+var ErrBusy = i18n.Err("auth.busy")
 
 // 每次 Argon2 占 64 MiB。不设上限时，登录接口来多少并发就同时算多少，
 // 1C1G 的小机器几十个请求就会被内存压垮——限流按 IP 计数，挡不住这个。

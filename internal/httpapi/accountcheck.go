@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/store"
@@ -129,12 +130,12 @@ func (s *Server) recheckAccount(ctx context.Context, acc *store.Account) {
 		slog.Warn("账号自动校验失败", "account", acc.ID, "alias", acc.Alias, "err", message)
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventAccountAuthFail,
-			Title: "账号 " + acc.Alias + " 凭据已失效",
+			Title: i18n.M("api.cred_expired_title", acc.Alias),
 			Body:  result.Advice,
 			Fields: map[string]string{
-				"账号":   acc.Alias,
-				"错误":   message,
-				"发现方式": "定期自动校验",
+				i18n.M("f.account"):  acc.Alias,
+				i18n.M("f.error"):    message,
+				i18n.M("f.found_by"): i18n.M("api.found_by_auto"),
 			},
 		})
 		return

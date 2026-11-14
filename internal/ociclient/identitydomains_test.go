@@ -3,6 +3,8 @@ package ociclient
 import (
 	"strings"
 	"testing"
+
+	"ocicore/internal/i18n"
 )
 
 // TestOracleBaseURLRejectsHostile 锁住绝对端点地址的校验。
@@ -76,7 +78,7 @@ func TestSetPasswordExpiryRejectsNegative(t *testing.T) {
 	if err == nil {
 		t.Fatal("负数应被拒")
 	}
-	if !strings.Contains(err.Error(), "不能为负") {
+	if !strings.Contains(i18n.Message(i18n.ZH, err), "不能为负") {
 		t.Errorf("错误信息应点明原因，实际: %v", err)
 	}
 }
@@ -97,7 +99,7 @@ func TestBaseURLBypassesRegionValidation(t *testing.T) {
 	if err == nil {
 		t.Fatal("非 Oracle 端点应被拒")
 	}
-	if strings.Contains(err.Error(), "区域名不合法") {
+	if strings.Contains(i18n.Message(i18n.ZH, err), "区域名不合法") {
 		t.Errorf("不该走到区域校验分支: %v", err)
 	}
 }

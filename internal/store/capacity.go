@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // CapacityWatch 是一个容量监控项：盯住「某账号 × 某可用域 × 某规格」有没有货。
@@ -34,7 +36,7 @@ type CapacityWatch struct {
 }
 
 // ErrCapacityWatchNotFound 表示监控项不存在。
-var ErrCapacityWatchNotFound = errors.New("容量监控项不存在")
+var ErrCapacityWatchNotFound = i18n.Err("store.capacity_watch_missing")
 
 const capacityColumns = `id, account_id, region, availability_domain, shape, ocpus,
 	memory_gb, enabled, last_status, last_count, last_error, last_checked_at,

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // Class 是 OCI 错误的处理分类。
@@ -51,39 +53,39 @@ type classInfo struct {
 var classTable = map[Class]classInfo{
 	ClassUnknown: {
 		name: "Unknown", retryable: false, minBackoff: 0,
-		advice: "未识别的错误，请查看下方原始错误码。",
+		advice: i18n.M("oci.adv.unknown"),
 	},
 	ClassOutOfCapacity: {
 		name: "OutOfCapacity", retryable: true, minBackoff: 30 * time.Second,
-		advice: "该可用域暂时没有此规格的容量，可稍后重试或换一个可用域。",
+		advice: i18n.M("oci.adv.capacity"),
 	},
 	ClassThrottled: {
 		name: "Throttled", retryable: true, minBackoff: 5 * time.Minute,
-		advice: "请求过于频繁，已被 Oracle 限流。请降低操作频率后再试。",
+		advice: i18n.M("oci.adv.throttled"),
 	},
 	ClassQuotaExceeded: {
 		name: "QuotaExceeded", retryable: false, minBackoff: 0,
-		advice: "该账号的配额已用尽。请在账号详情的配额页确认限额，或先释放已有资源。",
+		advice: i18n.M("oci.adv.quota"),
 	},
 	ClassAuthFailed: {
 		name: "AuthFailed", retryable: false, minBackoff: 0, accountFatal: true,
-		advice: "API 密钥校验失败。请检查指纹是否与私钥匹配，以及本机时间是否准确（偏移超过 5 分钟即会被拒绝）。",
+		advice: i18n.M("oci.adv.auth"),
 	},
 	ClassNotAuthorized: {
 		name: "NotAuthorized", retryable: false, minBackoff: 0, accountFatal: true,
-		advice: "无权限，或资源不存在。请确认该 IAM 用户已被授予对应策略，且 OCID 填写正确。",
+		advice: i18n.M("oci.adv.not_authorized"),
 	},
 	ClassConflict: {
 		name: "Conflict", retryable: true, minBackoff: 10 * time.Second,
-		advice: "资源当前状态不允许此操作，请等待正在进行的操作完成后重试。",
+		advice: i18n.M("oci.adv.conflict"),
 	},
 	ClassBadRequest: {
 		name: "BadRequest", retryable: false, minBackoff: 0,
-		advice: "请求参数有误，请检查填写的配置。",
+		advice: i18n.M("oci.adv.bad_request"),
 	},
 	ClassTransient: {
 		name: "Transient", retryable: true, minBackoff: 5 * time.Second,
-		advice: "网络或 Oracle 服务端临时故障，稍后会自动重试。",
+		advice: i18n.M("oci.adv.transient"),
 	},
 }
 

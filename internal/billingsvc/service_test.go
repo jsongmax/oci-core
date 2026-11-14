@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -73,7 +74,7 @@ func TestFoldCostSumsSameDayAcrossServices(t *testing.T) {
 		t.Errorf("总计 = %v，期望 2", total)
 	}
 	// 金额大的排前面。
-	if len(services) != 2 || services[0].Key != "计算" || services[1].Key != "块存储" {
+	if len(services) != 2 || i18n.Render(i18n.ZH, services[0].Key) != "计算" || i18n.Render(i18n.ZH, services[1].Key) != "块存储" {
 		t.Errorf("服务构成排序不对: %+v", services)
 	}
 }
@@ -108,7 +109,7 @@ func TestFoldBucketsDropsZeroUsage(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("零用量的条目应被丢掉，实际留下 %d 条: %+v", len(got), got)
 	}
-	if got[0].Key != "计算" || got[0].Quantity != 720 {
+	if i18n.Render(i18n.ZH, got[0].Key) != "计算" || got[0].Quantity != 720 {
 		t.Errorf("第一条应是计算 720，实际 %+v", got[0])
 	}
 	if got[0].Unit != "OCPU Hours" {
@@ -212,30 +213,30 @@ func TestClassifyPlainError(t *testing.T) {
 // Oracle 有上百个服务，翻译表必然滞后。滞后时显示 OCI 的原始标识是对的——
 // 显示"未分类"会把几个不同的服务糊成一行。
 func TestServiceNameFallsBackToRawIdentifier(t *testing.T) {
-	if got := serviceName("COMPUTE"); got != "计算" {
+	if got := i18n.Render(i18n.ZH, serviceName("COMPUTE")); got != "计算" {
 		t.Errorf("已知服务应翻译，实际 %q", got)
 	}
 	// Oracle 实际返回的是标题式写法，不是文档里那种全大写。
 	// 这条锁住的是真实响应里观察到的格式——第一版就是在这里漏了，
 	// 界面上服务名全是英文原文。
-	if got := serviceName("Compute"); got != "计算" {
+	if got := i18n.Render(i18n.ZH, serviceName("Compute")); got != "计算" {
 		t.Errorf("Oracle 的实际写法应能匹配，实际 %q", got)
 	}
-	if got := serviceName("Block Storage"); got != "块存储" {
+	if got := i18n.Render(i18n.ZH, serviceName("Block Storage")); got != "块存储" {
 		t.Errorf("带空格的服务名应能匹配，实际 %q", got)
 	}
 	// 这两个是真实账单里实际出现过、而第一版表里漏掉的。
 	// 表写的是 VCN，Oracle 返回的却是 Virtual Cloud Network。
-	if got := serviceName("Virtual Cloud Network"); got != "网络" {
+	if got := i18n.Render(i18n.ZH, serviceName("Virtual Cloud Network")); got != "网络" {
 		t.Errorf("Virtual Cloud Network 应翻成网络，实际 %q", got)
 	}
-	if got := serviceName("Telemetry"); got != "监控" {
+	if got := i18n.Render(i18n.ZH, serviceName("Telemetry")); got != "监控" {
 		t.Errorf("Telemetry 应翻成监控，实际 %q", got)
 	}
-	if got := serviceName("SOME_NEW_ORACLE_SERVICE"); got != "SOME_NEW_ORACLE_SERVICE" {
+	if got := i18n.Render(i18n.ZH, serviceName("SOME_NEW_ORACLE_SERVICE")); got != "SOME_NEW_ORACLE_SERVICE" {
 		t.Errorf("未知服务应原样显示，实际 %q", got)
 	}
-	if got := serviceName("  "); got != "未分类" {
+	if got := i18n.Render(i18n.ZH, serviceName("  ")); got != "未分类" {
 		t.Errorf("空服务名应归入未分类，实际 %q", got)
 	}
 }

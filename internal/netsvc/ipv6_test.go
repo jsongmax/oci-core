@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -328,7 +329,7 @@ func TestFreeIPv6Subnet(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := freeIPv6Subnet(tc.vcn, tc.used)
 			if tc.errHas != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.errHas) {
+				if err == nil || !strings.Contains(i18n.Message(i18n.ZH, err), tc.errHas) {
 					t.Fatalf("期望错误含 %q，得到 %v（%q）", tc.errHas, err, got)
 				}
 				return
@@ -450,7 +451,7 @@ func TestPrepareIPv6LeavesLocalRouteRulesAlone(t *testing.T) {
 	if f.wrote("/routeTables/") {
 		t.Errorf("有 LOCAL 规则时不该回写路由表：%v", f.writes)
 	}
-	if !slices.ContainsFunc(prep.Warnings, func(w string) bool { return strings.Contains(w, "手动添加") }) {
+	if !slices.ContainsFunc(prep.Warnings, func(w string) bool { return strings.Contains(i18n.Render(i18n.ZH, w), "手动添加") }) {
 		t.Errorf("应提示用户手动添加：%v", prep.Warnings)
 	}
 }
@@ -463,7 +464,7 @@ func TestPrepareIPv6FailsWhenSubnetRejects(t *testing.T) {
 	f.rejectSubnet = true
 
 	_, err := PrepareIPv6(context.Background(), f.client(t), testRegion, s.ID)
-	if err == nil || !strings.Contains(err.Error(), "为子网分配 IPv6 前缀") {
+	if err == nil || !strings.Contains(i18n.Message(i18n.ZH, err), "为子网分配 IPv6 前缀") {
 		t.Fatalf("期望子网前缀错误，得到 %v", err)
 	}
 	if f.wrote("/routeTables/") || f.wrote("/securityLists/") {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"ocicore/internal/cryptobox"
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -165,7 +166,7 @@ func TestCreateAccountRejectsFingerprintMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("指纹与私钥不匹配时应拒绝创建")
 	}
-	if !strings.Contains(err.Error(), "指纹") {
+	if !strings.Contains(i18n.Render(i18n.ZH, err.Error()), "指纹") {
 		t.Errorf("错误信息应说明是指纹问题: %v", err)
 	}
 }

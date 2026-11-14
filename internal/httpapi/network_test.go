@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -99,7 +100,7 @@ func TestFindInstanceVnicChecksOwnership(t *testing.T) {
 	if err != nil || vnic == nil || vnic.SubnetID != "sn-1" {
 		t.Fatalf("自己的网卡应能取到，得到 %+v, %v", vnic, err)
 	}
-	if got := vnicLabel(vnic); got != "附属网卡 eth1" {
+	if got := i18n.Render(i18n.ZH, vnicLabel(vnic)); got != "附属网卡 eth1" {
 		t.Errorf("vnicLabel = %q，期望 附属网卡 eth1", got)
 	}
 	for _, id := range []string{"vnic-gone", "vnic-of-another-instance"} {

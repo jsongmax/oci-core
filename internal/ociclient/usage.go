@@ -2,9 +2,10 @@ package ociclient
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
+
+	"ocicore/internal/i18n"
 )
 
 // 用量聚合的时间粒度。
@@ -129,7 +130,7 @@ func (c *Client) SummarizeUsage(ctx context.Context, q UsageQuery) ([]UsageItem,
 		q.QueryType = QueryTypeCost
 	}
 	if !q.End.After(q.Start) {
-		return nil, fmt.Errorf("ociclient: 用量查询的时间区间无效 (%s ~ %s)",
+		return nil, i18n.Err("oci.usage_range",
 			q.Start.Format(time.RFC3339), q.End.Format(time.RFC3339))
 	}
 

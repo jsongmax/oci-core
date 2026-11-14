@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ocicore/internal/capacitysvc"
+	"ocicore/internal/i18n"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
@@ -68,7 +69,7 @@ func (s *Server) handleCreateCapacityWatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if req.AccountID == "" || req.Shape == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "accountId 与 shape 为必填项")
+		writeError(w, http.StatusBadRequest, "missing_fields", i18n.M("api.cap.need_account_shape"))
 		return
 	}
 
@@ -84,7 +85,7 @@ func (s *Server) handleCreateCapacityWatch(w http.ResponseWriter, r *http.Reques
 	}
 	if strings.TrimSpace(req.AvailabilityDomain) == "" {
 		writeError(w, http.StatusBadRequest, "missing_ad",
-			"需要完整的可用域名，例如 xxxx:US-SANJOSE-1-AD-1")
+			i18n.M("api.cap.need_full_ad"))
 		return
 	}
 
@@ -109,7 +110,7 @@ func (s *Server) handleCreateCapacityWatch(w http.ResponseWriter, r *http.Reques
 	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"watch":  toCapacityDTO(*watch),
-		"notice": "已加入监控，首次查询将在半分钟内进行。",
+		"notice": i18n.M("api.cap.watch_added"),
 	})
 }
 
@@ -123,7 +124,7 @@ func (s *Server) handleProbeCapacity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AccountID == "" || req.Shape == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "accountId 与 shape 为必填项")
+		writeError(w, http.StatusBadRequest, "missing_fields", i18n.M("api.cap.need_account_shape"))
 		return
 	}
 
@@ -170,7 +171,7 @@ func (s *Server) handleProbeCapacity(w http.ResponseWriter, r *http.Request) {
 			// 单个 AD 失败不该让整次查询失败：其余 AD 的结果仍然有用，
 			// 而且失败原因（比如权限）也需要原样让人看到。
 			row.Error = ociclient.CapacityErrorText(err)
-			row.StatusText = "查询失败"
+			row.StatusText = i18n.M("api.cap.query_failed")
 		} else {
 			row.Status = report.StatusOf(req.Shape)
 			row.StatusText = ociclient.CapacityStatusText(row.Status)
@@ -188,8 +189,7 @@ func (s *Server) handleProbeCapacity(w http.ResponseWriter, r *http.Request) {
 		"region":  region,
 		"shape":   req.Shape,
 		"results": results,
-		"notice": "只读查询，不创建任何资源。显示有容量时创建仍可能失败——" +
-			"它反映宿主机池的整体状态，不是那一瞬间的分配结果。",
+		"notice":  i18n.M("api.cap.probe_notice"),
 	})
 }
 
@@ -204,13 +204,13 @@ func (s *Server) handleSetCapacityWatchEnabled(w http.ResponseWriter, r *http.Re
 	case "disable":
 		enabled = false
 	default:
-		writeError(w, http.StatusBadRequest, "bad_action", "只支持 enable 或 disable")
+		writeError(w, http.StatusBadRequest, "bad_action", i18n.M("api.cap.bad_action"))
 		return
 	}
 
 	watch, err := s.st.SetCapacityWatchEnabled(r.Context(), id, enabled)
 	if errors.Is(err, store.ErrCapacityWatchNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "监控项不存在")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.cap.watch_missing"))
 		return
 	}
 	if err != nil {
@@ -223,7 +223,7 @@ func (s *Server) handleSetCapacityWatchEnabled(w http.ResponseWriter, r *http.Re
 func (s *Server) handleDeleteCapacityWatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.st.DeleteCapacityWatch(r.Context(), id); errors.Is(err, store.ErrCapacityWatchNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "监控项不存在")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.cap.watch_missing"))
 		return
 	} else if err != nil {
 		writeStoreError(w, err)
@@ -242,20 +242,20 @@ func (s *Server) RunCapacityMonitor(ctx context.Context) { s.capacity.Run(ctx) }
 // 从"没货"变成"有货"是唯一值得打扰用户的转变，措辞要克制：报告说有容量
 // 不等于抢得到，把它写成"抢到了"会得到一个总是骗人的通知。
 func (s *Server) onCapacityChange(ctx context.Context, w *store.CapacityWatch, prev string) {
-	title := "容量状态变化：" + w.Shape
+	title := i18n.M("api.cap.changed_title", w.Shape)
 	if w.LastStatus == ociclient.CapacityAvailable {
-		title = "有容量了：" + w.Shape
+		title = i18n.M("api.cap.available_title", w.Shape)
 	}
 	s.notifier.Dispatch(ctx, notify.Message{
 		Event: notify.EventCapacityChanged,
 		Title: title,
-		Body:  "来自 Oracle 容量报告，说明值得一试，但不保证创建成功。",
+		Body:  i18n.M("api.cap.changed_body"),
 		Fields: map[string]string{
-			"区域":  w.Region,
-			"可用域": shortADName(w.AvailabilityDomain),
-			"规格":  w.Shape,
-			"现在":  ociclient.CapacityStatusText(w.LastStatus),
-			"此前":  ociclient.CapacityStatusText(prev),
+			i18n.M("f.region"): w.Region,
+			i18n.M("f.ad"):     shortADName(w.AvailabilityDomain),
+			i18n.M("f.shape"):  w.Shape,
+			i18n.M("f.now"):    ociclient.CapacityStatusText(w.LastStatus),
+			i18n.M("f.before"): ociclient.CapacityStatusText(prev),
 		},
 	})
 }

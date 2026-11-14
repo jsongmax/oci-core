@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -70,13 +71,13 @@ func CheckDraft(ctx context.Context, d Draft) Result {
 	key, err := ociclient.ParsePrivateKey([]byte(d.PrivateKeyPEM))
 	if err != nil {
 		res.Steps = append(res.Steps, Step{
-			Key: "pem", Label: "私钥格式", OK: false, Detail: err.Error(),
+			Key: "pem", Label: i18n.M("acct.step.pem"), OK: false, Detail: err.Error(),
 		})
 		res.ErrorText = err.Error()
-		res.Advice = "请粘贴完整的 PEM 私钥，包含 BEGIN 与 END 两行。"
+		res.Advice = i18n.M("acct.adv.pem")
 		return res
 	}
-	res.Steps = append(res.Steps, Step{Key: "pem", Label: "私钥格式有效", OK: true})
+	res.Steps = append(res.Steps, Step{Key: "pem", Label: i18n.M("acct.step.pem_ok"), OK: true})
 
 	creds := &ociclient.Credentials{
 		TenancyOCID: strings.TrimSpace(d.TenancyOCID),
@@ -88,19 +89,19 @@ func CheckDraft(ctx context.Context, d Draft) Result {
 
 	if err := creds.Validate(); err != nil {
 		res.Steps = append(res.Steps, Step{
-			Key: "fingerprint", Label: "指纹与私钥匹配", OK: false, Detail: err.Error(),
+			Key: "fingerprint", Label: i18n.M("acct.step.fingerprint"), OK: false, Detail: err.Error(),
 		})
 		res.ErrorText = err.Error()
-		res.Advice = "指纹可以在 Oracle 控制台的「用户设置 → API 密钥」里核对。"
+		res.Advice = i18n.M("acct.adv.fingerprint")
 		return res
 	}
 	res.Steps = append(res.Steps, Step{
-		Key: "fingerprint", Label: "指纹与私钥匹配", OK: true, Detail: creds.Fingerprint,
+		Key: "fingerprint", Label: i18n.M("acct.step.fingerprint"), OK: true, Detail: creds.Fingerprint,
 	})
 
 	opts, err := clientOptions(d.ProxyURL)
 	if err != nil {
-		res.Steps = append(res.Steps, Step{Key: "proxy", Label: "代理配置", OK: false, Detail: err.Error()})
+		res.Steps = append(res.Steps, Step{Key: "proxy", Label: i18n.M("acct.step.proxy"), OK: false, Detail: err.Error()})
 		res.ErrorText = err.Error()
 		return res
 	}
@@ -117,8 +118,8 @@ func CheckDraft(ctx context.Context, d Draft) Result {
 func CheckClient(ctx context.Context, client *ociclient.Client) Result {
 	res := Result{
 		Steps: []Step{
-			{Key: "pem", Label: "私钥格式有效", OK: true},
-			{Key: "fingerprint", Label: "指纹与私钥匹配", OK: true},
+			{Key: "pem", Label: i18n.M("acct.step.pem_ok"), OK: true},
+			{Key: "fingerprint", Label: i18n.M("acct.step.fingerprint"), OK: true},
 		},
 	}
 	return checkWithClient(ctx, client, res)
@@ -134,7 +135,7 @@ func checkWithClient(ctx context.Context, client *ociclient.Client, res Result) 
 	user, err := client.GetCurrentUser(ctx)
 	if err != nil {
 		res.Steps = append(res.Steps, Step{
-			Key: "identity", Label: "调用 GetUser", OK: false, Detail: shortError(err),
+			Key: "identity", Label: i18n.M("acct.step.get_user"), OK: false, Detail: shortError(err),
 		})
 		fillError(&res, err)
 		return res
@@ -142,7 +143,7 @@ func checkWithClient(ctx context.Context, client *ociclient.Client, res Result) 
 	res.UserName = user.Name
 	res.UserEmail = user.Email
 	res.Steps = append(res.Steps, Step{
-		Key: "identity", Label: "GetUser 调用成功", OK: true, Detail: userLabel(user),
+		Key: "identity", Label: i18n.M("acct.step.get_user_ok"), OK: true, Detail: userLabel(user),
 	})
 
 	// 订阅列表与租户名互不依赖，并发发出去。
@@ -199,10 +200,10 @@ func checkWithClient(ctx context.Context, client *ociclient.Client, res Result) 
 	if err != nil {
 		// 订阅列表失败不影响"凭据可用"这个结论——多半是缺少读取租户的权限。
 		res.Steps = append(res.Steps, Step{
-			Key: "regions", Label: "读取区域订阅", OK: false, Detail: shortError(err),
+			Key: "regions", Label: i18n.M("acct.step.regions"), OK: false, Detail: shortError(err),
 		})
 		res.OK = true
-		res.Advice = "凭据可用，但无法读取区域订阅，可能缺少读取租户的权限。"
+		res.Advice = i18n.M("acct.adv.regions")
 		return res
 	}
 	for _, sub := range subs {
@@ -212,7 +213,7 @@ func checkWithClient(ctx context.Context, client *ociclient.Client, res Result) 
 		}
 	}
 	res.Steps = append(res.Steps, Step{
-		Key: "regions", Label: "已订阅 " + itoa(len(subs)) + " 个区域", OK: true,
+		Key: "regions", Label: i18n.M("acct.step.regions_ok", len(subs)), OK: true,
 		Detail: strings.Join(res.Regions, ", "),
 	})
 

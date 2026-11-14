@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
@@ -54,20 +54,20 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSyncInstances(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
 
-	title := "同步全部实例"
+	title := i18n.M("api.sync_all_title")
 	if accountID != "" {
 		acc, err := s.st.GetAccount(r.Context(), accountID)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		title = "同步实例 · " + acc.Alias
+		title = i18n.M("api.sync_account_title", acc.Alias)
 	}
 
 	s.submitJob(w, jobsvc.Spec{
 		Kind: jobSync, Title: title, AccountID: accountID, Timeout: 6 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("逐个账号与区域拉取实例列表")
+		p.Step(i18n.M("api.step.sync"))
 		var (
 			report *instancesvc.SyncReport
 			err    error
@@ -83,13 +83,13 @@ func (s *Server) handleSyncInstances(w http.ResponseWriter, r *http.Request) {
 		for _, e := range report.Errors {
 			p.Stepf("⚠ %s · %s：%s", e.AccountAlias, e.Region, orText(e.OciCode, e.Message))
 		}
-		summary := fmt.Sprintf("%d 台实例 · %d 个区域 · %.1fs",
+		summary := i18n.M("api.sync_summary",
 			report.Instances, report.Regions, float64(report.DurationMs)/1000)
 		if report.Terminated > 0 {
-			summary += fmt.Sprintf("（另有 %d 台已终止）", report.Terminated)
+			summary += i18n.M("api.sync_terminated", report.Terminated)
 		}
 		if n := len(report.Errors); n > 0 {
-			summary += fmt.Sprintf("，%d 个区域失败", n)
+			summary += i18n.M("api.sync_failed_regions", n)
 		}
 		return jobsvc.Outcome{Summary: summary, Result: report}, nil
 	})
@@ -103,9 +103,8 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request) {
 	// 归入 L2：必须显式带上 force=true 才放行。
 	if isForcefulAction(action) && r.URL.Query().Get("force") != "true" {
 		writeJSON(w, http.StatusBadRequest, errorBody{
-			Code: "confirm_required",
-			Message: "该操作会直接切断电源，可能导致数据丢失。" +
-				"如确认要执行，请附带 force=true。",
+			Code:    "confirm_required",
+			Message: i18n.M("api.force_confirm"),
 		})
 		return
 	}
@@ -165,7 +164,7 @@ func (s *Server) handleSetInstanceNote(w http.ResponseWriter, r *http.Request) {
 	}
 	note := strings.TrimSpace(req.Note)
 	if len([]rune(note)) > 500 {
-		writeError(w, http.StatusBadRequest, "note_too_long", "备注最多 500 个字符")
+		writeError(w, http.StatusBadRequest, "note_too_long", i18n.M("api.note_too_long"))
 		return
 	}
 
@@ -198,7 +197,7 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Ocpus <= 0 || req.MemoryInGBs <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_input", "OCPU 与内存都必须大于 0")
+		writeError(w, http.StatusBadRequest, "invalid_input", i18n.M("api.reshape_positive"))
 		return
 	}
 	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
@@ -214,11 +213,11 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 	detail := fmt.Sprintf("%g OCPU / %g GB", req.Ocpus, req.MemoryInGBs)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobReshape, Title: "更改配置 · " + inst.DisplayName + " → " + detail,
+		Kind: jobReshape, Title: i18n.M("api.reshape_title", inst.DisplayName, detail),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 15 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
 		wasRunning := inst.LifecycleState == ociclient.LifecycleRunning
-		p.Step("校验规格范围并提交新配置")
+		p.Step(i18n.M("api.step.reshape_submit"))
 		updated, err := s.instances.Reshape(ctx, inst.ID, instancesvc.ReshapeRequest{
 			Ocpus:        req.Ocpus,
 			MemoryInGBs:  req.MemoryInGBs,
@@ -236,7 +235,7 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 		// 关着的机器改完就生效；运行中的要等 Oracle 重启一轮。
 		var grace time.Duration
 		if wasRunning {
-			p.Step("新配置已提交，等待 Oracle 重启实例以应用")
+			p.Step(i18n.M("api.step.reshape_wait"))
 			grace = 2 * time.Minute
 		}
 		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 30, 99, grace)
@@ -244,9 +243,9 @@ func (s *Server) handleReshapeInstance(w http.ResponseWriter, r *http.Request) {
 			return jobsvc.Outcome{}, err
 		}
 		if final == nil {
-			return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+			return jobsvc.Outcome{}, i18n.Err("api.instance_gone")
 		}
-		summary := fmt.Sprintf("已改为 %g OCPU / %g GB，当前 %s", updated.Ocpus, updated.MemoryGB, final.LifecycleState)
+		summary := i18n.M("api.reshape_done", updated.Ocpus, updated.MemoryGB, final.LifecycleState)
 		return jobsvc.Outcome{Summary: summary}, nil
 	})
 }
@@ -271,12 +270,12 @@ func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if strings.TrimSpace(req.ImageID) == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "请选择镜像")
+		writeError(w, http.StatusBadRequest, "missing_fields", i18n.M("api.image_required"))
 		return
 	}
 	if req.BootVolumeGB != 0 && req.BootVolumeGB < instancesvc.MinBootVolumeGB {
 		writeError(w, http.StatusBadRequest, "invalid_input",
-			fmt.Sprintf("引导卷至少 %d GB", instancesvc.MinBootVolumeGB))
+			i18n.M("api.boot_min", instancesvc.MinBootVolumeGB))
 		return
 	}
 
@@ -287,7 +286,7 @@ func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request)
 	}
 	if strings.TrimSpace(req.Confirm) != inst.DisplayName {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"替换引导卷需要回传实例名称 "+strconv.Quote(inst.DisplayName))
+			i18n.M("api.replace_confirm", inst.DisplayName))
 		return
 	}
 	if ociclient.IsTransitionalState(inst.LifecycleState) {
@@ -295,9 +294,9 @@ func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	detail := "旧引导卷删除"
+	detail := i18n.M("api.old_boot_deleted")
 	if req.PreserveBootVolume {
-		detail = "旧引导卷保留"
+		detail = i18n.M("api.old_boot_kept")
 	}
 	userData := ""
 	if ci := strings.TrimSpace(req.CloudInit); ci != "" {
@@ -307,10 +306,10 @@ func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request)
 	wasRunning := inst.LifecycleState == ociclient.LifecycleRunning
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobReplaceBoot, Title: "替换引导卷 · " + inst.DisplayName,
+		Kind: jobReplaceBoot, Title: i18n.M("api.replace_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 30 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("提交替换请求（" + detail + "）")
+		p.Step(i18n.M("api.step.replace_submit", detail))
 		updated, err := s.instances.ReplaceBootVolume(ctx, inst.ID, instancesvc.ReplaceBootVolumeRequest{
 			ImageID:      req.ImageID,
 			BootVolumeGB: req.BootVolumeGB,
@@ -331,45 +330,45 @@ func (s *Server) handleReplaceBootVolume(w http.ResponseWriter, r *http.Request)
 		})
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventDangerOperation,
-			Title: "实例 " + inst.DisplayName + " 已提交替换引导卷",
+			Title: i18n.M("api.replace_notify_title", inst.DisplayName),
 			Fields: map[string]string{
-				"实例":   inst.DisplayName,
-				"区域":   inst.Region,
-				"新系统":  osName,
-				"旧引导卷": detail,
-				"操作者":  who.username,
-				"来源":   who.ip,
+				i18n.M("f.instance"): inst.DisplayName,
+				i18n.M("f.region"):   inst.Region,
+				i18n.M("f.new_os"):   osName,
+				i18n.M("f.old_boot"): detail,
+				i18n.M("f.operator"): who.username,
+				i18n.M("f.source"):   who.ip,
 			},
 		})
 		p.Set(15)
 
 		// Oracle 受理后要过一会才开始停机换盘，缓存一开始可能还是原状态。
-		p.Step("等待 Oracle 停机并换上新引导卷")
+		p.Step(i18n.M("api.step.replace_wait"))
 		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 15, 70, 3*time.Minute)
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
 		if final == nil {
-			return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+			return jobsvc.Outcome{}, i18n.Err("api.instance_gone")
 		}
 		// 运行中的实例会经过 STOPPED 再开回来，中途那一下 STOPPED 不算落定。
 		if wasRunning && final.LifecycleState == ociclient.LifecycleStopped {
-			p.Step("新引导卷已换上，等待实例重新开机")
+			p.Step(i18n.M("api.step.replace_restart"))
 			final, err = s.waitInstanceSettled(ctx, p, inst.ID, 70, 95, 5*time.Minute)
 			if err != nil {
 				return jobsvc.Outcome{}, err
 			}
 			if final == nil {
-				return jobsvc.Outcome{}, errors.New("实例已不在列表中")
+				return jobsvc.Outcome{}, i18n.Err("api.instance_gone")
 			}
 		}
 
-		p.Step("读取新引导卷信息")
+		p.Step(i18n.M("api.step.read_new_boot"))
 		if err := s.instances.RefreshBootVolume(ctx, inst.ID); err != nil {
 			// 不影响结果：下一轮同步会补上。
-			p.Step("暂时没读到新引导卷：" + err.Error() + "，下一轮同步会补上")
+			p.Step(i18n.M("api.step.new_boot_missing", err.Error()))
 		}
-		return jobsvc.Outcome{Summary: fmt.Sprintf("已换成 %s，当前 %s，%s", osName, final.LifecycleState, detail)}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.replace_done", osName, final.LifecycleState, detail)}, nil
 	})
 }
 
@@ -392,28 +391,28 @@ func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request)
 	}
 	if !policy.AllowTerminate {
 		writeError(w, http.StatusForbidden, "terminate_disabled",
-			"终止实例功能已在设置中禁用")
+			i18n.M("api.terminate_disabled"))
 		return
 	}
 
 	if confirm := strings.TrimSpace(r.URL.Query().Get("confirm")); confirm != inst.DisplayName {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"终止实例需要在 confirm 参数中回传实例名称 "+strconv.Quote(inst.DisplayName))
+			i18n.M("api.terminate_confirm", inst.DisplayName))
 		return
 	}
 
 	preserveBootVolume := r.URL.Query().Get("preserveBootVolume") == "true"
-	detail := "引导卷一并删除"
+	detail := i18n.M("api.boot_deleted_too")
 	if preserveBootVolume {
-		detail = "保留引导卷"
+		detail = i18n.M("api.boot_kept")
 	}
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobTerminate, Title: "终止实例 " + inst.DisplayName,
+		Kind: jobTerminate, Title: i18n.M("api.terminate_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 20 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("提交终止请求（" + detail + "）")
+		p.Step(i18n.M("api.step.terminate_submit", detail))
 		if err := s.instances.Terminate(ctx, inst.ID, preserveBootVolume); err != nil {
 			return jobsvc.Outcome{}, err
 		}
@@ -423,25 +422,25 @@ func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request)
 		})
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventDangerOperation,
-			Title: "实例 " + inst.DisplayName + " 已终止",
+			Title: i18n.M("api.terminated_title", inst.DisplayName),
 			Fields: map[string]string{
-				"实例":  inst.DisplayName,
-				"区域":  inst.Region,
-				"引导卷": detail,
-				"操作者": who.username,
-				"来源":  who.ip,
+				i18n.M("f.instance"):    inst.DisplayName,
+				i18n.M("f.region"):      inst.Region,
+				i18n.M("f.boot_volume"): detail,
+				i18n.M("f.operator"):    who.username,
+				i18n.M("f.source"):      who.ip,
 			},
 		})
-		p.Step("等待 Oracle 回收实例")
+		p.Step(i18n.M("api.step.terminate_wait"))
 		p.Set(20)
 		final, err := s.waitInstanceSettled(ctx, p, inst.ID, 20, 99, 0)
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
 		if final != nil && final.LifecycleState != ociclient.LifecycleTerminated {
-			return jobsvc.Outcome{}, errors.New("实例没有进入已终止状态，当前 " + final.LifecycleState)
+			return jobsvc.Outcome{}, i18n.Err("api.not_terminated", final.LifecycleState)
 		}
-		return jobsvc.Outcome{Summary: "实例已终止，" + detail}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.terminated_summary", detail)}, nil
 	})
 }
 
@@ -461,7 +460,7 @@ func (s *Server) handleDismissInstanceError(w http.ResponseWriter, r *http.Reque
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "no_streaming", "当前服务器不支持流式响应")
+		writeError(w, http.StatusInternalServerError, "no_streaming", i18n.M("api.no_streaming"))
 		return
 	}
 
@@ -491,6 +490,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, unsubscribe := s.instances.Bus().Subscribe()
 	defer unsubscribe()
+	lang := langOf(w)
 
 	fmt.Fprintf(w, "retry: 3000\n\n")
 	flusher.Flush()
@@ -512,6 +512,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			// 每条连接按自己的语言展开（前端切换语言时会带新语言重连）。
+			data = i18n.RenderJSON(lang, data)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, data)
 			flusher.Flush()
 
@@ -585,7 +587,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			resp.Accounts.Error++
 			resp.Attention = append(resp.Attention, attentionItem{
 				Kind: "account_error", AccountID: acc.ID, Target: acc.Alias,
-				Message: orText(acc.StatusMessage, "凭据校验失败"), Severity: "danger",
+				Message: orText(acc.StatusMessage, i18n.M("api.cred_check_failed")), Severity: "danger",
 			})
 		case acc.Status == store.StatusOK:
 			resp.Accounts.OK++
@@ -605,8 +607,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	// 通常先表现为异常停止，早点发现还有救。
 	if stopped := byState[ociclient.LifecycleStopped]; stopped > 0 {
 		resp.Attention = append(resp.Attention, attentionItem{
-			Kind: "instances_stopped", Target: fmt.Sprintf("%d 台实例", stopped),
-			Message: "有实例处于已停止状态", Severity: "warning",
+			Kind: "instances_stopped", Target: i18n.M("api.n_instances", stopped),
+			Message: i18n.M("api.instances_stopped"), Severity: "warning",
 		})
 	}
 
@@ -619,7 +621,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 func writeInstanceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "实例不存在或尚未同步")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.instance_not_found"))
 		return
 	case errors.Is(err, instancesvc.ErrInstanceBusy):
 		writeError(w, http.StatusConflict, "instance_busy", err.Error())

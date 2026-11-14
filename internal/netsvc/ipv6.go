@@ -3,13 +3,12 @@ package netsvc
 import (
 	"context"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 )
 
@@ -43,7 +42,7 @@ func PrepareIPv6(ctx context.Context, client *ociclient.Client, region, subnetID
 
 	subnet, err := client.GetSubnet(ctx, region, subnetID)
 	if err != nil {
-		return nil, fmt.Errorf("读取子网失败: %w", err)
+		return nil, i18n.Wrap(err, "net.read_subnet_failed")
 	}
 
 	if !subnetHasIPv6(subnet) {
@@ -67,17 +66,17 @@ func addSubnetIPv6(ctx context.Context, client *ociclient.Client, region string,
 
 	vcn, err := client.GetVcn(ctx, region, subnet.VcnID)
 	if err != nil {
-		return fmt.Errorf("读取 VCN 失败: %w", err)
+		return i18n.Wrap(err, "net.read_vcn_failed")
 	}
 
 	// 每个 VCN 只能有一个 Oracle 分配的 /56。已经有了还去申请，Oracle 会拒绝，
 	// 所以必须先看再申请。新建 VCN 时带了 isIpv6Enabled 的，这里会直接跳过。
 	if len(vcn.Ipv6CidrBlocks) == 0 {
 		if err := client.AddVcnIpv6Cidr(ctx, region, vcn.ID); err != nil {
-			return fmt.Errorf("为 VCN 申请 IPv6 前缀失败: %w", err)
+			return i18n.Wrap(err, "net.vcn_v6_failed")
 		}
 		// 申请是异步的：接口先返回，VCN 进入 UPDATING，前缀稍后才出现。
-		if err := waitFor(ctx, "VCN 的 IPv6 前缀生效", func(ctx context.Context) (bool, error) {
+		if err := waitFor(ctx, i18n.M("net.wait.vcn_v6"), func(ctx context.Context) (bool, error) {
 			v, err := client.GetVcn(ctx, region, vcn.ID)
 			if err != nil {
 				return false, err
@@ -87,7 +86,7 @@ func addSubnetIPv6(ctx context.Context, client *ociclient.Client, region string,
 		}); err != nil {
 			return err
 		}
-		prep.Steps = append(prep.Steps, "已为 VCN "+vcn.DisplayName+" 申请 IPv6 前缀 "+vcn.Ipv6CidrBlocks[0])
+		prep.Steps = append(prep.Steps, i18n.M("net.step.vcn_v6", vcn.DisplayName, vcn.Ipv6CidrBlocks[0]))
 	}
 
 	used, err := usedIPv6Prefixes(ctx, client, region, vcn, subnet)
@@ -102,10 +101,10 @@ func addSubnetIPv6(ctx context.Context, client *ociclient.Client, region string,
 	// 子网的前缀必须显式指定：Oracle 要求从 VCN 的前缀里切一段 /64。
 	// 以前这里传的是空请求体，这一步一定失败。
 	if err := client.AddSubnetIpv6Cidr(ctx, region, subnet.ID, block); err != nil {
-		return fmt.Errorf("为子网分配 IPv6 前缀 %s 失败: %w", block, err)
+		return i18n.Wrap(err, "net.subnet_v6_failed", block)
 	}
 	// 同样是异步的。子网还在 UPDATING 时去创建实例，照样会被拒。
-	if err := waitFor(ctx, "子网的 IPv6 前缀生效", func(ctx context.Context) (bool, error) {
+	if err := waitFor(ctx, i18n.M("net.wait.subnet_v6"), func(ctx context.Context) (bool, error) {
 		s, err := client.GetSubnet(ctx, region, subnet.ID)
 		if err != nil {
 			return false, err
@@ -114,7 +113,7 @@ func addSubnetIPv6(ctx context.Context, client *ociclient.Client, region string,
 	}); err != nil {
 		return err
 	}
-	prep.Steps = append(prep.Steps, "已为子网 "+subnet.DisplayName+" 分配 IPv6 前缀 "+block)
+	prep.Steps = append(prep.Steps, i18n.M("net.step.subnet_v6", subnet.DisplayName, block))
 	return nil
 }
 
@@ -134,7 +133,7 @@ func usedIPv6Prefixes(ctx context.Context, client *ociclient.Client, region stri
 	for _, compartment := range compartments {
 		siblings, err := client.ListSubnets(ctx, region, compartment, vcn.ID)
 		if err != nil {
-			return nil, fmt.Errorf("读取子网列表失败: %w", err)
+			return nil, i18n.Wrap(err, "net.list_subnets_failed")
 		}
 		for _, s := range siblings {
 			blocks := append([]string{s.Ipv6CidrBlock}, s.Ipv6CidrBlocks...)
@@ -177,23 +176,22 @@ func freeIPv6Subnet(vcnPrefixes []string, used []netip.Prefix) (string, error) {
 		}
 	}
 	if len(vcnPrefixes) == 0 {
-		return "", errors.New("VCN 没有 IPv6 前缀")
+		return "", i18n.Err("net.vcn_no_v6")
 	}
-	return "", errors.New("VCN 的 IPv6 前缀已被其他子网占满，无法再分出 /64")
+	return "", i18n.Err("net.vcn_v6_full")
 }
 
 // ensureIPv6Route 在子网的路由表里补一条 ::/0，指向 IPv4 默认路由用的同一个互联网网关。
 func ensureIPv6Route(ctx context.Context, client *ociclient.Client, region string,
 	subnet *ociclient.Subnet, prep *IPv6Prep) {
 
-	const noRoute = "实例的 IPv6 暂时无法访问外网。"
 	if subnet.RouteTableID == "" {
-		prep.Warnings = append(prep.Warnings, "子网没有关联路由表，未添加 IPv6 路由，"+noRoute)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.no_route_table"))
 		return
 	}
 	rt, err := client.GetRouteTable(ctx, region, subnet.RouteTableID)
 	if err != nil {
-		prep.Warnings = append(prep.Warnings, "读取路由表失败，未添加 IPv6 路由，"+noRoute)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.read_route_failed"))
 		return
 	}
 
@@ -207,8 +205,7 @@ func ensureIPv6Route(ctx context.Context, client *ociclient.Client, region strin
 		}
 	}
 	if gateway == "" {
-		prep.Warnings = append(prep.Warnings,
-			"子网的 IPv4 默认路由不经过互联网网关，未自动添加 IPv6 路由，"+noRoute)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.no_igw_route"))
 		return
 	}
 
@@ -217,8 +214,7 @@ func ensureIPv6Route(ctx context.Context, client *ociclient.Client, region strin
 	rules := make([]ociclient.RouteRule, 0, len(rt.RouteRules)+1)
 	for _, r := range rt.RouteRules {
 		if strings.EqualFold(r.RouteType, "LOCAL") {
-			prep.Warnings = append(prep.Warnings,
-				"路由表里有 Oracle 自动维护的规则，为免改坏未自动添加 IPv6 路由，请在控制台手动添加 ::/0 指向互联网网关。")
+			prep.Warnings = append(prep.Warnings, i18n.M("net.warn.managed_rules"))
 			return
 		}
 		r.RouteType = "" // 与以前的写法保持一致：只回写目的地与目标。
@@ -228,23 +224,21 @@ func ensureIPv6Route(ctx context.Context, client *ociclient.Client, region strin
 		Destination:     "::/0",
 		DestinationType: "CIDR_BLOCK",
 		NetworkEntityID: gateway,
-		Description:     "OCI Core 为 IPv6 添加的默认路由",
+		Description:     i18n.T(i18n.FromContext(ctx), "net.desc.v6_route"),
 	})
 	if _, err := client.UpdateRouteTable(ctx, region, rt.ID, rules); err != nil {
-		prep.Warnings = append(prep.Warnings, "添加 IPv6 路由失败，"+noRoute)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.add_route_failed"))
 		return
 	}
-	prep.Steps = append(prep.Steps, "已添加 IPv6 默认路由 ::/0")
+	prep.Steps = append(prep.Steps, i18n.M("net.step.v6_route"))
 }
 
 // ensureIPv6Egress 在放行全部 IPv4 出站的那个安全列表里，补一条 ::/0 全放行。
 func ensureIPv6Egress(ctx context.Context, client *ociclient.Client, region string,
 	subnet *ociclient.Subnet, prep *IPv6Prep) {
 
-	const noEgress = "实例暂时无法主动发起 IPv6 连接。"
 	if len(subnet.SecurityListIDs) == 0 {
-		prep.Warnings = append(prep.Warnings,
-			"子网没有关联安全列表（可能用的是网络安全组），未添加 IPv6 出站规则，"+noEgress)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.no_seclist"))
 		return
 	}
 
@@ -252,7 +246,7 @@ func ensureIPv6Egress(ctx context.Context, client *ociclient.Client, region stri
 	for _, id := range subnet.SecurityListIDs {
 		list, err := client.GetSecurityList(ctx, region, id)
 		if err != nil {
-			prep.Warnings = append(prep.Warnings, "读取安全列表失败，未添加 IPv6 出站规则，"+noEgress)
+			prep.Warnings = append(prep.Warnings, i18n.M("net.warn.read_seclist"))
 			return
 		}
 		for _, rule := range list.EgressSecurityRules {
@@ -265,8 +259,7 @@ func ensureIPv6Egress(ctx context.Context, client *ociclient.Client, region stri
 		}
 	}
 	if target == nil {
-		prep.Warnings = append(prep.Warnings,
-			"安全列表没有放行全部 IPv4 出站（出站规则收紧过），未自动添加 IPv6 出站规则，"+noEgress)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.egress_tightened"))
 		return
 	}
 
@@ -274,13 +267,13 @@ func ensureIPv6Egress(ctx context.Context, client *ociclient.Client, region stri
 		Protocol:        "all",
 		Destination:     "::/0",
 		DestinationType: "CIDR_BLOCK",
-		Description:     "允许所有 IPv6 出站流量（OCI 默认）",
+		Description:     i18n.T(i18n.FromContext(ctx), "net.desc.v6_egress"),
 	})
 	if _, err := client.UpdateSecurityList(ctx, region, target.ID, target.IngressSecurityRules, egress); err != nil {
-		prep.Warnings = append(prep.Warnings, "添加 IPv6 出站规则失败，"+noEgress)
+		prep.Warnings = append(prep.Warnings, i18n.M("net.warn.add_egress_failed"))
 		return
 	}
-	prep.Steps = append(prep.Steps, "已在安全列表 "+target.DisplayName+" 添加 IPv6 出站规则 ::/0")
+	prep.Steps = append(prep.Steps, i18n.M("net.step.v6_egress", target.DisplayName))
 }
 
 // waitFor 轮询 check 直到它返回 true，上限 resourceWaitTimeout。
@@ -295,9 +288,9 @@ func waitFor(ctx context.Context, what string, check func(context.Context) (bool
 		select {
 		case <-ctx.Done():
 			if err != nil {
-				return fmt.Errorf("等待%s超时: %w", what, err)
+				return i18n.Wrap(err, "net.wait_timeout", what)
 			}
-			return fmt.Errorf("等待%s超时", what)
+			return i18n.Err("net.wait_timeout", what)
 		case <-time.After(pollInterval):
 		}
 	}

@@ -3,11 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/netsvc"
 	"ocicore/internal/ociclient"
@@ -32,36 +32,35 @@ type LaunchPreset struct {
 func launchPresets() []LaunchPreset {
 	return []LaunchPreset{
 		{
-			Key: "arm-free", Label: "免费额度 ARM（满配）",
+			Key: "arm-free", Label: i18n.M("api.preset.arm_full"),
 			Shape: "VM.Standard.A1.Flex",
 			Ocpus: ociclient.AlwaysFreeARMOcpus, MemoryInGBs: ociclient.AlwaysFreeARMMemoryGB,
 			BootGB:      50,
-			Description: "Ampere A1，永久免费额度上限（2026-06-15 起为 2C12G）。容量紧张时较难开出。",
+			Description: i18n.M("api.preset.arm_full.desc"),
 			FreeTier:    true,
 		},
 		{
-			Key: "arm-half", Label: "免费额度 ARM（半配）",
+			Key: "arm-half", Label: i18n.M("api.preset.arm_half"),
 			Shape: "VM.Standard.A1.Flex",
 			Ocpus: ociclient.AlwaysFreeARMOcpus / 2, MemoryInGBs: ociclient.AlwaysFreeARMMemoryGB / 2,
 			BootGB:      50,
-			Description: "占用一半免费额度，可以开两台。",
+			Description: i18n.M("api.preset.arm_half.desc"),
 			FreeTier:    true,
 		},
 		{
 			// 这一档对永久免费号是陷阱：照它开出来的实例会被 Oracle 回收。
 			// 所以 FreeTier 标 false，标题里写明适用对象，别让人顺手点。
-			Key: "arm-legacy", Label: "ARM 4C24G（仅升级号）",
+			Key: "arm-legacy", Label: i18n.M("api.preset.arm_legacy"),
 			Shape: "VM.Standard.A1.Flex",
 			Ocpus: ociclient.LegacyFreeARMOcpus, MemoryInGBs: ociclient.LegacyFreeARMMemoryGB,
-			BootGB: 50,
-			Description: "2026-06-15 前的免费上限。升级号（PAYG）据报仍可免费使用；" +
-				"永久免费号超出新限额的实例已从 2026-08-18 起被 Oracle 回收。",
-			FreeTier: false,
+			BootGB:      50,
+			Description: i18n.M("api.preset.arm_legacy.desc"),
+			FreeTier:    false,
 		},
 		{
-			Key: "amd-free", Label: "免费额度 AMD",
+			Key: "amd-free", Label: i18n.M("api.preset.amd"),
 			Shape: "VM.Standard.E2.1.Micro", Ocpus: 1, MemoryInGBs: 1, BootGB: 50,
-			Description: "配置很低但基本随时能开，适合做跳板机。", FreeTier: true,
+			Description: i18n.M("api.preset.amd.desc"), FreeTier: true,
 		},
 	}
 }
@@ -171,16 +170,16 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AccountID == "" || req.Shape == "" || req.ImageID == "" {
 		writeError(w, http.StatusBadRequest, "missing_fields",
-			"accountId、shape 与 imageId 为必填项")
+			i18n.M("api.need_account_shape_image"))
 		return
 	}
 	if strings.TrimSpace(req.DisplayName) == "" {
-		writeError(w, http.StatusBadRequest, "missing_fields", "请填写实例名称")
+		writeError(w, http.StatusBadRequest, "missing_fields", i18n.M("api.name_required"))
 		return
 	}
 	if req.SubnetID == "" && !req.AutoCreateNetwork {
 		writeError(w, http.StatusBadRequest, "missing_subnet",
-			"请选择子网，或勾选自动创建网络")
+			i18n.M("api.launch_need_subnet"))
 		return
 	}
 
@@ -197,7 +196,7 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobLaunch, Title: "创建实例 " + strings.TrimSpace(req.DisplayName), AccountID: acc.ID,
+		Kind: jobLaunch, Title: i18n.M("api.launch_title", strings.TrimSpace(req.DisplayName)), AccountID: acc.ID,
 		// 创建、建网、等就绪加起来，容量紧张时十分钟也不算离谱。
 		Timeout: 20 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
@@ -208,7 +207,7 @@ func (s *Server) handleLaunchInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ociclient.Client,
 	acc *store.Account, region string, req launchRequest, who actor) (jobsvc.Outcome, error) {
 
-	p.Stepf("账号 %s · 区域 %s · 规格 %s", acc.Alias, region, req.Shape)
+	p.Step(i18n.M("api.step.launch_target", acc.Alias, region, req.Shape))
 
 	ad := req.AvailabilityDomain
 	if ad == "" {
@@ -217,10 +216,10 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 			return jobsvc.Outcome{}, err
 		}
 		if len(ads) == 0 {
-			return jobsvc.Outcome{}, errors.New("该区域没有可用域")
+			return jobsvc.Outcome{}, i18n.Err("api.no_ads")
 		}
 		ad = ads[0].Name
-		p.Step("未指定可用域，已选用 " + ad)
+		p.Step(i18n.M("api.step.ad_picked", ad))
 	}
 	p.Set(5)
 
@@ -238,7 +237,7 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 		}
 	}
 	if target == nil {
-		return jobsvc.Outcome{}, errors.New("该可用域不提供规格 " + req.Shape)
+		return jobsvc.Outcome{}, i18n.Err("api.shape_not_in_ad", req.Shape)
 	}
 
 	var shapeConfig *ociclient.ShapeConfig
@@ -250,19 +249,19 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 		}
 		shapeConfig = &cfg
 	}
-	p.Step("规格校验通过")
+	p.Step(i18n.M("api.step.shape_ok"))
 	p.Set(10)
 
 	// 配额预检：配额已满的话 LaunchInstance 必定失败，
 	// 提前查一次能把"重试无意义"这件事说清楚。
 	if notice := s.checkLaunchQuota(ctx, client, acc, region, req.Shape, req.Ocpus); notice != "" {
-		return jobsvc.Outcome{}, errors.New(notice + "请先释放已有资源，或在账号详情的配额页确认限额。")
+		return jobsvc.Outcome{}, i18n.Err("api.quota_free_hint", notice)
 	}
 	p.Set(15)
 
 	subnetID := req.SubnetID
 	if subnetID == "" {
-		p.Step("正在准备网络（VCN / 子网 / 网关 / 路由）")
+		p.Step(i18n.M("api.step.prepare_net"))
 		netResult, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
 			Region:        region,
 			CompartmentID: acc.CompartmentOCID,
@@ -285,8 +284,7 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 	if req.EnableIPv6 {
 		prep, err := netsvc.PrepareIPv6(ctx, client, region, subnetID)
 		if err != nil {
-			return jobsvc.Outcome{}, errors.New("没能为子网开通 IPv6，实例未创建：" + ipv6ErrText(err) +
-				"。可以关闭 IPv6 后重试，或换一个子网。")
+			return jobsvc.Outcome{}, i18n.Err("api.launch_v6_failed", ipv6ErrText(err))
 		}
 		for _, step := range prep.Steps {
 			p.Step(step)
@@ -329,7 +327,7 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 		return jobsvc.Outcome{}, err
 	}
 	p.SetInstance(created.ID)
-	p.Step("已提交创建请求，实例进入 PROVISIONING")
+	p.Step(i18n.M("api.step.launch_submitted"))
 	p.Set(40)
 
 	// 立刻写入缓存，让列表马上出现这一行（PROVISIONING 状态），
@@ -370,7 +368,7 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 	for _, warn := range ipv6Warnings {
 		p.Step("⚠ IPv6：" + warn)
 	}
-	p.Step("等待实例就绪，通常需要 1–3 分钟")
+	p.Step(i18n.M("api.step.launch_wait"))
 
 	result := launchResult{InstanceID: created.ID}
 	inst, err := s.waitInstanceSettled(ctx, p, created.ID, 40, 99, 0)
@@ -383,13 +381,13 @@ func (s *Server) runLaunch(ctx context.Context, p *jobsvc.Progress, client *ocic
 			state = inst.LifecycleState
 		}
 		return jobsvc.Outcome{Result: result},
-			errors.New("实例已提交创建，但没有进入 RUNNING，当前状态 " + state)
+			i18n.Err("api.launch_not_running", state)
 	}
 
 	result.PublicIP = inst.PublicIP
-	summary := "实例 " + inst.DisplayName + " 已就绪"
+	summary := i18n.M("api.launch_ready", inst.DisplayName)
 	if inst.PublicIP != "" {
-		summary += "，公网 IP " + inst.PublicIP
+		summary += i18n.M("api.launch_ready_ip", inst.PublicIP)
 	}
 	return jobsvc.Outcome{Summary: summary, Result: result}, nil
 }
@@ -420,8 +418,7 @@ func (s *Server) checkLaunchQuota(ctx context.Context, client *ociclient.Client,
 		return ""
 	}
 	if float32(*avail.Available) < ocpus {
-		return "ARM 免费额度剩余 " + itoa(int(*avail.Available)) +
-			" OCPU，不足以创建 " + trimFloat(ocpus) + " OCPU 的实例。"
+		return i18n.M("api.arm_quota_short", int(*avail.Available), trimFloat(ocpus))
 	}
 	return ""
 }

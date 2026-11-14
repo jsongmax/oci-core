@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/netsvc"
@@ -22,14 +23,14 @@ import (
 func (s *Server) resolveTarget(w http.ResponseWriter, r *http.Request) (*ociclient.Client, *store.Account, string, bool) {
 	accountID := r.URL.Query().Get("accountId")
 	if accountID == "" {
-		writeError(w, http.StatusBadRequest, "missing_account", "缺少 accountId 参数")
+		writeError(w, http.StatusBadRequest, "missing_account", i18n.M("api.missing_account"))
 		return nil, nil, "", false
 	}
 
 	client, acc, err := s.conns.ForID(r.Context(), accountID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "账号不存在")
+			writeError(w, http.StatusNotFound, "not_found", i18n.M("api.account_not_found"))
 		} else {
 			writeError(w, http.StatusBadGateway, "credentials", err.Error())
 		}
@@ -148,13 +149,13 @@ func (s *Server) handleUpdateSecurityList(w http.ResponseWriter, r *http.Request
 			dangerous++
 		}
 	}
-	detail := "入站 " + itoa(len(req.Ingress)) + " 条，出站 " + itoa(len(req.Egress)) + " 条"
+	detail := i18n.M("api.rules_detail", len(req.Ingress), len(req.Egress))
 	if dangerous > 0 {
-		detail += "（含 " + itoa(dangerous) + " 条全放行规则）"
+		detail += i18n.M("api.rules_danger", dangerous)
 	}
 	// 出站清空会让整个子网断网，事后排查时这一行就是线索。
 	if len(req.Egress) == 0 {
-		detail += "（已无出站规则，该子网将无法访问外网）"
+		detail += i18n.M("api.rules_no_egress")
 	}
 
 	user := userFrom(r.Context())
@@ -198,15 +199,15 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 
 	enableIPv6 := r.URL.Query().Get("ipv6") == "true"
 	who := s.actorOf(r)
-	title := "准备网络 · " + region
+	title := i18n.M("api.ensure_net_title", region)
 	if enableIPv6 {
-		title += "（含 IPv6）"
+		title += i18n.M("api.with_ipv6")
 	}
 
 	s.submitJob(w, jobsvc.Spec{
 		Kind: jobEnsureNet, Title: title, AccountID: acc.ID, Timeout: 5 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("检查 VCN / 子网 / 网关 / 路由")
+		p.Step(i18n.M("api.step.check_net"))
 		result, err := netsvc.EnsureNetwork(ctx, client, netsvc.EnsureNetworkOptions{
 			Region:        region,
 			CompartmentID: acc.CompartmentOCID,
@@ -223,7 +224,7 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 		if enableIPv6 {
 			prep, err := netsvc.PrepareIPv6(ctx, client, region, result.SubnetID)
 			if err != nil {
-				return jobsvc.Outcome{Result: result}, errors.New("子网已就绪，但没能开通 IPv6：" + ipv6ErrText(err))
+				return jobsvc.Outcome{Result: result}, i18n.Err("api.subnet_ready_no_v6", ipv6ErrText(err))
 			}
 			result.Steps = append(result.Steps, prep.Steps...)
 			for _, step := range prep.Steps {
@@ -239,7 +240,7 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 			Action: "network_ensure", AccountID: acc.ID,
 			Target: region, Detail: strings.Join(result.Steps, "；"),
 		})
-		return jobsvc.Outcome{Summary: "子网 " + result.SubnetName + " 已就绪", Result: result}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.subnet_ready", result.SubnetName), Result: result}, nil
 	})
 }
 
@@ -263,19 +264,19 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 	}
 	if vnicID == "" {
 		writeError(w, http.StatusBadRequest, "no_vnic",
-			"尚未同步到该实例的网卡信息，请先执行一次同步")
+			i18n.M("api.no_vnic_synced"))
 		return
 	}
 
 	// L2 门槛：原 IP 不可找回，SSH 会立刻中断，必须显式确认。
 	if r.URL.Query().Get("confirm") != "true" {
-		msg := "更换后原公网 IP 不可找回，用它的连接会中断。"
+		msg := i18n.M("api.change_ip_confirm")
 		if primary && inst.PublicIP != "" {
-			msg = "更换后原 IP " + inst.PublicIP + " 不可找回，当前 SSH 连接会中断。"
+			msg = i18n.M("api.change_ip_confirm_ip", inst.PublicIP)
 		}
 		writeJSON(w, http.StatusBadRequest, errorBody{
 			Code:    "confirm_required",
-			Message: msg + "如确认要执行，请附带 confirm=true。",
+			Message: msg,
 		})
 		return
 	}
@@ -287,17 +288,17 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 	}
 	who := s.actorOf(r)
 
-	title := "更换公网 IP · " + inst.DisplayName
+	title := i18n.M("api.change_ip_title", inst.DisplayName)
 	if !primary {
-		title += "（附属网卡）"
+		title += i18n.M("api.secondary_suffix")
 	}
 	s.submitJob(w, jobsvc.Spec{
 		Kind: jobChangeIP, Title: title,
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		where := "主网卡"
+		where := i18n.M("api.primary_vnic")
 		if !primary {
-			p.Step("确认网卡属于该实例")
+			p.Step(i18n.M("api.step.check_vnic"))
 			vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
 			if err != nil {
 				return jobsvc.Outcome{}, err
@@ -305,9 +306,9 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 			where = vnicLabel(vnic)
 		}
 		if primary && inst.PublicIP != "" {
-			p.Step("释放原公网 IP " + inst.PublicIP + " 并申请新地址")
+			p.Step(i18n.M("api.step.release_ip", inst.PublicIP))
 		} else {
-			p.Step("为" + where + "申请公网 IP（已有临时 IP 则先释放）")
+			p.Step(i18n.M("api.step.request_ip", where))
 		}
 		p.Set(20)
 
@@ -315,7 +316,7 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
-		p.Step("新地址 " + result.NewIP + " 已分配")
+		p.Step(i18n.M("api.step.new_ip", result.NewIP))
 
 		if primary {
 			// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。重新读一次：
@@ -333,7 +334,7 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 
 		change := result.OldIP + " → " + result.NewIP
 		if result.OldIP == "" {
-			change = "新分配 " + result.NewIP
+			change = i18n.M("api.newly_assigned", result.NewIP)
 		}
 		s.audit(who, store.AuditEntry{
 			Action: "instance_change_ip", AccountID: inst.AccountID,
@@ -341,17 +342,17 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		})
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventDangerOperation,
-			Title: "实例 " + inst.DisplayName + " 的公网 IP 已更换",
-			Body:  "原有 SSH 连接已中断，请使用新地址重新连接。",
+			Title: i18n.M("api.ip_changed_title", inst.DisplayName),
+			Body:  i18n.M("api.ip_changed_body"),
 			Fields: map[string]string{
-				"实例":   inst.DisplayName,
-				"原 IP": result.OldIP,
-				"新 IP": result.NewIP,
-				"操作者":  who.username,
+				i18n.M("f.instance"): inst.DisplayName,
+				i18n.M("f.old_ip"):   result.OldIP,
+				i18n.M("f.new_ip"):   result.NewIP,
+				i18n.M("f.operator"): who.username,
 			},
 		})
 
-		summary := "新 IP " + result.NewIP
+		summary := i18n.M("api.new_ip", result.NewIP)
 		if result.OldIP != "" {
 			summary = result.OldIP + " → " + result.NewIP
 		}
@@ -369,7 +370,7 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 	}
 	if inst.VnicID == "" || inst.SubnetID == "" {
 		writeError(w, http.StatusBadRequest, "no_vnic",
-			"尚未同步到该实例的网络信息，请先执行一次同步")
+			i18n.M("api.no_net_synced"))
 		return
 	}
 
@@ -381,10 +382,10 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobEnableIPv6, Title: "启用 IPv6 · " + inst.DisplayName,
+		Kind: jobEnableIPv6, Title: i18n.M("api.enable_v6_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("为 VCN、子网开通 IPv6 前缀并给网卡分配地址")
+		p.Step(i18n.M("api.step.enable_v6"))
 		result, err := netsvc.EnableIPv6(ctx, client, inst.Region, inst.VnicID, inst.SubnetID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
@@ -404,7 +405,7 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 			Action: "instance_enable_ipv6", AccountID: inst.AccountID,
 			Target: inst.DisplayName, Detail: result.Address,
 		})
-		return jobsvc.Outcome{Summary: "已分配 IPv6 " + result.Address, Result: result}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.v6_assigned", result.Address), Result: result}, nil
 	})
 }
 
@@ -422,7 +423,7 @@ func findInstanceVnic(ctx context.Context, client *ociclient.Client, inst *store
 			return client.GetVnic(ctx, inst.Region, vnicID)
 		}
 	}
-	return nil, errors.New("这张网卡不在该实例上，或已经分离")
+	return nil, i18n.Err("api.vnic_not_on_instance")
 }
 
 // handleAddIPv6 给实例的某张网卡（主网卡或附属网卡）再分配一个 IPv6 地址。
@@ -444,16 +445,16 @@ func (s *Server) handleAddIPv6(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobAddIPv6, Title: "添加 IPv6 · " + inst.DisplayName,
+		Kind: jobAddIPv6, Title: i18n.M("api.add_v6_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("确认网卡属于该实例")
+		p.Step(i18n.M("api.step.check_vnic"))
 		vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
 		p.Set(20)
-		p.Step("检查子网的 IPv6 前缀并分配地址")
+		p.Step(i18n.M("api.step.add_v6"))
 		result, err := netsvc.AddIPv6(ctx, client, inst.Region, vnic.ID, vnic.SubnetID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
@@ -467,18 +468,18 @@ func (s *Server) handleAddIPv6(w http.ResponseWriter, r *http.Request) {
 			Action: "instance_add_ipv6", AccountID: inst.AccountID,
 			Target: inst.DisplayName, Detail: vnicLabel(vnic) + " · " + result.Address,
 		})
-		return jobsvc.Outcome{Summary: "已分配 IPv6 " + result.Address, Result: result}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.v6_assigned", result.Address), Result: result}, nil
 	})
 }
 
 // vnicLabel 是审计与任务里称呼一张网卡的方式。
 func vnicLabel(v *ociclient.Vnic) string {
-	kind := "附属网卡"
+	kind := i18n.M("api.secondary_vnic")
 	if v.IsPrimary {
-		kind = "主网卡"
+		kind = i18n.M("api.primary_vnic")
 	}
 	if v.DisplayName != "" {
-		return kind + " " + v.DisplayName
+		return i18n.M("api.vnic_named", kind, v.DisplayName)
 	}
 	return kind
 }
@@ -496,10 +497,10 @@ func waitVnicSettled(ctx context.Context, events <-chan instancesvc.Event, insta
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timeout.C:
-			return "", errors.New("等待网卡状态落定超时，请稍后在实例详情里确认")
+			return "", i18n.Err("api.vnic_wait_timeout")
 		case e, ok := <-events:
 			if !ok {
-				return "", errors.New("事件流已关闭")
+				return "", i18n.Err("api.event_stream_closed")
 			}
 			if e.Type == instancesvc.EventInstanceNetwork && e.InstanceID == instanceID {
 				return e.State, nil
@@ -515,7 +516,7 @@ func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.SubnetID) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_input", "请选择子网")
+		writeError(w, http.StatusBadRequest, "invalid_input", i18n.M("api.choose_subnet"))
 		return
 	}
 	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
@@ -526,13 +527,13 @@ func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobAttachVnic, Title: "添加附属网卡 · " + inst.DisplayName,
+		Kind: jobAttachVnic, Title: i18n.M("api.attach_vnic_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 8 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
 		events, unsubscribe := s.instances.Bus().Subscribe()
 		defer unsubscribe()
 
-		p.Step("校验网卡数量与子网")
+		p.Step(i18n.M("api.step.check_vnic_limit"))
 		_, result, err := s.instances.AttachVnic(ctx, inst.ID, req)
 		if err != nil {
 			return jobsvc.Outcome{}, err
@@ -541,19 +542,19 @@ func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
 			p.Step("⚠ " + warn)
 		}
 
-		detail := "子网 " + req.SubnetID
+		detail := i18n.M("api.detail.subnet", req.SubnetID)
 		if req.AssignPublicIP {
-			detail += "，分配公网 IPv4"
+			detail += i18n.M("api.detail.with_v4")
 		}
 		if req.AssignIPv6 {
-			detail += "，分配 IPv6"
+			detail += i18n.M("api.detail.with_v6")
 		}
 		s.audit(who, store.AuditEntry{
 			Action: "instance_attach_vnic", AccountID: inst.AccountID,
 			Target: inst.DisplayName, Detail: detail,
 		})
 
-		p.Step("已提交挂载，等待网卡就绪")
+		p.Step(i18n.M("api.step.attach_wait"))
 		p.Set(40)
 		state, err := waitVnicSettled(ctx, events, inst.ID)
 		if err != nil {
@@ -561,9 +562,9 @@ func (s *Server) handleAttachVnic(w http.ResponseWriter, r *http.Request) {
 		}
 		result.State = state
 		if state != "ATTACHED" {
-			return jobsvc.Outcome{Result: result}, errors.New("网卡没有挂上，Oracle 返回的状态是 " + state)
+			return jobsvc.Outcome{Result: result}, i18n.Err("api.vnic_not_attached", state)
 		}
-		return jobsvc.Outcome{Summary: "附属网卡已挂载", Result: result}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.vnic_attached"), Result: result}, nil
 	})
 }
 
@@ -572,7 +573,7 @@ func (s *Server) handleDetachVnic(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("confirm") != "true" {
 		writeJSON(w, http.StatusBadRequest, errorBody{
 			Code:    "confirm_required",
-			Message: "分离后这张网卡上的临时公网 IP 会被释放，不可找回。如确认要执行，请附带 confirm=true。",
+			Message: i18n.M("api.detach_confirm"),
 		})
 		return
 	}
@@ -585,7 +586,7 @@ func (s *Server) handleDetachVnic(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobDetachVnic, Title: "分离附属网卡 · " + inst.DisplayName,
+		Kind: jobDetachVnic, Title: i18n.M("api.detach_vnic_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 8 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
 		events, unsubscribe := s.instances.Bus().Subscribe()
@@ -600,37 +601,37 @@ func (s *Server) handleDetachVnic(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = vnic.ID
 		}
-		detail := name + " · 私网 " + vnic.PrivateIP
+		detail := i18n.M("api.detail.private", name, vnic.PrivateIP)
 		if vnic.PublicIP != "" {
-			detail += " · 公网 " + vnic.PublicIP
+			detail += i18n.M("api.detail.public", vnic.PublicIP)
 		}
-		p.Step("已提交分离：" + detail)
+		p.Step(i18n.M("api.step.detach_submitted", detail))
 		p.Set(30)
 
 		s.audit(who, store.AuditEntry{
 			Action: "instance_detach_vnic", AccountID: inst.AccountID,
 			Target: inst.DisplayName, Detail: detail,
 		})
-		fields := map[string]string{"实例": inst.DisplayName, "网卡": name, "操作者": who.username}
+		fields := map[string]string{i18n.M("f.instance"): inst.DisplayName, i18n.M("f.vnic"): name, i18n.M("f.operator"): who.username}
 		if vnic.PublicIP != "" {
-			fields["释放的公网 IP"] = vnic.PublicIP
+			fields[i18n.M("f.released_ip")] = vnic.PublicIP
 		}
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event:  notify.EventDangerOperation,
-			Title:  "实例 " + inst.DisplayName + " 分离了一张附属网卡",
-			Body:   "网卡上的临时公网 IP 已释放。",
+			Title:  i18n.M("api.vnic_detached_title", inst.DisplayName),
+			Body:   i18n.M("api.vnic_detached_body"),
 			Fields: fields,
 		})
 
-		p.Step("等待网卡下线")
+		p.Step(i18n.M("api.step.detach_wait"))
 		state, err := waitVnicSettled(ctx, events, inst.ID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
 		if state != "DETACHED" {
-			return jobsvc.Outcome{}, errors.New("网卡分离没有完成，状态 " + state)
+			return jobsvc.Outcome{}, i18n.Err("api.vnic_detach_incomplete", state)
 		}
-		return jobsvc.Outcome{Summary: "网卡 " + name + " 已分离"}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.vnic_detached", name)}, nil
 	})
 }
 

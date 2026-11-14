@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/proxypool"
 	"ocicore/internal/store"
 )
@@ -36,9 +37,7 @@ func (s *Server) handleListProxies(w http.ResponseWriter, r *http.Request) {
 		// accountId -> proxyId。前端的分配矩阵靠它渲染。
 		"bindings":       bindings,
 		"checkTimeoutMs": proxypool.DefaultCheckTimeout.Milliseconds(),
-		"notice": "代理只改变出口 IP，不改变身份——每个请求仍带该账号的密钥签名，" +
-			"Oracle 始终知道是哪个租户在调用。它降低的是「多个账号从同一 IP 出去」这一个信号，" +
-			"不是万能的防关联手段。",
+		"notice":         i18n.M("api.proxy_notice"),
 	})
 }
 
@@ -61,7 +60,7 @@ func (s *Server) handleImportProxies(w http.ResponseWriter, r *http.Request) {
 
 	results := proxypool.ParseBulk(req.Text)
 	if len(results) == 0 {
-		writeError(w, http.StatusBadRequest, "empty", "没有解析到任何代理")
+		writeError(w, http.StatusBadRequest, "empty", i18n.M("api.proxy_none_parsed"))
 		return
 	}
 
@@ -161,7 +160,7 @@ func (s *Server) handleBindProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AccountID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_account", "缺少账号 ID")
+		writeError(w, http.StatusBadRequest, "invalid_account", i18n.M("api.proxy_missing_account"))
 		return
 	}
 
@@ -187,8 +186,7 @@ func (s *Server) handleBindProxy(w http.ResponseWriter, r *http.Request) {
 // 觉得"多个账号共用一条代理"是理所当然的。
 func writeProxySharedError(w http.ResponseWriter) {
 	writeError(w, http.StatusConflict, "proxy_shared",
-		"该代理已绑定其他账号。一条代理只能绑一个账号——两个账号共用同一出口，"+
-			"等于把它们绑在同一个 IP 上，反而制造了本来不存在的关联信号。")
+		i18n.M("api.proxy_shared"))
 }
 
 // handleCheckProxies 执行存活检测。

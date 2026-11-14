@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/notify"
 	"ocicore/internal/store"
 )
@@ -188,11 +189,11 @@ func (s *Server) handleTestChannel(w http.ResponseWriter, r *http.Request) {
 
 	msg := notify.Message{
 		Event: "test",
-		Title: "OCI Core 测试通知",
-		Body:  "如果你看到这条消息，说明该渠道配置正确。",
+		Title: i18n.M("api.test_title"),
+		Body:  i18n.M("api.test_body"),
 		Fields: map[string]string{
-			"渠道": ch.Name,
-			"类型": ch.Kind,
+			i18n.M("f.channel"): ch.Name,
+			i18n.M("f.type"):    ch.Kind,
 		},
 	}
 
@@ -225,13 +226,13 @@ func validateChannelConfig(kind string, config map[string]string) error {
 				missing = append(missing, field.Label)
 			}
 			if len(field.Options) > 0 && !hasOption(field.Options, config[field.Key]) {
-				return &inputError{msg: def.Label + " 渠道的「" + field.Label + "」取值无效"}
+				return &inputError{msg: i18n.M("api.ch.field_invalid", def.Label, field.Label)}
 			}
 			// 地址类字段只接受 http(s)。目的 IP 的限制在真正发送时按解析结果执行，
 			// 这里拦不住 DNS 重绑定，只负责尽早挡掉明显填错的值。
 			if v := strings.TrimSpace(config[field.Key]); v != "" && (field.Key == "url" || field.Key == "webhook") {
 				if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-					return &inputError{msg: def.Label + " 渠道的「" + field.Label + "」必须是 http(s) 地址"}
+					return &inputError{msg: i18n.M("api.ch.field_url", def.Label, field.Label)}
 				}
 			}
 		}
@@ -263,11 +264,11 @@ func writeChannelError(w http.ResponseWriter, err error) {
 }
 
 func errMissingFields(kindLabel string, missing []string) error {
-	return &inputError{msg: kindLabel + " 渠道缺少必填项：" + strings.Join(missing, "、")}
+	return &inputError{msg: i18n.M("api.ch.missing", kindLabel, strings.Join(missing, i18n.M("api.ch.list_sep")))}
 }
 
 func errUnknownKind(kind string) error {
-	return &inputError{msg: "不支持的渠道类型 " + kind}
+	return &inputError{msg: i18n.M("api.ch.unknown_kind", kind)}
 }
 
 // inputError 是纯粹的输入校验错误，与 store 层的错误区分开。
@@ -293,6 +294,8 @@ type updateSettingsRequest struct {
 	SyncIntervalMinutes  *int  `json:"syncIntervalMinutes"`
 	CheckIntervalHours   *int  `json:"checkIntervalHours"`
 	AuditRetentionDays   *int  `json:"auditRetentionDays"`
+	// Language 是通知与后台任务文案的语言，见 store.Settings.Language。
+	Language *string `json:"language"`
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -310,7 +313,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// 打开复核却没有绑定两步验证，之后所有危险操作都会被挡住、又没有码可输。
 	if req.RequireTOTPForDanger != nil && *req.RequireTOTPForDanger && !user.TOTPEnabled {
 		writeError(w, http.StatusConflict, "totp_not_enabled",
-			"请先绑定两步验证，再开启危险操作复核")
+			i18n.M("api.totp_before_reauth"))
 		return
 	}
 	if loosensDangerPolicy(current, req) {
@@ -330,6 +333,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		SyncIntervalMinutes:  req.SyncIntervalMinutes,
 		CheckIntervalHours:   req.CheckIntervalHours,
 		AuditRetentionDays:   req.AuditRetentionDays,
+		Language:             req.Language,
 	})
 	if err != nil {
 		writeChannelError(w, err)
@@ -350,7 +354,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings": settings,
-		"notice":   "已保存并立即生效。",
+		"notice":   i18n.M("api.settings_saved"),
 	})
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
 	"ocicore/internal/ociclient"
@@ -27,13 +28,13 @@ import (
 func (s *Server) resourceTarget(w http.ResponseWriter, r *http.Request) (*ociclient.Client, *store.Account, string, bool) {
 	region := ociclient.NormalizeRegion(r.URL.Query().Get("region"))
 	if region == "" {
-		writeError(w, http.StatusBadRequest, "missing_region", "缺少 region 参数")
+		writeError(w, http.StatusBadRequest, "missing_region", i18n.M("api.missing_region"))
 		return nil, nil, "", false
 	}
 	client, acc, err := s.conns.ForID(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "账号不存在")
+			writeError(w, http.StatusNotFound, "not_found", i18n.M("api.account_not_found"))
 		} else {
 			writeError(w, http.StatusBadGateway, "credentials", err.Error())
 		}
@@ -98,22 +99,22 @@ func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_kind", "kind 只能是 boot 或 block")
+		writeError(w, http.StatusBadRequest, "invalid_kind", i18n.M("api.invalid_kind"))
 		return
 	}
 
 	if attached {
-		writeError(w, http.StatusConflict, "volume_attached", "这块卷仍挂在实例上，先分离再删除")
+		writeError(w, http.StatusConflict, "volume_attached", i18n.M("api.volume_attached"))
 		return
 	}
 	if state != ociclient.VolumeAvailable {
-		writeError(w, http.StatusConflict, "volume_busy", "卷当前状态为 "+state+"，只能删除 AVAILABLE 状态的卷")
+		writeError(w, http.StatusConflict, "volume_busy", i18n.M("api.volume_busy", state))
 		return
 	}
 	want := orText(name, volumeID)
 	if strings.TrimSpace(r.URL.Query().Get("confirm")) != want {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"删除卷不可恢复，需要在 confirm 参数中回传卷名 "+strconv.Quote(want))
+			i18n.M("api.volume_confirm", want))
 		return
 	}
 
@@ -128,7 +129,7 @@ func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	label := map[string]string{"boot": "引导卷", "block": "块存储"}[kind]
+	label := map[string]string{"boot": i18n.M("api.kind.boot"), "block": i18n.M("api.kind.block")}[kind]
 	detail := label + " · " + strconv.FormatInt(size, 10) + " GB · " + region
 	user := userFrom(r.Context())
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
@@ -137,15 +138,15 @@ func (s *Server) handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 	})
 	s.notifier.Dispatch(r.Context(), notify.Message{
 		Event: notify.EventDangerOperation,
-		Title: "已删除" + label + " " + want,
-		Body:  "卷上的数据不可恢复。",
+		Title: i18n.M("api.volume_deleted_title", label, want),
+		Body:  i18n.M("api.volume_deleted_body"),
 		Fields: map[string]string{
-			"账号": acc.Alias, "卷": want, "容量": strconv.FormatInt(size, 10) + " GB",
-			"区域": region, "操作者": user.Username,
+			i18n.M("f.account"): acc.Alias, i18n.M("f.volume"): want, i18n.M("f.size"): strconv.FormatInt(size, 10) + " GB",
+			i18n.M("f.region"): region, i18n.M("f.operator"): user.Username,
 		},
 	})
 	s.resources.invalidate(acc.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "notice": label + " " + want + " 已提交删除，几分钟内从列表消失。"})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "notice": i18n.M("api.volume_delete_notice", label, want)})
 }
 
 // handleReleaseReservedIP 释放一个未绑定的保留公网 IP。
@@ -166,16 +167,16 @@ func (s *Server) handleReleaseReservedIP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if ip.Lifetime != ociclient.PublicIPReserved {
-		writeError(w, http.StatusBadRequest, "not_reserved", "只能在这里释放保留 IP；临时 IP 请在实例上更换")
+		writeError(w, http.StatusBadRequest, "not_reserved", i18n.M("api.not_reserved"))
 		return
 	}
 	if ip.PrivateIPID != "" || ip.AssignedEntityID != "" {
-		writeError(w, http.StatusConflict, "ip_assigned", "这个保留 IP 仍绑定在网卡上，先解绑再释放")
+		writeError(w, http.StatusConflict, "ip_assigned", i18n.M("api.ip_assigned"))
 		return
 	}
 	if strings.TrimSpace(r.URL.Query().Get("confirm")) != ip.IPAddress {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"释放后这个地址永久失去，需要在 confirm 参数中回传 IP 地址 "+strconv.Quote(ip.IPAddress))
+			i18n.M("api.ip_release_confirm", ip.IPAddress))
 		return
 	}
 
@@ -187,14 +188,14 @@ func (s *Server) handleReleaseReservedIP(w http.ResponseWriter, r *http.Request)
 	user := userFrom(r.Context())
 	_ = s.st.Audit(r.Context(), store.AuditEntry{
 		UserID: user.ID, Action: "reserved_ip_release", AccountID: acc.ID,
-		Target: ip.IPAddress, Detail: orText(ip.DisplayName, "保留 IP") + " · " + region, IP: s.clientIP(r),
+		Target: ip.IPAddress, Detail: orText(ip.DisplayName, i18n.M("api.reserved_ip")) + " · " + region, IP: s.clientIP(r),
 	})
 	s.notifier.Dispatch(r.Context(), notify.Message{
 		Event: notify.EventDangerOperation,
-		Title: "已释放保留 IP " + ip.IPAddress,
-		Body:  "这个地址已归还 Oracle，不可找回。",
+		Title: i18n.M("api.ip_released_title", ip.IPAddress),
+		Body:  i18n.M("api.ip_released_body"),
 		Fields: map[string]string{
-			"账号": acc.Alias, "IP": ip.IPAddress, "区域": region, "操作者": user.Username,
+			i18n.M("f.account"): acc.Alias, "IP": ip.IPAddress, i18n.M("f.region"): region, i18n.M("f.operator"): user.Username,
 		},
 	})
 	s.resources.invalidate(acc.ID)
@@ -208,7 +209,7 @@ func (s *Server) handleDeleteConsoleConnection(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if r.URL.Query().Get("confirm") != "true" {
-		writeError(w, http.StatusBadRequest, "confirm_required", "删除控制台连接需要附带 confirm=true")
+		writeError(w, http.StatusBadRequest, "confirm_required", i18n.M("api.console_delete_confirm"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -230,7 +231,7 @@ func (s *Server) handleDeleteConsoleConnection(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if conn == nil {
-		writeError(w, http.StatusNotFound, "not_found", "这条控制台连接不存在，可能已经删除")
+		writeError(w, http.StatusNotFound, "not_found", i18n.M("api.console_not_found"))
 		return
 	}
 	// 删除是异步的：连接会先停在 DELETING 一段时间。这期间再点一次不该再发请求、
@@ -270,12 +271,12 @@ func (s *Server) handleRemoveIPv6(w http.ResponseWriter, r *http.Request) {
 	}
 	address := strings.TrimSpace(r.URL.Query().Get("address"))
 	if address == "" {
-		writeError(w, http.StatusBadRequest, "missing_address", "缺少 address 参数")
+		writeError(w, http.StatusBadRequest, "missing_address", i18n.M("api.missing_address"))
 		return
 	}
 	if r.URL.Query().Get("confirm") != "true" {
 		writeError(w, http.StatusBadRequest, "confirm_required",
-			"删除后这个 IPv6 地址不可找回，用它的连接会中断。如确认要执行，请附带 confirm=true。")
+			i18n.M("api.v6_remove_confirm"))
 		return
 	}
 	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
@@ -286,10 +287,10 @@ func (s *Server) handleRemoveIPv6(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	s.submitJob(w, jobsvc.Spec{
-		Kind: jobRemoveIPv6, Title: "移除 IPv6 · " + inst.DisplayName,
+		Kind: jobRemoveIPv6, Title: i18n.M("api.remove_v6_title", inst.DisplayName),
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 2 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
-		p.Step("在实例的网卡上查找 " + address)
+		p.Step(i18n.M("api.step.find_v6", address))
 		atts, err := client.ListVnicAttachments(ctx, inst.Region, acc.CompartmentOCID, inst.ID)
 		if err != nil {
 			return jobsvc.Outcome{}, err
@@ -310,20 +311,20 @@ func (s *Server) handleRemoveIPv6(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if target == nil {
-			return jobsvc.Outcome{}, errors.New("实例的网卡上没有找到 " + address + "，可能已经被删除")
+			return jobsvc.Outcome{}, i18n.Err("api.v6_not_found", address)
 		}
 
-		p.Step("删除 IPv6 地址")
+		p.Step(i18n.M("api.step.delete_v6"))
 		if err := client.DeleteIpv6(ctx, inst.Region, target.ID); err != nil {
 			return jobsvc.Outcome{}, err
 		}
-		p.Step("刷新网络信息")
+		p.Step(i18n.M("api.step.refresh_net"))
 		_ = s.instances.RefreshNetwork(ctx, inst.ID)
 
 		s.audit(who, store.AuditEntry{
 			Action: "instance_remove_ipv6", AccountID: inst.AccountID,
 			Target: inst.DisplayName, Detail: address,
 		})
-		return jobsvc.Outcome{Summary: "已移除 IPv6 " + address}, nil
+		return jobsvc.Outcome{Summary: i18n.M("api.v6_removed", address)}, nil
 	})
 }

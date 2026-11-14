@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/ociclient"
 	"ocicore/internal/store"
 )
@@ -35,7 +36,7 @@ const (
 //
 // 只允许取消排队中的任务：执行到一半的操作（比如换 IP 已经删掉旧地址、
 // 还没分配新地址）中途打断，会把资源留在比失败更糟的状态。
-var ErrNotCancelable = errors.New("任务已经开始执行，不能取消")
+var ErrNotCancelable = i18n.Err("job.not_cancelable")
 
 // Spec 描述一个要提交的任务。
 type Spec struct {
@@ -97,7 +98,7 @@ func New(deps Deps) *Service {
 // Recover 在启动时把上次进程留下的未结束任务标成中断，并清理过旧的记录。
 func (s *Service) Recover(ctx context.Context) {
 	n, err := s.st.InterruptUnfinishedJobs(ctx,
-		"服务重启，任务中断。请求可能已经发到 Oracle，请到对应页面确认实际状态。")
+		i18n.M("job.interrupted"))
 	if err != nil {
 		slog.Warn("标记中断任务失败", "err", err)
 	} else if n > 0 {
@@ -192,7 +193,7 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, job *store
 	s.mu.Unlock()
 
 	if !ok {
-		p.finish(store.JobCanceled, Outcome{}, errors.New("已在开始执行前取消"))
+		p.finish(store.JobCanceled, Outcome{}, i18n.Err("job.canceled_before_start"))
 		return
 	}
 
@@ -211,7 +212,7 @@ func (s *Service) run(ctx context.Context, cancel context.CancelFunc, job *store
 	case err == nil:
 		p.finish(store.JobSucceeded, out, nil)
 	case errors.Is(err, context.DeadlineExceeded) && runCtx.Err() != nil:
-		p.finish(store.JobFailed, out, fmt.Errorf("超过 %s 仍未完成，已停止等待。操作可能仍在 Oracle 侧进行，请稍后到对应页面确认", timeout))
+		p.finish(store.JobFailed, out, i18n.Err("job.timeout", timeout.String()))
 	default:
 		p.finish(store.JobFailed, out, err)
 	}
@@ -222,7 +223,7 @@ func (s *Service) call(ctx context.Context, p *Progress, fn Func) (out Outcome, 
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("后台任务崩溃", "job", p.job.ID, "kind", p.job.Kind, "panic", r)
-			err = fmt.Errorf("内部错误：%v", r)
+			err = i18n.Err("job.internal", fmt.Sprint(r))
 		}
 	}()
 	return fn(ctx, p)

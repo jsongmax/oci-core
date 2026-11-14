@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"ocicore/internal/i18n"
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/ociclient"
@@ -52,6 +53,14 @@ func (s *Server) audit(a actor, e store.AuditEntry) {
 
 // submitJob 提交任务并以 202 返回任务快照。
 func (s *Server) submitJob(w http.ResponseWriter, spec jobsvc.Spec, fn jobsvc.Func) {
+	// 任务在后台 context 里跑，拿不到请求。把提交者的语言带进去：
+	// 绝大多数文字以消息信封存储、读的时候才定语言，但写进 Oracle 的
+	// 描述（路由、安全规则）没法事后翻译，只能按提交者的语言写。
+	lang := langOf(w)
+	inner := fn
+	fn = func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		return inner(i18n.WithLang(ctx, lang), p)
+	}
 	job, err := s.jobs.Submit(spec, fn)
 	if err != nil {
 		writeStoreError(w, err)
@@ -121,7 +130,7 @@ func writeJobError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrJobNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, store.ErrConflict):
-		writeError(w, http.StatusConflict, "job_running", "任务还没结束，不能删除")
+		writeError(w, http.StatusConflict, "job_running", i18n.M("api.job_running"))
 	case errors.Is(err, jobsvc.ErrNotCancelable):
 		writeError(w, http.StatusConflict, "job_running", err.Error())
 	default:
@@ -159,7 +168,7 @@ func (s *Server) waitInstanceSettled(ctx context.Context, p *jobsvc.Progress, id
 		}
 		if inst.LifecycleState != last {
 			if last != "" {
-				p.Stepf("实例状态：%s → %s", last, inst.LifecycleState)
+				p.Step(i18n.M("api.step.state_change", last, inst.LifecycleState))
 			}
 			last = inst.LifecycleState
 		}
