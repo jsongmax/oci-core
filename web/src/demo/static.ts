@@ -6,8 +6,19 @@
  */
 /* eslint-disable */
 import type * as D from '@/api/types'
+import { locale } from '@/i18n'
 
-export const STATIC = {
+type Static = {
+  channelKinds: D.ChannelKindDTO[]
+  notifyEvents: D.NotifyEventDTO[]
+  ruleTemplates: D.RuleTemplateDTO[]
+  launchPresets: D.LaunchPresetDTO[]
+  huntLimits: D.HuntLimitsDTO
+  probeIntervalSeconds: number
+  settings: D.SettingsDTO
+}
+
+const ZH = {
   "channelKinds": [
     {
       "kind": "telegram",
@@ -286,14 +297,294 @@ export const STATIC = {
     "requireTotpForDanger": false,
     "syncIntervalMinutes": 5,
     "checkIntervalHours": 6,
-    "auditRetentionDays": 0
+    "auditRetentionDays": 0,
+    "language": "zh-CN"
   }
-} as unknown as {
-  channelKinds: D.ChannelKindDTO[]
-  notifyEvents: D.NotifyEventDTO[]
-  ruleTemplates: D.RuleTemplateDTO[]
-  launchPresets: D.LaunchPresetDTO[]
-  huntLimits: D.HuntLimitsDTO
-  probeIntervalSeconds: number
-  settings: D.SettingsDTO
-}
+} as unknown as Static
+
+const EN = {
+  "channelKinds": [
+    {
+      "kind": "telegram",
+      "label": "Telegram",
+      "fields": [
+        {
+          "key": "token",
+          "label": "Bot Token",
+          "required": true,
+          "secret": true,
+          "hint": "Get one from @BotFather"
+        },
+        {
+          "key": "chatId",
+          "label": "Chat ID",
+          "required": true,
+          "secret": false,
+          "hint": "Message @userinfobot to get it"
+        }
+      ]
+    },
+    {
+      "kind": "wecom",
+      "label": "WeCom",
+      "fields": [
+        {
+          "key": "webhook",
+          "label": "Group bot webhook",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
+      "kind": "dingtalk",
+      "label": "DingTalk",
+      "fields": [
+        {
+          "key": "webhook",
+          "label": "Group bot webhook",
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "secret",
+          "label": "Signing secret",
+          "required": false,
+          "secret": true,
+          "hint": "Fill in if signing is enabled"
+        }
+      ]
+    },
+    {
+      "kind": "email",
+      "label": "Email",
+      "fields": [
+        {
+          "key": "host",
+          "label": "SMTP server",
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "port",
+          "label": "Port",
+          "required": true,
+          "secret": false,
+          "hint": "587 (STARTTLS) or 465 (SSL)"
+        },
+        {
+          "key": "security",
+          "label": "Encryption",
+          "required": false,
+          "secret": false,
+          "options": [
+            {
+              "value": "",
+              "label": "Auto (SSL on 465, otherwise try STARTTLS)"
+            },
+            {
+              "value": "ssl",
+              "label": "SSL/TLS (implicit)"
+            },
+            {
+              "value": "starttls",
+              "label": "STARTTLS (upgrade required)"
+            }
+          ]
+        },
+        {
+          "key": "username",
+          "label": "Username",
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "password",
+          "label": "Password",
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "from",
+          "label": "From",
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "to",
+          "label": "To",
+          "required": true,
+          "secret": false,
+          "hint": "Separate multiple addresses with commas"
+        }
+      ]
+    },
+    {
+      "kind": "webhook",
+      "label": "Custom webhook",
+      "fields": [
+        {
+          "key": "url",
+          "label": "URL",
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "method",
+          "label": "Method",
+          "required": false,
+          "secret": false,
+          "hint": "Defaults to POST"
+        }
+      ]
+    }
+  ],
+  "notifyEvents": [
+    {
+      "key": "account.auth",
+      "label": "Account authentication failed",
+      "description": "API key invalid or insufficient permissions"
+    },
+    {
+      "key": "instance.created",
+      "label": "Instance created",
+      "description": "A new instance is ready with a public IP"
+    },
+    {
+      "key": "danger.operation",
+      "label": "Dangerous action performed",
+      "description": "Terminating instances, deleting accounts, changing IPs and similar actions"
+    },
+    {
+      "key": "hunt.succeeded",
+      "label": "Capacity hunt got an instance",
+      "description": "A capacity hunt task successfully created an instance"
+    },
+    {
+      "key": "hunt.stopped",
+      "label": "Capacity hunt stopped",
+      "description": "The task stopped because quota ran out, credentials failed or it expired"
+    },
+    {
+      "key": "capacity.changed",
+      "label": "Capacity changed",
+      "description": "A watched shape went from no capacity to available (or back)"
+    }
+  ],
+  "ruleTemplates": [
+    {
+      "key": "ssh",
+      "label": "SSH",
+      "direction": "ingress",
+      "protocol": "6",
+      "port": 22,
+      "description": "Remote login",
+      "dangerous": false
+    },
+    {
+      "key": "http",
+      "label": "HTTP",
+      "direction": "ingress",
+      "protocol": "6",
+      "port": 80,
+      "description": "Web server",
+      "dangerous": false
+    },
+    {
+      "key": "https",
+      "label": "HTTPS",
+      "direction": "ingress",
+      "protocol": "6",
+      "port": 443,
+      "description": "Secure web server",
+      "dangerous": false
+    },
+    {
+      "key": "icmp",
+      "label": "ICMP",
+      "direction": "ingress",
+      "protocol": "1",
+      "port": 0,
+      "description": "Allow ping",
+      "dangerous": false
+    },
+    {
+      "key": "all",
+      "label": "Allow all",
+      "direction": "ingress",
+      "protocol": "all",
+      "port": 0,
+      "description": "Allows all inbound traffic. Don't enable this unless you know what you're doing.",
+      "dangerous": true
+    },
+    {
+      "key": "egress-all",
+      "label": "Allow all egress",
+      "direction": "egress",
+      "protocol": "all",
+      "port": 0,
+      "description": "Allows all outbound traffic. This is OCI's default — without an egress rule instances can't reach the internet.",
+      "dangerous": false
+    }
+  ],
+  "launchPresets": [
+    {
+      "key": "arm-free",
+      "label": "Always Free ARM (full)",
+      "shape": "VM.Standard.A1.Flex",
+      "ocpus": 2,
+      "memoryInGbs": 12,
+      "bootGb": 50,
+      "description": "Ampere A1 at the Always Free limit (2C12G since 2026-06-15). Hard to get when capacity is tight.",
+      "freeTier": true
+    },
+    {
+      "key": "arm-half",
+      "label": "Always Free ARM (half)",
+      "shape": "VM.Standard.A1.Flex",
+      "ocpus": 1,
+      "memoryInGbs": 6,
+      "bootGb": 50,
+      "description": "Uses half the free allowance, so you can run two.",
+      "freeTier": true
+    },
+    {
+      "key": "arm-legacy",
+      "label": "ARM 4C24G (paid accounts only)",
+      "shape": "VM.Standard.A1.Flex",
+      "ocpus": 4,
+      "memoryInGbs": 24,
+      "bootGb": 50,
+      "description": "The free limit before 2026-06-15. Reportedly still free on paid (PAYG) accounts; on Always Free accounts, instances over the new limit have been reclaimed by Oracle since 2026-08-18.",
+      "freeTier": false
+    },
+    {
+      "key": "amd-free",
+      "label": "Always Free AMD",
+      "shape": "VM.Standard.E2.1.Micro",
+      "ocpus": 1,
+      "memoryInGbs": 1,
+      "bootGb": 50,
+      "description": "Very small but almost always available — good as a jump host.",
+      "freeTier": true
+    }
+  ],
+  "huntLimits": {
+    "defaultIntervalSeconds": 60,
+    "minIntervalSeconds": 30,
+    "warnIntervalSeconds": 60
+  },
+  "probeIntervalSeconds": 300,
+  "settings": {
+    "allowTerminate": true,
+    "allowBulkActions": true,
+    "requireTotpForDanger": false,
+    "syncIntervalMinutes": 5,
+    "checkIntervalHours": 6,
+    "auditRetentionDays": 0,
+    "language": "zh-CN"
+  }
+} as unknown as Static
+
+/** 按当前界面语言取静态清单（后端也按 Accept-Language 返回对应语言）。 */
+export const staticData = (): Static => (locale.value === 'en' ? EN : ZH)

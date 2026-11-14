@@ -15,7 +15,14 @@
 import { ApiError, AUTH_REQUIRED_EVENT } from '@/api/http'
 import type { ServerEvent, ServerEventType, EventHandlers } from '@/api/events'
 import type * as D from '@/api/types'
-import { STATIC } from './static'
+import { staticData } from './static'
+import { watch } from 'vue'
+import { locale } from '@/i18n'
+
+/** 演示数据跟着界面语言走：中文返回第一个，英文返回第二个。 */
+const L = (zh: string, en: string) => (locale.value === 'en' ? en : zh)
+// 种子数据在加载时按当时的语言生成；切换语言后整页重载，让它们换成新语言（演示站的改动本就不持久）。
+watch(locale, () => location.reload())
 
 /* ---------- 小工具 ---------- */
 
@@ -34,8 +41,8 @@ const ocid = (kind: string, region: string) => `ocid1.${kind}.oc1.${region}.demo
 function fail(status: number, code: string, message: string): never {
   throw new ApiError(status, { code, message })
 }
-const unsupported = (what = '这个操作') =>
-  fail(501, 'demo_unsupported', `演示站不支持${what}。下载部署后即可使用完整功能。`)
+const unsupported = (what = L('这个操作', 'this action')) =>
+  fail(501, 'demo_unsupported', L(`演示站不支持${what}。下载部署后即可使用完整功能。`, `The demo doesn't support ${what}. Deploy it yourself to use every feature.`))
 
 /** 文档保留段里挑一个没用过的地址 */
 const usedIps = new Set<string>()
@@ -70,17 +77,17 @@ function account(id: string, alias: string, code: string, color: number, home: s
 }
 
 const accounts: Acct[] = [
-  account('acc-tok', '东京主号', 'TOK', 0, 'ap-tokyo-1', ['ap-tokyo-1', 'ap-osaka-1'], 'PAY_AS_YOU_GO'),
-  account('acc-sin', '新加坡', 'SIN', 1, 'ap-singapore-1', ['ap-singapore-1'], 'FREE_TRIAL',
+  account('acc-tok', L('东京主号', 'Tokyo main'), 'TOK', 0, 'ap-tokyo-1', ['ap-tokyo-1', 'ap-osaka-1'], 'PAY_AS_YOU_GO'),
+  account('acc-sin', L('新加坡', 'Singapore'), 'SIN', 1, 'ap-singapore-1', ['ap-singapore-1'], 'FREE_TRIAL',
     { subscriptionStartsAt: ago(410 * DAY) }),
-  account('acc-pho', '凤凰城试用', 'PHO', 2, 'us-phoenix-1', ['us-phoenix-1'], 'FREE_TRIAL',
+  account('acc-pho', L('凤凰城试用', 'Phoenix trial'), 'PHO', 2, 'us-phoenix-1', ['us-phoenix-1'], 'FREE_TRIAL',
     { subscriptionStartsAt: ago(18 * DAY), subscriptionEndsAt: iso(NOW + 12 * DAY) }),
-  account('acc-fra', '法兰克福', 'FRA', 3, 'eu-frankfurt-1', ['eu-frankfurt-1'], 'FREE_TRIAL', {
+  account('acc-fra', L('法兰克福', 'Frankfurt'), 'FRA', 3, 'eu-frankfurt-1', ['eu-frankfurt-1'], 'FREE_TRIAL', {
     status: 'error', lastCheckedAt: ago(40 * MIN),
-    statusMessage: 'NotAuthenticated · API 密钥已被删除或指纹不匹配（演示数据）'
+    statusMessage: L('NotAuthenticated · API 密钥已被删除或指纹不匹配（演示数据）', 'NotAuthenticated · the API key was deleted or the fingerprint does not match (demo data)')
   })
 ]
-const acctById = (id: string) => accounts.find(a => a.id === id) ?? fail(404, 'not_found', '账号不存在')
+const acctById = (id: string) => accounts.find(a => a.id === id) ?? fail(404, 'not_found', L('账号不存在', 'Account not found'))
 
 /* ---------- 网络（每个账号 × 区域一套） ---------- */
 
@@ -202,9 +209,9 @@ function syncSecondary(i: Inst) {
 }
 
 const web = makeInstance({ accountId: 'acc-tok', region: 'ap-tokyo-1', name: 'tok-web', shape: 'VM.Standard.A1.Flex',
-  ocpus: 4, memoryGb: 24, ipv6: true, bootGb: 100, secondary: true, createdDaysAgo: 120, note: '主站 · Nginx + Docker' })
+  ocpus: 4, memoryGb: 24, ipv6: true, bootGb: 100, secondary: true, createdDaysAgo: 120, note: L('主站 · Nginx + Docker', 'Main site · Nginx + Docker') })
 makeInstance({ accountId: 'acc-tok', region: 'ap-tokyo-1', name: 'tok-relay', shape: 'VM.Standard.E2.1.Micro',
-  ocpus: 1, memoryGb: 1, createdDaysAgo: 90, note: '跳板机' })
+  ocpus: 1, memoryGb: 1, createdDaysAgo: 90, note: L('跳板机', 'Jump host') })
 makeInstance({ accountId: 'acc-tok', region: 'ap-tokyo-1', name: 'tok-backup', shape: 'VM.Standard.E2.1.Micro',
   ocpus: 1, memoryGb: 1, state: 'STOPPED', createdDaysAgo: 60, os: 'Oracle Linux' })
 makeInstance({ accountId: 'acc-tok', region: 'ap-osaka-1', name: 'osaka-edge', shape: 'VM.Standard.A1.Flex',
@@ -213,9 +220,9 @@ makeInstance({ accountId: 'acc-sin', region: 'ap-singapore-1', name: 'sg-arm', s
   ocpus: 2, memoryGb: 12, ipv6: true, createdDaysAgo: 300, os: 'Debian' })
 makeInstance({ accountId: 'acc-sin', region: 'ap-singapore-1', name: 'sg-micro', shape: 'VM.Standard.E2.1.Micro',
   ocpus: 1, memoryGb: 1, baseline: '', createdDaysAgo: 280,
-  lastError: '软重启超时：实例 10 分钟内没有回到 RUNNING（演示数据）' })
+  lastError: L('软重启超时：实例 10 分钟内没有回到 RUNNING（演示数据）', 'Soft reboot timed out: the instance did not return to RUNNING within 10 minutes (demo data)') })
 makeInstance({ accountId: 'acc-pho', region: 'us-phoenix-1', name: 'pho-lab', shape: 'VM.Standard.E4.Flex',
-  ocpus: 1, memoryGb: 8, baseline: 'BASELINE_1_8', createdDaysAgo: 10, note: '试用期测试，到期前删掉' })
+  ocpus: 1, memoryGb: 8, baseline: 'BASELINE_1_8', createdDaysAgo: 10, note: L('试用期测试，到期前删掉', 'Trial test — delete before it expires') })
 makeInstance({ accountId: 'acc-pho', region: 'us-phoenix-1', name: 'pho-micro', shape: 'VM.Standard.E2.1.Micro',
   ocpus: 1, memoryGb: 1, state: 'STOPPED', createdDaysAgo: 15 })
 makeInstance({ accountId: 'acc-fra', region: 'eu-frankfurt-1', name: 'fra-old', shape: 'VM.Standard.A1.Flex',
@@ -226,7 +233,7 @@ web.blockVolumes.push({
   displayName: 'data-01', sizeInGbs: 100, vpusPerGb: 10, device: '/dev/oracleoci/oraclevdb', isReadOnly: false, state: 'ATTACHED'
 })
 
-const instById = (id: string) => instances.find(i => i.dto.id === id) ?? fail(404, 'not_found', '实例不存在或尚未同步')
+const instById = (id: string) => instances.find(i => i.dto.id === id) ?? fail(404, 'not_found', L('实例不存在或尚未同步', 'Instance not found or not synced yet'))
 
 /* ---------- 未挂载的卷、保留 IP、控制台连接（资源页用） ---------- */
 
@@ -258,7 +265,7 @@ const consoles: Console[] = [
 
 /* ---------- 其余 ---------- */
 
-let settings: D.SettingsDTO = { ...STATIC.settings }
+let settings: D.SettingsDTO = { ...staticData().settings }
 let authed = true
 const USER = 'demo'
 
@@ -269,43 +276,43 @@ function log(action: string, target = '', accountId = '', detail = '', result = 
 }
 // 种一些历史记录，老的在前、新的在后，unshift 之后最新的在最上面。
 ;([
-  [9 * DAY, 'setup', USER, ''], [9 * DAY - 5 * MIN, 'account_create', '东京主号', 'acc-tok'],
-  [8 * DAY, 'account_create', '新加坡', 'acc-sin'], [6 * DAY, 'instance_launch', 'tok-web', 'acc-tok'],
+  [9 * DAY, 'setup', USER, ''], [9 * DAY - 5 * MIN, 'account_create', L('东京主号', 'Tokyo main'), 'acc-tok'],
+  [8 * DAY, 'account_create', L('新加坡', 'Singapore'), 'acc-sin'], [6 * DAY, 'instance_launch', 'tok-web', 'acc-tok'],
   [5 * DAY, 'security_list_update', 'Default Security List for ocicore-vcn', 'acc-tok'],
-  [3 * DAY, 'account_create', '凤凰城试用', 'acc-pho'], [2 * DAY, 'instance_change_ip', 'osaka-edge', 'acc-tok'],
+  [3 * DAY, 'account_create', L('凤凰城试用', 'Phoenix trial'), 'acc-pho'], [2 * DAY, 'instance_change_ip', 'osaka-edge', 'acc-tok'],
   [30 * HOUR, 'instance_enable_ipv6', 'sg-arm', 'acc-sin'], [20 * HOUR, 'instance_attach_vnic', 'tok-web', 'acc-tok'],
-  [6 * HOUR, 'account_check_auto', '法兰克福', 'acc-fra', 'fail'], [3 * HOUR, 'instance_softreset', 'sg-micro', 'acc-sin'],
+  [6 * HOUR, 'account_check_auto', L('法兰克福', 'Frankfurt'), 'acc-fra', 'fail'], [3 * HOUR, 'instance_softreset', 'sg-micro', 'acc-sin'],
   [2 * HOUR, 'console_create', 'tok-web', 'acc-tok'], [25 * MIN, 'login', USER, '']
 ] as [number, string, string, string, string?][]).forEach(([t, action, target, acc, res]) =>
   log(action, target, acc, '', res ?? 'ok', NOW - t))
 
 const channels: D.ChannelDTO[] = [{
-  id: 'ch-1', kind: 'telegram', name: '我的 Telegram',
+  id: 'ch-1', kind: 'telegram', name: L('我的 Telegram', 'My Telegram'),
   config: { token: '1234••••••••••••WXYZ', chatId: '10086' },
   events: ['account.auth', 'instance.created', 'danger.operation', 'hunt.succeeded'],
   enabled: true, lastError: '', lastSentAt: ago(2 * HOUR), createdAt: ago(9 * DAY), updatedAt: ago(9 * DAY)
 }]
 
 const proxies: D.ProxyDTO[] = [
-  { id: 'px-1', label: '东京家宽', scheme: 'socks5', host: 'proxy-a.example.net', port: 1080, username: 'demo', hasPassword: true,
+  { id: 'px-1', label: L('东京家宽', 'Tokyo residential'), scheme: 'socks5', host: 'proxy-a.example.net', port: 1080, username: 'demo', hasPassword: true,
     enabled: true, lastStatus: 'ok', lastLatencyMs: 86, lastError: '', lastRegion: 'ap-tokyo-1',
     lastCheckedAt: ago(20 * MIN), lastOkAt: ago(20 * MIN), createdAt: ago(8 * DAY), updatedAt: ago(20 * MIN) },
-  { id: 'px-2', label: '新加坡机房', scheme: 'http', host: 'proxy-b.example.net', port: 3128, username: '', hasPassword: false,
+  { id: 'px-2', label: L('新加坡机房', 'Singapore datacenter'), scheme: 'http', host: 'proxy-b.example.net', port: 3128, username: '', hasPassword: false,
     enabled: true, lastStatus: 'ok', lastLatencyMs: 142, lastError: '', lastRegion: 'ap-singapore-1',
     lastCheckedAt: ago(20 * MIN), lastOkAt: ago(20 * MIN), createdAt: ago(8 * DAY), updatedAt: ago(20 * MIN) },
   { id: 'px-3', label: '', scheme: 'socks5', host: 'proxy-c.example.net', port: 1080, username: '', hasPassword: false,
-    enabled: false, lastStatus: 'fail', lastLatencyMs: 0, lastError: '连接超时（演示数据）', lastRegion: 'us-phoenix-1',
+    enabled: false, lastStatus: 'fail', lastLatencyMs: 0, lastError: L('连接超时（演示数据）', 'Connection timed out (demo data)'), lastRegion: 'us-phoenix-1',
     lastCheckedAt: ago(3 * HOUR), lastOkAt: ago(4 * DAY), createdAt: ago(8 * DAY), updatedAt: ago(3 * HOUR) }
 ]
 const bindings: Record<string, string> = { 'acc-tok': 'px-1', 'acc-sin': 'px-2' }
 
 const huntTasks: D.HuntTaskDTO[] = [
-  { id: 'hunt-1', accountId: 'acc-sin', region: 'ap-singapore-1', name: '新加坡 ARM 2C12G', state: 'running',
+  { id: 'hunt-1', accountId: 'acc-sin', region: 'ap-singapore-1', name: L('新加坡 ARM 2C12G', 'Singapore ARM 2C12G'), state: 'running',
     attempts: 1873, intervalSeconds: 60, precheckCapacity: true, lastClass: 'OutOfCapacity',
-    lastError: '容量报告显示没有余量，本轮跳过（未发创建请求）', lastAd: 'AD-1', lastTryAt: ago(40_000), nextAt: iso(NOW + 20_000),
+    lastError: L('容量报告显示没有余量，本轮跳过（未发创建请求）', 'Capacity report shows none left; skipped this round (no launch request sent)'), lastAd: 'AD-1', lastTryAt: ago(40_000), nextAt: iso(NOW + 20_000),
     instanceId: '', maxAttempts: 0, expiresAt: iso(NOW + 5 * DAY), createdAt: ago(31 * HOUR), updatedAt: ago(40_000),
     shape: 'VM.Standard.A1.Flex', ocpus: 2, memoryGb: 12, displayName: 'sg-arm-2', ads: null },
-  { id: 'hunt-2', accountId: 'acc-tok', region: 'ap-tokyo-1', name: '东京 ARM 满配', state: 'succeeded',
+  { id: 'hunt-2', accountId: 'acc-tok', region: 'ap-tokyo-1', name: L('东京 ARM 满配', 'Tokyo ARM full'), state: 'succeeded',
     attempts: 412, intervalSeconds: 60, precheckCapacity: true, lastClass: '', lastError: '', lastAd: 'AD-1',
     lastTryAt: ago(6 * DAY), nextAt: '', instanceId: web.dto.id, maxAttempts: 0, expiresAt: '',
     createdAt: ago(7 * DAY), updatedAt: ago(6 * DAY), shape: 'VM.Standard.A1.Flex', ocpus: 4, memoryGb: 24,
@@ -315,11 +322,11 @@ const huntTasks: D.HuntTaskDTO[] = [
 const watches: D.CapacityWatchDTO[] = [
   { id: 'cw-1', accountId: 'acc-sin', region: 'ap-singapore-1', availabilityDomain: AD('ap-singapore-1'),
     availabilityDomainShort: 'AD-1', shape: 'VM.Standard.A1.Flex', ocpus: 2, memoryGb: 12, enabled: true,
-    lastStatus: 'OUT_OF_HOST_CAPACITY', statusText: '没有容量', lastCount: 0, lastError: '',
+    lastStatus: 'OUT_OF_HOST_CAPACITY', statusText: L('没有容量', 'Out of capacity'), lastCount: 0, lastError: '',
     lastCheckedAt: ago(4 * MIN), lastChangedAt: ago(2 * DAY), createdAt: ago(5 * DAY), updatedAt: ago(4 * MIN) },
   { id: 'cw-2', accountId: 'acc-tok', region: 'ap-osaka-1', availabilityDomain: AD('ap-osaka-1'),
     availabilityDomainShort: 'AD-1', shape: 'VM.Standard.A1.Flex', ocpus: 4, memoryGb: 24, enabled: true,
-    lastStatus: 'AVAILABLE', statusText: '有容量', lastCount: 3, lastError: '',
+    lastStatus: 'AVAILABLE', statusText: L('有容量', 'Available'), lastCount: 3, lastError: '',
     lastCheckedAt: ago(4 * MIN), lastChangedAt: ago(9 * HOUR), createdAt: ago(5 * DAY), updatedAt: ago(4 * MIN) }
 ]
 
@@ -338,12 +345,12 @@ export function demoConnect(handlers: EventHandlers): () => void {
 }
 
 const jobs: D.JobDTO[] = [
-  { id: 'job-seed-1', kind: 'instance.change_ip', title: '更换公网 IP · osaka-edge', accountId: 'acc-tok',
-    status: 'succeeded', progress: 100, summary: '新 IP 已生效', createdAt: ago(2 * DAY), startedAt: ago(2 * DAY),
-    finishedAt: ago(2 * DAY - 40_000), steps: [{ at: ago(2 * DAY), text: '释放旧的临时 IP' }, { at: ago(2 * DAY - 20_000), text: '申请新的临时 IP' }] },
-  { id: 'job-seed-2', kind: 'instance.sync', title: '手动同步', status: 'succeeded', progress: 100,
-    summary: '4 个账号 · 6 个区域 · 9 台实例', createdAt: ago(5 * HOUR), startedAt: ago(5 * HOUR),
-    finishedAt: ago(5 * HOUR - 8000), steps: [{ at: ago(5 * HOUR), text: '逐个区域拉取实例' }] }
+  { id: 'job-seed-1', kind: 'instance.change_ip', title: L('更换公网 IP · osaka-edge', 'Change public IP · osaka-edge'), accountId: 'acc-tok',
+    status: 'succeeded', progress: 100, summary: L('新 IP 已生效', 'New IP is live'), createdAt: ago(2 * DAY), startedAt: ago(2 * DAY),
+    finishedAt: ago(2 * DAY - 40_000), steps: [{ at: ago(2 * DAY), text: L('释放旧的临时 IP', 'Releasing the old ephemeral IP') }, { at: ago(2 * DAY - 20_000), text: L('申请新的临时 IP', 'Requesting a new ephemeral IP') }] },
+  { id: 'job-seed-2', kind: 'instance.sync', title: L('手动同步', 'Manual sync'), status: 'succeeded', progress: 100,
+    summary: L('4 个账号 · 6 个区域 · 9 台实例', '4 accounts · 6 regions · 9 instances'), createdAt: ago(5 * HOUR), startedAt: ago(5 * HOUR),
+    finishedAt: ago(5 * HOUR - 8000), steps: [{ at: ago(5 * HOUR), text: L('逐个区域拉取实例', 'Fetching instances region by region') }] }
 ]
 
 interface JobPlan {
@@ -420,16 +427,16 @@ function quotaFor(a: Acct): D.AccountQuotaDTO {
   const block = all.reduce((n, i) => n + i.dto.bootVolumeGb + i.blockVolumes.reduce((m, v) => m + v.sizeInGbs, 0), 0) +
     looseVolumes.filter(v => v.accountId === a.id).reduce((n, v) => n + v.vol.sizeInGbs, 0)
   if (a.status === 'error') {
-    return { accountId: a.id, region: a.homeRegion, items: null, error: 'NotAuthenticated（演示数据）', fetchedAt: iso(Date.now()) }
+    return { accountId: a.id, region: a.homeRegion, items: null, error: L('NotAuthenticated（演示数据）', 'NotAuthenticated (demo data)'), fetchedAt: iso(Date.now()) }
   }
   const BIG = 100_000_000
   return {
     accountId: a.id, region: a.homeRegion, fetchedAt: iso(Date.now()),
     items: [
       { key: 'ocpu', name: 'standard-a1-core-count', label: 'ARM OCPU', used: ocpu, limit: paid ? BIG : 2, known: true, unlimited: paid },
-      { key: 'memory', name: 'standard-a1-memory-count', label: 'ARM 内存 (GB)', used: mem, limit: paid ? BIG : 12, known: true, unlimited: paid },
-      { key: 'micro', name: 'vm-standard-e2-1-micro-count', label: 'AMD 微型实例', used: micro, limit: 2, known: true },
-      { key: 'block', name: 'total-free-storage-gb-regional', label: '块存储 · 免费额度 (GB)', used: Math.min(block, 200), limit: 200, known: true }
+      { key: 'memory', name: 'standard-a1-memory-count', label: L('ARM 内存 (GB)', 'ARM memory (GB)'), used: mem, limit: paid ? BIG : 12, known: true, unlimited: paid },
+      { key: 'micro', name: 'vm-standard-e2-1-micro-count', label: L('AMD 微型实例', 'AMD micro instances'), used: micro, limit: 2, known: true },
+      { key: 'block', name: 'total-free-storage-gb-regional', label: L('块存储 · 免费额度 (GB)', 'Block storage · free tier (GB)'), used: Math.min(block, 200), limit: 200, known: true }
     ]
   }
 }
@@ -532,22 +539,22 @@ on('GET', '/api/status', () => ({ setupRequired: false, authenticated: authed, t
 on('POST', '/api/auth/login', () => { authed = true; log('login', USER); return { totpRequired: false, totpEnabled: false } })
 on('POST', '/api/auth/logout', () => { authed = false; log('logout', USER); return { ok: true } })
 on('GET', '/api/auth/me', () => ({ username: USER, totpEnabled: false, createdAt: ago(9 * DAY) }))
-on('POST', '/api/setup', () => unsupported('重新初始化'))
-on('POST', '/api/auth/totp/setup', () => unsupported('绑定两步验证'))
-on('POST', '/api/auth/totp/enable', () => unsupported('绑定两步验证'))
-on('POST', '/api/auth/totp/disable', () => unsupported('关闭两步验证'))
+on('POST', '/api/setup', () => unsupported(L('重新初始化', 'reinitializing')))
+on('POST', '/api/auth/totp/setup', () => unsupported(L('绑定两步验证', 'setting up 2FA')))
+on('POST', '/api/auth/totp/enable', () => unsupported(L('绑定两步验证', 'setting up 2FA')))
+on('POST', '/api/auth/totp/disable', () => unsupported(L('关闭两步验证', 'disabling 2FA')))
 on('POST', '/api/auth/totp/verify', () => ({ ok: true }))
-on('POST', '/api/auth/password', () => unsupported('修改口令'))
+on('POST', '/api/auth/password', () => unsupported(L('修改口令', 'changing the password')))
 on('POST', '/api/auth/sessions/revoke-all', () => ({ ok: true }))
 
 /* 账号 */
 const checkOk = (a: Acct): D.CheckResultDTO => ({
   ok: a.status !== 'error', accountFatal: a.status === 'error',
   steps: [
-    { key: 'sign', label: '签名与密钥', ok: a.status !== 'error', detail: a.status === 'error' ? '指纹与上传到 Oracle 的公钥不匹配' : '通过' },
-    { key: 'user', label: '读取用户信息', ok: a.status !== 'error', detail: a.status === 'error' ? '跳过' : a.email },
-    { key: 'compute', label: '列出实例', ok: a.status !== 'error', detail: a.status === 'error' ? '跳过' : '有权限' },
-    { key: 'network', label: '列出 VCN', ok: a.status !== 'error', detail: a.status === 'error' ? '跳过' : '有权限' }
+    { key: 'sign', label: L('签名与密钥', 'Signature and key'), ok: a.status !== 'error', detail: a.status === 'error' ? L('指纹与上传到 Oracle 的公钥不匹配', 'The fingerprint does not match the public key uploaded to Oracle') : L('通过', 'Passed') },
+    { key: 'user', label: L('读取用户信息', 'Read user info'), ok: a.status !== 'error', detail: a.status === 'error' ? L('跳过', 'Skipped') : a.email },
+    { key: 'compute', label: L('列出实例', 'List instances'), ok: a.status !== 'error', detail: a.status === 'error' ? L('跳过', 'Skipped') : L('有权限', 'Allowed') },
+    { key: 'network', label: L('列出 VCN', 'List VCNs'), ok: a.status !== 'error', detail: a.status === 'error' ? L('跳过', 'Skipped') : L('有权限', 'Allowed') }
   ],
   userName: 'demo-user', userEmail: a.email, tenancyName: a.tenancyName,
   regions: a.subscribedRegions ?? [], homeRegion: a.homeRegion,
@@ -575,7 +582,7 @@ on('PATCH', '/api/accounts/{id}', (p, _, b) => {
 })
 on('DELETE', '/api/accounts/{id}', (p, q) => {
   const a = acctById(p.id)
-  if (q.confirm !== a.alias) fail(400, 'confirm_required', `删除账号需要在 confirm 参数中回传账号别名 "${a.alias}"`)
+  if (q.confirm !== a.alias) fail(400, 'confirm_required', L(`删除账号需要在 confirm 参数中回传账号别名 "${a.alias}"`, `Deleting an account requires the alias "${a.alias}" in the confirm parameter`))
   accounts.splice(accounts.indexOf(a), 1)
   for (let n = instances.length - 1; n >= 0; n--) if (instances[n].dto.accountId === a.id) instances.splice(n, 1)
   log('account_delete', a.alias, a.id)
@@ -597,33 +604,33 @@ on('POST', '/api/accounts/parse-config', (_, __, b) => {
   return { profiles: [prof] }
 })
 on('POST', '/api/accounts/check-draft', () => ({
-  ok: true, accountFatal: false, steps: [{ key: 'sign', label: '签名与密钥', ok: true, detail: '通过（演示站不真正连接 Oracle）' }],
+  ok: true, accountFatal: false, steps: [{ key: 'sign', label: L('签名与密钥', 'Signature and key'), ok: true, detail: L('通过（演示站不真正连接 Oracle）', 'Passed (the demo never really connects to Oracle)') }],
   regions: ['ap-tokyo-1'], homeRegion: 'ap-tokyo-1'
 }))
 on('GET', '/api/accounts/{id}/password-policy', p => ({
   policy: { accountId: p.id, supported: true, domainName: 'Default', domainUrl: 'https://idcs-demo.identity.oraclecloud.com',
     policyId: 'pp-demo', policyName: 'defaultPasswordPolicy', expiresAfterDays: 120, warnBeforeDays: 7, minLength: 8 },
-  notice: '演示数据'
+  notice: L('演示数据', 'Demo data')
 }))
 on('PATCH', '/api/accounts/{id}/password-policy', (p, _, b) => {
-  log('password_policy_update', acctById(p.id).alias, p.id, b.disable ? '不过期' : `${b.days} 天`)
+  log('password_policy_update', acctById(p.id).alias, p.id, b.disable ? L('不过期', 'Never expires') : L(`${b.days} 天`, `${b.days} days`))
   return { policy: { accountId: p.id, supported: true, domainName: 'Default', policyName: 'defaultPasswordPolicy',
-    expiresAfterDays: b.disable ? null : b.days }, notice: '已保存（演示）' }
+    expiresAfterDays: b.disable ? null : b.days }, notice: L('已保存（演示）', 'Saved (demo)') }
 })
 
 /* 资源页 */
 on('GET', '/api/accounts/{id}/resources', (p, q) => resourcesFor(acctById(p.id), q.region))
 on('DELETE', '/api/accounts/{id}/resources/volumes/{vid}', (p, q) => {
-  const lv = looseVolumes.find(v => v.vol.id === p.vid) ?? fail(409, 'volume_attached', '这块卷仍挂在实例上，先分离再删除')
+  const lv = looseVolumes.find(v => v.vol.id === p.vid) ?? fail(409, 'volume_attached', L('这块卷仍挂在实例上，先分离再删除', 'This volume is still attached to an instance; detach it before deleting'))
   const name = lv.vol.displayName || lv.vol.id
-  if (q.confirm !== name) fail(400, 'confirm_required', `删除卷不可恢复，需要在 confirm 参数中回传卷名 "${name}"`)
+  if (q.confirm !== name) fail(400, 'confirm_required', L(`删除卷不可恢复，需要在 confirm 参数中回传卷名 "${name}"`, `Deleting a volume can't be undone; pass the volume name "${name}" in the confirm parameter`))
   looseVolumes.splice(looseVolumes.indexOf(lv), 1)
   log('volume_delete', name, p.id, `${lv.vol.sizeInGbs} GB`)
-  return { ok: true, notice: `${name} 已提交删除，几分钟内从列表消失。` }
+  return { ok: true, notice: L(`${name} 已提交删除，几分钟内从列表消失。`, `${name} submitted for deletion; it will disappear from the list within minutes.`) }
 })
 on('DELETE', '/api/accounts/{id}/resources/public-ips/{ipid}', (p, q) => {
-  const r = reservedIps.find(x => x.ip.id === p.ipid) ?? fail(400, 'not_reserved', '只能在这里释放保留 IP')
-  if (q.confirm !== r.ip.ipAddress) fail(400, 'confirm_required', `需要在 confirm 参数中回传 IP 地址 "${r.ip.ipAddress}"`)
+  const r = reservedIps.find(x => x.ip.id === p.ipid) ?? fail(400, 'not_reserved', L('只能在这里释放保留 IP', 'Only reserved IPs can be released here'))
+  if (q.confirm !== r.ip.ipAddress) fail(400, 'confirm_required', L(`需要在 confirm 参数中回传 IP 地址 "${r.ip.ipAddress}"`, `Pass the IP address "${r.ip.ipAddress}" in the confirm parameter`))
   reservedIps.splice(reservedIps.indexOf(r), 1)
   log('reserved_ip_release', r.ip.ipAddress, p.id)
   return { ok: true }
@@ -644,14 +651,14 @@ on('GET', '/api/instances', (_, q) => {
 on('GET', '/api/instances/{id}', p => detailFor(instById(p.id)))
 on('POST', '/api/instances/sync', () => {
   emit('sync.started')
-  return submit({ kind: 'instance.sync', title: '手动同步', steps: ['逐个账号、区域拉取实例', '写入缓存'], ms: 2500,
+  return submit({ kind: 'instance.sync', title: L('手动同步', 'Manual sync'), steps: [L('逐个账号、区域拉取实例', 'Fetching instances per account and region'), L('写入缓存', 'Writing the cache')], ms: 2500,
     run: () => {
       setTimeout(() => emit('sync.finished'), 50)
       const report: D.SyncReportDTO = { startedAt: iso(Date.now()), durationMs: 2400, accounts: accounts.length,
         regions: 6, instances: liveInstances().length, terminated: 0, pruned: 0,
-        errors: [{ accountId: 'acc-fra', accountAlias: '法兰克福', region: 'eu-frankfurt-1',
+        errors: [{ accountId: 'acc-fra', accountAlias: L('法兰克福', 'Frankfurt'), region: 'eu-frankfurt-1',
           message: 'NotAuthenticated', ociCode: 'NotAuthenticated' }] }
-      return { summary: `${report.accounts} 个账号 · ${report.instances} 台实例`, result: report }
+      return { summary: L(`${report.accounts} 个账号 · ${report.instances} 台实例`, `${report.accounts} accounts · ${report.instances} instances`), result: report }
     } })
 })
 const ACTION: Record<string, [D.LifecycleState, D.LifecycleState]> = {
@@ -660,7 +667,7 @@ const ACTION: Record<string, [D.LifecycleState, D.LifecycleState]> = {
 }
 on('POST', '/api/instances/{id}/actions/{action}', p => {
   const i = instById(p.id)
-  const t = ACTION[p.action] ?? fail(400, 'bad_action', '未知操作')
+  const t = ACTION[p.action] ?? fail(400, 'bad_action', L('未知操作', 'Unknown action'))
   i.dto.lastError = ''
   transition(i, t[0], t[1])
   log('instance_' + p.action.toLowerCase(), i.dto.displayName, i.dto.accountId)
@@ -679,95 +686,95 @@ on('PATCH', '/api/instances/{id}/note', (p, _, b) => { const i = instById(p.id);
 on('POST', '/api/instances/{id}/dismiss-error', p => { instById(p.id).dto.lastError = ''; return { ok: true } })
 on('POST', '/api/instances/{id}/reshape', (p, _, b) => {
   const i = instById(p.id)
-  return submit({ kind: 'instance.reshape', title: '改配置 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['提交新配置', i.dto.lifecycleState === 'RUNNING' ? '等待 Oracle 重启实例' : '写回缓存'], ms: 5000,
+  return submit({ kind: 'instance.reshape', title: L('改配置 · ', 'Reshape · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('提交新配置', 'Submitting the new shape'), i.dto.lifecycleState === 'RUNNING' ? L('等待 Oracle 重启实例', 'Waiting for Oracle to restart the instance') : L('写回缓存', 'Writing back the cache')], ms: 5000,
     run: () => {
       i.dto.ocpus = b.ocpus ?? i.dto.ocpus; i.dto.memoryGb = b.memoryInGbs ?? i.dto.memoryGb
       if (b.baselineOcpuUtilization) i.dto.baselineOcpuUtilization = b.baselineOcpuUtilization === 'BASELINE_1_1' ? '' : b.baselineOcpuUtilization
       log('instance_reshape', i.dto.displayName, i.dto.accountId, `${i.dto.ocpus} OCPU / ${i.dto.memoryGb} GB`)
       emit('instance.updated', { instanceId: i.dto.id, accountId: i.dto.accountId, state: i.dto.lifecycleState })
-      return { summary: `已改为 ${i.dto.ocpus} OCPU / ${i.dto.memoryGb} GB` }
+      return { summary: L(`已改为 ${i.dto.ocpus} OCPU / ${i.dto.memoryGb} GB`, `Changed to ${i.dto.ocpus} OCPU / ${i.dto.memoryGb} GB`) }
     } })
 })
 on('POST', '/api/instances/{id}/replace-boot-volume', (p, _, b) => {
   const i = instById(p.id)
-  if (b.confirm !== i.dto.displayName) fail(400, 'confirm_required', `替换引导卷需要回传实例名称 "${i.dto.displayName}"`)
+  if (b.confirm !== i.dto.displayName) fail(400, 'confirm_required', L(`替换引导卷需要回传实例名称 "${i.dto.displayName}"`, `Replacing the boot volume requires the instance name "${i.dto.displayName}"`))
   const wasRunning = i.dto.lifecycleState === 'RUNNING'
-  return submit({ kind: 'instance.replace_boot_volume', title: '替换引导卷 · ' + i.dto.displayName,
+  return submit({ kind: 'instance.replace_boot_volume', title: L('替换引导卷 · ', 'Replace boot volume · ') + i.dto.displayName,
     accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['提交替换请求', '等待 Oracle 停机并换上新引导卷', '读取新引导卷信息'], ms: 5000,
+    steps: [L('提交替换请求', 'Submitting the replace request'), L('等待 Oracle 停机并换上新引导卷', 'Waiting for Oracle to stop the instance and swap in the new boot volume'), L('读取新引导卷信息', 'Reading the new boot volume')], ms: 5000,
     run: () => {
       if (b.bootVolumeGb) i.dto.bootVolumeGb = b.bootVolumeGb
       if (wasRunning) transition(i, 'STOPPING', 'RUNNING', 3000)
-      log('instance_replace_boot_volume', i.dto.displayName, i.dto.accountId, b.preserveBootVolume ? '旧引导卷保留' : '旧引导卷删除')
-      return { summary: `已换上新引导卷 · ${i.dto.bootVolumeGb} GB` }
+      log('instance_replace_boot_volume', i.dto.displayName, i.dto.accountId, b.preserveBootVolume ? L('旧引导卷保留', 'Old boot volume kept') : L('旧引导卷删除', 'Old boot volume deleted'))
+      return { summary: L(`已换上新引导卷 · ${i.dto.bootVolumeGb} GB`, `New boot volume in place · ${i.dto.bootVolumeGb} GB`) }
     } })
 })
 on('DELETE', '/api/instances/{id}', (p, q) => {
   const i = instById(p.id)
-  if (!settings.allowTerminate) fail(403, 'terminate_disabled', '终止实例功能已在设置中禁用')
-  if (q.confirm !== i.dto.displayName) fail(400, 'confirm_required', `终止实例需要在 confirm 参数中回传实例名称 "${i.dto.displayName}"`)
-  return submit({ kind: 'instance.terminate', title: '终止实例 ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['提交终止请求', '等待实例终止'], ms: 5000,
+  if (!settings.allowTerminate) fail(403, 'terminate_disabled', L('终止实例功能已在设置中禁用', 'Terminating instances is disabled in settings'))
+  if (q.confirm !== i.dto.displayName) fail(400, 'confirm_required', L(`终止实例需要在 confirm 参数中回传实例名称 "${i.dto.displayName}"`, `Terminating requires the instance name "${i.dto.displayName}" in the confirm parameter`))
+  return submit({ kind: 'instance.terminate', title: L('终止实例 ', 'Terminate ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('提交终止请求', 'Submitting the terminate request'), L('等待实例终止', 'Waiting for the instance to terminate')], ms: 5000,
     run: () => {
       instances.splice(instances.indexOf(i), 1)
       emit('instance.removed', { instanceId: i.dto.id, accountId: i.dto.accountId, state: 'TERMINATED' })
       log('instance_terminate', i.dto.displayName, i.dto.accountId)
-      return { summary: '实例已终止' }
+      return { summary: L('实例已终止', 'Instance terminated') }
     } })
 })
 on('POST', '/api/instances/{id}/change-ip', (p, q) => {
   const i = instById(p.id)
-  const v = q.vnicId ? i.vnics.find(x => x.vnicId === q.vnicId) ?? fail(404, 'not_found', '这张网卡不在该实例上') : i.vnics[0]
-  return submit({ kind: 'instance.change_ip', title: '更换公网 IP · ' + i.dto.displayName + (v.isPrimary ? '' : '（附属网卡）'),
+  const v = q.vnicId ? i.vnics.find(x => x.vnicId === q.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'This VNIC is not on the instance')) : i.vnics[0]
+  return submit({ kind: 'instance.change_ip', title: L('更换公网 IP · ', 'Change public IP · ') + i.dto.displayName + (v.isPrimary ? '' : L('（附属网卡）', ' (secondary VNIC)')),
     accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: v.publicIp ? ['释放旧的临时 IP', '申请新的临时 IP'] : ['申请临时公网 IP'], ms: 3500,
+    steps: v.publicIp ? [L('释放旧的临时 IP', 'Releasing the old ephemeral IP'), L('申请新的临时 IP', 'Requesting a new ephemeral IP')] : [L('申请临时公网 IP', 'Requesting an ephemeral public IP')], ms: 3500,
     run: () => {
       const oldIp = v.publicIp
       v.publicIp = freshIp(); v.publicIpType = 'EPHEMERAL'; syncSecondary(i)
-      log('instance_change_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${v.publicIp}` : `新分配 ${v.publicIp}`)
-      return { summary: oldIp ? '新 IP 已生效' : '新 IP ' + v.publicIp, result: { oldIp, newIp: v.publicIp } }
+      log('instance_change_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${v.publicIp}` : L(`新分配 ${v.publicIp}`, `Newly assigned ${v.publicIp}`))
+      return { summary: oldIp ? L('新 IP 已生效', 'New IP is live') : L('新 IP ', 'New IP ') + v.publicIp, result: { oldIp, newIp: v.publicIp } }
     } })
 })
 on('POST', '/api/instances/{id}/vnics/{vnicId}/ipv6', p => {
   const i = instById(p.id)
-  const v = i.vnics.find(x => x.vnicId === p.vnicId) ?? fail(404, 'not_found', '这张网卡不在该实例上')
-  return submit({ kind: 'instance.add_ipv6', title: '添加 IPv6 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['确认网卡属于该实例', '检查子网的 IPv6 前缀并分配地址'], ms: 3000,
+  const v = i.vnics.find(x => x.vnicId === p.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'This VNIC is not on the instance'))
+  return submit({ kind: 'instance.add_ipv6', title: L('添加 IPv6 · ', 'Add IPv6 · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('确认网卡属于该实例', 'Confirming the VNIC belongs to the instance'), L('检查子网的 IPv6 前缀并分配地址', 'Checking the subnet IPv6 prefix and assigning an address')], ms: 3000,
     run: () => {
       const address = freshV6()
       v6Created.set(address, iso(Date.now()))
       v.ipv6 = [...(v.ipv6 ?? []), address]; syncSecondary(i)
       log('instance_add_ipv6', i.dto.displayName, i.dto.accountId, address)
-      return { summary: '已分配 IPv6 ' + address, result: { address, steps: ['子网已有 IPv6 前缀', '已分配 IPv6 地址 ' + address] } }
+      return { summary: L('已分配 IPv6 ', 'Assigned IPv6 ') + address, result: { address, steps: [L('子网已有 IPv6 前缀', 'The subnet already has an IPv6 prefix'), L('已分配 IPv6 地址 ', 'Assigned IPv6 address ') + address] } }
     } })
 })
 on('POST', '/api/instances/{id}/enable-ipv6', p => {
   const i = instById(p.id)
-  return submit({ kind: 'instance.enable_ipv6', title: '启用 IPv6 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['为 VCN、子网开通 IPv6 前缀', '给网卡分配地址'], ms: 3500,
+  return submit({ kind: 'instance.enable_ipv6', title: L('启用 IPv6 · ', 'Enable IPv6 · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('为 VCN、子网开通 IPv6 前缀', 'Enabling IPv6 prefixes on the VCN and subnet'), L('给网卡分配地址', 'Assigning an address to the VNIC')], ms: 3500,
     run: () => {
       const address = freshV6()
       i.vnics[0].ipv6 = [...(i.vnics[0].ipv6 ?? []), address]; syncSecondary(i)
       log('instance_enable_ipv6', i.dto.displayName, i.dto.accountId, address)
-      return { summary: '已分配 IPv6 ' + address, result: { address, steps: ['子网已有 IPv6 前缀', '已分配地址'] } }
+      return { summary: L('已分配 IPv6 ', 'Assigned IPv6 ') + address, result: { address, steps: [L('子网已有 IPv6 前缀', 'The subnet already has an IPv6 prefix'), L('已分配地址', 'Address assigned')] } }
     } })
 })
 on('DELETE', '/api/instances/{id}/ipv6', (p, q) => {
   const i = instById(p.id)
-  return submit({ kind: 'instance.remove_ipv6', title: '移除 IPv6 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['在实例的网卡上查找 ' + q.address, '删除 IPv6 地址'], ms: 2500,
+  return submit({ kind: 'instance.remove_ipv6', title: L('移除 IPv6 · ', 'Remove IPv6 · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('在实例的网卡上查找 ', 'Looking on the instance VNICs for ') + q.address, L('删除 IPv6 地址', 'Deleting the IPv6 address')], ms: 2500,
     run: () => {
       for (const v of i.vnics) v.ipv6 = (v.ipv6 ?? []).filter(x => x !== q.address)
       syncSecondary(i)
       log('instance_remove_ipv6', i.dto.displayName, i.dto.accountId, q.address)
-      return { summary: '已移除 IPv6 ' + q.address }
+      return { summary: L('已移除 IPv6 ', 'Removed IPv6 ') + q.address }
     } })
 })
 on('POST', '/api/instances/{id}/vnics', (p, _, b) => {
   const i = instById(p.id)
-  return submit({ kind: 'instance.attach_vnic', title: '添加附属网卡 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['创建网卡', '等待网卡挂载'], ms: 4000,
+  return submit({ kind: 'instance.attach_vnic', title: L('添加附属网卡 · ', 'Add secondary VNIC · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('创建网卡', 'Creating the VNIC'), L('等待网卡挂载', 'Waiting for the VNIC to attach')], ms: 4000,
     run: () => {
       const base = i.vnics[0]
       i.vnics.push({ ...base, attachmentId: ocid('vnicattachment', i.dto.region), vnicId: ocid('vnic', i.dto.region),
@@ -777,19 +784,19 @@ on('POST', '/api/instances/{id}/vnics', (p, _, b) => {
       syncSecondary(i)
       emit('instance.network', { instanceId: i.dto.id, accountId: i.dto.accountId, state: 'ATTACHED' })
       log('instance_attach_vnic', i.dto.displayName, i.dto.accountId)
-      return { summary: '附属网卡已挂载' }
+      return { summary: L('附属网卡已挂载', 'Secondary VNIC attached') }
     } })
 })
 on('DELETE', '/api/instances/{id}/vnics/{aid}', p => {
   const i = instById(p.id)
-  const v = i.vnics.find(x => x.attachmentId === p.aid && !x.isPrimary) ?? fail(400, 'primary_vnic', '主网卡不能分离，只能分离附属网卡')
-  return submit({ kind: 'instance.detach_vnic', title: '分离附属网卡 · ' + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: ['提交分离请求', '等待网卡下线'], ms: 4000,
+  const v = i.vnics.find(x => x.attachmentId === p.aid && !x.isPrimary) ?? fail(400, 'primary_vnic', L('主网卡不能分离，只能分离附属网卡', 'The primary VNIC can\'t be detached; only secondary VNICs can'))
+  return submit({ kind: 'instance.detach_vnic', title: L('分离附属网卡 · ', 'Detach secondary VNIC · ') + i.dto.displayName, accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('提交分离请求', 'Submitting the detach request'), L('等待网卡下线', 'Waiting for the VNIC to detach')], ms: 4000,
     run: () => {
       i.vnics.splice(i.vnics.indexOf(v), 1); syncSecondary(i)
       emit('instance.network', { instanceId: i.dto.id, accountId: i.dto.accountId, state: 'DETACHED' })
       log('instance_detach_vnic', i.dto.displayName, i.dto.accountId)
-      return { summary: '附属网卡已分离' }
+      return { summary: L('附属网卡已分离', 'Secondary VNIC detached') }
     } })
 })
 on('GET', '/api/instances/{id}/metrics', (p, q) => {
@@ -801,7 +808,7 @@ on('GET', '/api/instances/{id}/metrics', (p, q) => {
   const k = running ? 1 : 0
   return {
     instanceId: i.dto.id, start: ago(hours * HOUR), end: iso(Date.now()), resolution: '1m',
-    notice: '演示数据：曲线为随机生成。真实监控依赖实例内运行的 Oracle Cloud Agent。',
+    notice: L('演示数据：曲线为随机生成。真实监控依赖实例内运行的 Oracle Cloud Agent。', 'Demo data: the curves are random. Real metrics rely on the Oracle Cloud Agent running in the instance.'),
     series: [
       { metric: 'CpuUtilization', aggregation: 'mean', datapoints: series(n, step, 18 * k, 10 * k, 6 * k) },
       { metric: 'MemoryUtilization', aggregation: 'mean', datapoints: series(n, step, 46 * k, 4 * k, 3 * k) },
@@ -822,7 +829,7 @@ on('GET', '/api/instances/{id}/traffic', p => {
     end: iso(Date.now()), vnics: i.vnics.length,
     outBytes: daily.reduce((n, d) => n + d.outBytes, 0), inBytes: daily.reduce((n, d) => n + d.inBytes, 0),
     last24hOutBytes: daily.at(-1)?.outBytes ?? 0, last24hInBytes: daily.at(-1)?.inBytes ?? 0, series: daily,
-    notice: '演示数据' }
+    notice: L('演示数据', 'Demo data') }
 })
 on('POST', '/api/instances/{id}/console', p => {
   const i = instById(p.id)
@@ -838,21 +845,21 @@ on('POST', '/api/instances/{id}/console', p => {
   return { id: c.conn.id, instanceId: i.dto.id, lifecycleState: 'ACTIVE',
     serialConsoleCommand: `ssh -o ProxyCommand='ssh -W %h:%p -p 443 ${c.conn.id}@${host}' ${i.dto.id}`,
     vncConsoleCommand: `ssh -o ProxyCommand='ssh -W %h:%p -p 443 ${c.conn.id}@${host}' -N -L localhost:5900:${i.dto.id}:5900 ${i.dto.id}`,
-    notice: '演示站：命令里的 OCID 都是编的，连不上。', keyHint: '真实部署时，两层 ssh 都要用你注册的那把 RSA 私钥。' }
+    notice: L('演示站：命令里的 OCID 都是编的，连不上。', 'Demo: the OCIDs in these commands are made up and won\'t connect.'), keyHint: L('真实部署时，两层 ssh 都要用你注册的那把 RSA 私钥。', 'In a real deployment, both ssh layers must use the RSA private key you registered.') }
 })
 on('POST', '/api/instances/bulk', (_, __, b) => {
   const ids: string[] = b.instanceIds ?? []
-  const t = ACTION[b.action] ?? fail(400, 'bad_action', '未知操作')
-  return submit({ kind: 'instance.bulk', title: `批量操作 · ${ids.length} 台`, steps: ['逐台提交'], ms: 1500,
+  const t = ACTION[b.action] ?? fail(400, 'bad_action', L('未知操作', 'Unknown action'))
+  return submit({ kind: 'instance.bulk', title: L(`批量操作 · ${ids.length} 台`, `Bulk action · ${ids.length} instances`), steps: [L('逐台提交', 'Submitting one by one')], ms: 1500,
     run: () => {
       for (const id of ids) { const i = instances.find(x => x.dto.id === id); if (i) transition(i, t[0], t[1], rand(3000, 6000)) }
-      log('instance_bulk_' + String(b.action).toLowerCase(), `${ids.length} 台实例`)
-      return { summary: `已提交 ${ids.length} 台` }
+      log('instance_bulk_' + String(b.action).toLowerCase(), L(`${ids.length} 台实例`, `${ids.length} instances`))
+      return { summary: L(`已提交 ${ids.length} 台`, `Submitted ${ids.length}`) }
     } })
 })
 
 /* 创建实例 */
-on('GET', '/api/launch/presets', () => ({ presets: STATIC.launchPresets }))
+on('GET', '/api/launch/presets', () => ({ presets: staticData().launchPresets }))
 on('GET', '/api/launch/availability-domains', (_, q) => {
   const r = q.region || 'ap-tokyo-1'
   return { availabilityDomains: [1, 2, 3].slice(0, r === 'ap-tokyo-1' || r === 'ap-singapore-1' ? 1 : 3)
@@ -878,8 +885,8 @@ on('GET', '/api/launch/images', (_, q) => {
 })
 on('POST', '/api/launch', (_, __, b) => {
   const a = acctById(b.accountId)
-  return submit({ kind: 'instance.launch', title: '创建实例 ' + b.displayName, accountId: a.id,
-    steps: ['检查网络', '提交创建请求', '等待实例 RUNNING'], ms: 7000,
+  return submit({ kind: 'instance.launch', title: L('创建实例 ', 'Launch ') + b.displayName, accountId: a.id,
+    steps: [L('检查网络', 'Checking the network'), L('提交创建请求', 'Submitting the launch request'), L('等待实例 RUNNING', 'Waiting for RUNNING')], ms: 7000,
     run: () => {
       const i = makeInstance({ accountId: a.id, region: b.region || a.homeRegion, name: b.displayName, shape: b.shape,
         ocpus: b.ocpus || 1, memoryGb: b.memoryInGbs || 1, ipv6: !!b.enableIpv6, bootGb: b.bootVolumeGb || 50,
@@ -887,7 +894,7 @@ on('POST', '/api/launch', (_, __, b) => {
       emit('instance.updated', { instanceId: i.dto.id, accountId: a.id, state: 'PROVISIONING' })
       setTimeout(() => setState(i, 'RUNNING'), 2500)
       log('instance_launch', i.dto.displayName, a.id)
-      return { summary: `${i.dto.displayName} 已创建` }
+      return { summary: L(`${i.dto.displayName} 已创建`, `${i.dto.displayName} launched`) }
     } })
 })
 
@@ -897,24 +904,24 @@ on('GET', '/api/network/vcns', (_, q) => ({ vcns: netsOf(q).map(n => n.vcn) }))
 on('GET', '/api/network/subnets', (_, q) => ({ subnets: netsOf(q).flatMap(n => n.subnets).filter(s => !q.vcnId || s.vcnId === q.vcnId) }))
 on('GET', '/api/network/security-lists', (_, q) => ({ securityLists: netsOf(q).map(n => n.securityList) }))
 on('PUT', '/api/network/security-lists/{id}', (p, q, b) => {
-  const n = nets.find(x => x.securityList.id === p.id) ?? fail(404, 'not_found', '安全列表不存在')
+  const n = nets.find(x => x.securityList.id === p.id) ?? fail(404, 'not_found', L('安全列表不存在', 'Security list not found'))
   n.securityList.ingressSecurityRules = b.ingress ?? []
   n.securityList.egressSecurityRules = b.egress ?? []
   n.securityList.noEgress = (b.egress ?? []).length === 0
   log('security_list_update', n.securityList.displayName, q.accountId)
   return n.securityList
 })
-on('GET', '/api/network/rule-templates', () => ({ templates: STATIC.ruleTemplates }))
+on('GET', '/api/network/rule-templates', () => ({ templates: staticData().ruleTemplates }))
 on('GET', '/api/network/public-ips', (_, q) => ({
   publicIps: reservedIps.filter(r => r.accountId === q.accountId).map(r => ({ id: r.ip.id, displayName: r.ip.displayName,
     ipAddress: r.ip.ipAddress, lifetime: 'RESERVED', scope: 'REGION', privateIpId: '', lifecycleState: r.ip.lifecycleState }))
 }))
 on('POST', '/api/network/ensure', (_, q) => {
   const n = netFor(q.accountId, q.region || acctById(q.accountId).defaultRegion)
-  return submit({ kind: 'network.ensure', title: '准备网络 · ' + n.region, accountId: q.accountId,
-    steps: ['检查 VCN / 子网 / 网关 / 路由'], ms: 2500,
-    run: () => ({ summary: '网络已就绪', result: { vcnId: n.vcn.id, vcnName: n.vcn.displayName, subnetId: n.subnets[0].id,
-      subnetName: n.subnets[0].displayName, created: false, steps: ['已有可用的公网子网，无需新建'] } }) })
+  return submit({ kind: 'network.ensure', title: L('准备网络 · ', 'Prepare network · ') + n.region, accountId: q.accountId,
+    steps: [L('检查 VCN / 子网 / 网关 / 路由', 'Checking VCN / subnet / gateway / routes')], ms: 2500,
+    run: () => ({ summary: L('网络已就绪', 'Network ready'), result: { vcnId: n.vcn.id, vcnName: n.vcn.displayName, subnetId: n.subnets[0].id,
+      subnetName: n.subnets[0].displayName, created: false, steps: [L('已有可用的公网子网，无需新建', 'A usable public subnet already exists; nothing to create')] } }) })
 })
 
 /* 存储 */
@@ -932,10 +939,10 @@ on('GET', '/api/storage/volumes', (_, q) => ({ volumes: [
       isHydrated: true, timeCreated: v.vol.timeCreated }))
 ] }))
 const volumeJob = (kind: string, label: string, apply: () => string) =>
-  submit({ kind, title: label, steps: ['提交修改', '等待卷落定'], ms: 3000, run: () => ({ summary: apply() }) })
+  submit({ kind, title: label, steps: [L('提交修改', 'Submitting the change'), L('等待卷落定', 'Waiting for the volume to settle')], ms: 3000, run: () => ({ summary: apply() }) })
 on('PATCH', '/api/storage/boot-volumes/{id}', (p, _, b) => {
-  const i = instances.find(x => x.dto.bootVolumeId === p.id) ?? fail(404, 'not_found', '引导卷不存在')
-  return volumeJob('storage.boot_volume', '修改引导卷 · ' + i.dto.displayName, () => {
+  const i = instances.find(x => x.dto.bootVolumeId === p.id) ?? fail(404, 'not_found', L('引导卷不存在', 'Boot volume not found'))
+  return volumeJob('storage.boot_volume', L('修改引导卷 · ', 'Edit boot volume · ') + i.dto.displayName, () => {
     if (b.sizeInGbs) i.dto.bootVolumeGb = b.sizeInGbs
     if (b.vpusPerGb !== undefined) i.dto.bootVolumeVpus = b.vpusPerGb
     log('boot_volume_update', i.dto.displayName, i.dto.accountId, `${i.dto.bootVolumeGb} GB · VPU ${i.dto.bootVolumeVpus}`)
@@ -944,8 +951,8 @@ on('PATCH', '/api/storage/boot-volumes/{id}', (p, _, b) => {
   })
 })
 on('PATCH', '/api/storage/volumes/{id}', (p, _, b) => {
-  const v = instances.flatMap(i => i.blockVolumes).find(x => x.volumeId === p.id) ?? fail(404, 'not_found', '卷不存在')
-  return volumeJob('storage.volume', '修改块存储 · ' + v.displayName, () => {
+  const v = instances.flatMap(i => i.blockVolumes).find(x => x.volumeId === p.id) ?? fail(404, 'not_found', L('卷不存在', 'Volume not found'))
+  return volumeJob('storage.volume', L('修改块存储 · ', 'Edit block volume · ') + v.displayName, () => {
     if (b.sizeInGbs) v.sizeInGbs = b.sizeInGbs
     if (b.vpusPerGb !== undefined) v.vpusPerGb = b.vpusPerGb
     log('volume_update', v.displayName)
@@ -953,14 +960,14 @@ on('PATCH', '/api/storage/volumes/{id}', (p, _, b) => {
   })
 })
 for (const path of ['boot-volume-attachments/detach', 'boot-volume-attachments/attach', 'volume-attachments/attach', 'volume-attachments/detach']) {
-  on('POST', '/api/storage/' + path, () => ({ ok: true, notice: '已提交（演示站只模拟结果，不改变数据）' }))
+  on('POST', '/api/storage/' + path, () => ({ ok: true, notice: L('已提交（演示站只模拟结果，不改变数据）', 'Submitted (the demo only simulates the result; data is unchanged)') }))
 }
 
 /* 任务 */
 on('GET', '/api/jobs', (_, q) => ({ jobs: structuredClone(q.status === 'active'
   ? jobs.filter(j => j.status === 'queued' || j.status === 'running') : jobs) }))
-on('GET', '/api/jobs/{id}', p => structuredClone(jobs.find(j => j.id === p.id) ?? fail(404, 'not_found', '任务不存在')))
-on('POST', '/api/jobs/{id}/cancel', () => fail(409, 'job_running', '任务已经开始执行，不能取消'))
+on('GET', '/api/jobs/{id}', p => structuredClone(jobs.find(j => j.id === p.id) ?? fail(404, 'not_found', L('任务不存在', 'Job not found'))))
+on('POST', '/api/jobs/{id}/cancel', () => fail(409, 'job_running', L('任务已经开始执行，不能取消', 'The job already started and can\'t be cancelled')))
 on('DELETE', '/api/jobs/{id}', p => { const n = jobs.findIndex(j => j.id === p.id); if (n >= 0) jobs.splice(n, 1); return { ok: true } })
 on('POST', '/api/jobs/clear', () => {
   const before = jobs.length
@@ -974,7 +981,7 @@ on('GET', '/api/hunt', () => {
   for (const t of huntTasks) if (t.state === 'running') {
     t.attempts += Math.floor(rand(0, 3)); t.lastTryAt = ago(rand(2, 30) * 1000); t.nextAt = iso(Date.now() + t.intervalSeconds * 1000)
   }
-  return { tasks: structuredClone(huntTasks), limits: STATIC.huntLimits }
+  return { tasks: structuredClone(huntTasks), limits: staticData().huntLimits }
 })
 on('POST', '/api/hunt', (_, __, b) => {
   const a = acctById(b.accountId)
@@ -986,10 +993,10 @@ on('POST', '/api/hunt', (_, __, b) => {
     shape: b.shape, ocpus: b.ocpus ?? 1, memoryGb: b.memoryInGbs ?? 6, displayName: b.displayName, ads: b.availabilityDomains ?? null }
   huntTasks.unshift(t)
   log('hunt_create', t.name, a.id)
-  return { task: t, notice: '任务已创建（演示站不会真的去抢机）' }
+  return { task: t, notice: L('任务已创建（演示站不会真的去抢机）', 'Task created (the demo never actually tries to launch)') }
 })
 on('POST', '/api/hunt/{id}/{action}', p => {
-  const t = huntTasks.find(x => x.id === p.id) ?? fail(404, 'not_found', '任务不存在')
+  const t = huntTasks.find(x => x.id === p.id) ?? fail(404, 'not_found', L('任务不存在', 'Task not found'))
   t.state = p.action === 'pause' ? 'paused' : 'running'
   log('hunt_' + p.action, t.name, t.accountId)
   return { task: t }
@@ -997,30 +1004,30 @@ on('POST', '/api/hunt/{id}/{action}', p => {
 on('DELETE', '/api/hunt/{id}', p => {
   const n = huntTasks.findIndex(x => x.id === p.id)
   if (n >= 0) { log('hunt_delete', huntTasks[n].name, huntTasks[n].accountId); huntTasks.splice(n, 1) }
-  return { ok: true, notice: '已删除' }
+  return { ok: true, notice: L('已删除', 'Deleted') }
 })
 
 /* 容量 */
-on('GET', '/api/capacity', () => ({ watches: structuredClone(watches), probeIntervalSeconds: STATIC.probeIntervalSeconds }))
+on('GET', '/api/capacity', () => ({ watches: structuredClone(watches), probeIntervalSeconds: staticData().probeIntervalSeconds }))
 const probeRows = (region: string) => [1, 2, 3].map(n => {
   const ok = Math.random() < 0.35
   return { availabilityDomain: AD(region, n), short: `AD-${n}`, status: ok ? 'AVAILABLE' : 'OUT_OF_HOST_CAPACITY',
-    statusText: ok ? '有容量' : '没有容量', availableCount: ok ? Math.floor(rand(1, 6)) : 0 }
+    statusText: ok ? L('有容量', 'Available') : L('没有容量', 'Out of capacity'), availableCount: ok ? Math.floor(rand(1, 6)) : 0 }
 })
 on('POST', '/api/capacity/probe', (_, __, b) => ({ region: b.region || 'ap-tokyo-1', shape: b.shape,
-  results: probeRows(b.region || 'ap-tokyo-1'), notice: '演示数据：结果随机生成' }))
+  results: probeRows(b.region || 'ap-tokyo-1'), notice: L('演示数据：结果随机生成', 'Demo data: results are random') }))
 on('POST', '/api/capacity', (_, __, b) => {
   const r = b.region || 'ap-tokyo-1'
   const w: D.CapacityWatchDTO = { id: uid('cw-'), accountId: b.accountId, region: r, availabilityDomain: b.availabilityDomain || AD(r),
     availabilityDomainShort: 'AD-1', shape: b.shape, ocpus: b.ocpus ?? 1, memoryGb: b.memoryGb ?? 6, enabled: true,
-    lastStatus: 'OUT_OF_HOST_CAPACITY', statusText: '没有容量', lastCount: 0, lastError: '',
+    lastStatus: 'OUT_OF_HOST_CAPACITY', statusText: L('没有容量', 'Out of capacity'), lastCount: 0, lastError: '',
     lastCheckedAt: iso(Date.now()), lastChangedAt: iso(Date.now()), createdAt: iso(Date.now()), updatedAt: iso(Date.now()) }
   watches.unshift(w)
   log('capacity_watch_create', `${w.shape} · ${r}`, b.accountId)
-  return { watch: w, notice: '已加入监控' }
+  return { watch: w, notice: L('已加入监控', 'Added to the watch list') }
 })
 on('POST', '/api/capacity/{id}/{action}', p => {
-  const w = watches.find(x => x.id === p.id) ?? fail(404, 'not_found', '监控项不存在')
+  const w = watches.find(x => x.id === p.id) ?? fail(404, 'not_found', L('监控项不存在', 'Watch not found'))
   w.enabled = p.action === 'enable'
   return { watch: w }
 })
@@ -1039,10 +1046,10 @@ on('GET', '/api/audit', (_, q) => {
 })
 
 /* 通知与设置 */
-on('GET', '/api/notifications/channels', () => ({ channels: structuredClone(channels), kinds: STATIC.channelKinds }))
-on('GET', '/api/notifications/events', () => ({ events: STATIC.notifyEvents }))
+on('GET', '/api/notifications/channels', () => ({ channels: structuredClone(channels), kinds: staticData().channelKinds }))
+on('GET', '/api/notifications/events', () => ({ events: staticData().notifyEvents }))
 const maskSecrets = (kind: string, config: Record<string, string>) => {
-  const k = STATIC.channelKinds.find(x => x.kind === kind)
+  const k = staticData().channelKinds.find(x => x.kind === kind)
   const out = { ...config }
   for (const f of k?.fields ?? []) if (f.secret && out[f.key]) out[f.key] = out[f.key].slice(0, 4) + '••••••••' + out[f.key].slice(-4)
   return out
@@ -1055,7 +1062,7 @@ on('POST', '/api/notifications/channels', (_, __, b) => {
   return ch
 })
 on('PATCH', '/api/notifications/channels/{id}', (p, _, b) => {
-  const ch = channels.find(x => x.id === p.id) ?? fail(404, 'not_found', '渠道不存在')
+  const ch = channels.find(x => x.id === p.id) ?? fail(404, 'not_found', L('渠道不存在', 'Channel not found'))
   if (b.name !== undefined) ch.name = b.name
   if (b.events !== undefined) ch.events = b.events
   if (b.enabled !== undefined) ch.enabled = b.enabled
@@ -1074,7 +1081,7 @@ on('GET', '/api/settings', () => settings)
 on('PATCH', '/api/settings', (_, __, b) => {
   settings = { ...settings, ...b }
   log('settings_update', '')
-  return { settings, notice: '已保存' }
+  return { settings, notice: L('已保存', 'Saved') }
 })
 
 /* 账单 */
@@ -1085,12 +1092,12 @@ on('GET', '/api/billing', () => {
     const st = billingStatus(a)
     return { accountId: a.id, status: st, currency: st === 'ok' ? 'USD' : '', thisMonth: st === 'ok' ? 3.42 : 0,
       lastMonth: st === 'ok' ? 4.18 : 0, region: a.homeRegion, fetchedAt: iso(Date.now()),
-      error: st === 'no_permission' ? '缺少 read usage-report 权限（演示数据）' : undefined }
+      error: st === 'no_permission' ? L('缺少 read usage-report 权限（演示数据）', 'Missing the read usage-report permission (demo data)') : undefined }
   })
   return { summaries, totals: [{ currency: 'USD', thisMonth: 3.42, lastMonth: 4.18, accounts: 1 }],
     countedAccounts: summaries.filter(s => s.status !== 'no_permission').length,
     noPermissionCount: summaries.filter(s => s.status === 'no_permission').length,
-    notice: '演示数据。用量数据由 Oracle 每隔几小时结算一次，最新一天通常不完整。' }
+    notice: L('演示数据。用量数据由 Oracle 每隔几小时结算一次，最新一天通常不完整。', 'Demo data. Oracle settles usage every few hours, so the latest day is usually incomplete.') }
 })
 on('GET', '/api/billing/{id}', (p, q) => {
   const a = acctById(p.id)
@@ -1111,7 +1118,7 @@ on('GET', '/api/billing/{id}', (p, q) => {
       b('Block Volume Storage', +(total * 0.2).toFixed(2), 247, 'GB Months'),
       b('Outbound Data Transfer Zone 1', 0, 312, 'GB')],
     egress: b('Outbound Data Transfer', 0, 312, 'GB'), fetchedAt: iso(Date.now()),
-    error: st === 'no_permission' ? '缺少 read usage-report 权限（演示数据）' : undefined }
+    error: st === 'no_permission' ? L('缺少 read usage-report 权限（演示数据）', 'Missing the read usage-report permission (demo data)') : undefined }
 })
 on('GET', '/api/billing/{id}/egress', p => {
   const a = acctById(p.id)
@@ -1125,13 +1132,13 @@ on('GET', '/api/billing/{id}/egress', p => {
 
 /* 代理 */
 on('GET', '/api/proxies', () => ({ proxies: structuredClone(proxies), bindings: { ...bindings }, checkTimeoutMs: 8000,
-  notice: '演示数据：代理地址都是编的。' }))
+  notice: L('演示数据：代理地址都是编的。', 'Demo data: the proxy addresses are made up.') }))
 on('POST', '/api/proxies/import', (_, __, b) => {
   const lines = String(b.text ?? '').split('\n').map(s => s.trim()).filter(Boolean)
   const rows = lines.map((l, n) => {
     const m = l.match(/^(?:(socks5|http|https):\/\/)?(?:([^:@]+)(?::[^@]*)?@)?([\w.-]+):(\d+)$/)
     return m ? { line: n + 1, masked: `${m[1] ?? 'socks5'}://${m[3]}:${m[4]}`, label: '' }
-      : { line: n + 1, masked: l.slice(0, 40), error: '认不出这一行的格式' }
+      : { line: n + 1, masked: l.slice(0, 40), error: L('认不出这一行的格式', 'Unrecognized line format') }
   })
   if (!b.dryRun) for (const r of rows) if (!r.error) {
     const [scheme, rest] = r.masked.split('://')
@@ -1144,7 +1151,7 @@ on('POST', '/api/proxies/import', (_, __, b) => {
   return { dryRun: !!b.dryRun, rows, ok, failed: rows.length - ok, skipped: 0 }
 })
 on('PATCH', '/api/proxies/{id}', (p, _, b) => {
-  const px = proxies.find(x => x.id === p.id) ?? fail(404, 'not_found', '代理不存在')
+  const px = proxies.find(x => x.id === p.id) ?? fail(404, 'not_found', L('代理不存在', 'Proxy not found'))
   if (b.label !== undefined) px.label = b.label
   if (b.enabled !== undefined) px.enabled = b.enabled
   return { proxy: px }
@@ -1154,14 +1161,14 @@ on('POST', '/api/proxies/bind', (_, __, b) => { if (b.proxyId) bindings[b.accoun
 const checkProxy = (px: D.ProxyDTO): D.ProxyCheckRowDTO => {
   const ok = px.enabled && Math.random() < 0.85
   px.lastStatus = ok ? 'ok' : 'fail'; px.lastLatencyMs = ok ? Math.floor(rand(60, 260)) : 0
-  px.lastError = ok ? '' : '连接超时（演示数据）'; px.lastCheckedAt = iso(Date.now()); if (ok) px.lastOkAt = px.lastCheckedAt
+  px.lastError = ok ? '' : L('连接超时（演示数据）', 'Connection timed out (demo data)'); px.lastCheckedAt = iso(Date.now()); if (ok) px.lastOkAt = px.lastCheckedAt
   return { id: px.id, status: px.lastStatus, latencyMs: px.lastLatencyMs, error: px.lastError || undefined, checkedAt: px.lastCheckedAt, region: 'ap-tokyo-1' }
 }
 on('POST', '/api/proxies/check', () => ({ results: proxies.map(checkProxy) }))
-on('POST', '/api/proxies/{id}/check', p => ({ results: [checkProxy(proxies.find(x => x.id === p.id) ?? fail(404, 'not_found', '代理不存在'))] }))
+on('POST', '/api/proxies/{id}/check', p => ({ results: [checkProxy(proxies.find(x => x.id === p.id) ?? fail(404, 'not_found', L('代理不存在', 'Proxy not found')))] }))
 
 /* 总览（前端目前不调用，保留以免 404） */
-on('GET', '/api/overview', () => unsupported('这个接口'))
+on('GET', '/api/overview', () => unsupported(L('这个接口', 'this endpoint')))
 
 /* ---------- 入口 ---------- */
 
@@ -1180,11 +1187,11 @@ export async function demoSend<T>(method: string, path: string, query?: Record<s
     await sleep(method === 'GET' ? rand(180, 520) : rand(250, 600))
     if (!authed && !['/api/status', '/api/auth/login'].includes(path)) {
       window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, { detail: { code: 'unauthenticated' } }))
-      fail(401, 'unauthenticated', '请先登录')
+      fail(401, 'unauthenticated', L('请先登录', 'Please sign in first'))
     }
     // 返回深拷贝：页面会直接修改拿到的对象，不能让它改到这里的「数据库」。
     return structuredClone(h(params, q, structuredClone(body ?? {}))) as T
   }
   await sleep(200)
-  return unsupported('这个操作')
+  return unsupported()
 }
