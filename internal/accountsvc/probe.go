@@ -293,3 +293,24 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// DraftClient 用一份尚未保存的凭据建客户端，供保存前的权限自检使用。
+// 与 CheckDraft 走同样的解析与校验，失败时返回的错误可以直接展示给用户。
+func DraftClient(d Draft) (*ociclient.Client, error) {
+	key, err := ociclient.ParsePrivateKey([]byte(d.PrivateKeyPEM))
+	if err != nil {
+		return nil, err
+	}
+	creds := &ociclient.Credentials{
+		TenancyOCID: strings.TrimSpace(d.TenancyOCID),
+		UserOCID:    strings.TrimSpace(d.UserOCID),
+		Fingerprint: strings.ToLower(strings.TrimSpace(d.Fingerprint)),
+		Region:      ociclient.NormalizeRegion(d.Region),
+		PrivateKey:  key,
+	}
+	opts, err := clientOptions(d.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return ociclient.New(creds, opts...)
+}

@@ -70,6 +70,11 @@ export const accounts = {
     http.del<{ ok: boolean }>(`/api/accounts/${id}`, { query: { confirm: confirmAlias } }),
 
   check: (id: string) => http.post<D.CheckResultDTO>(`/api/accounts/${id}/check`),
+  /** 最近一次权限自检的完整报告；从未自检时 report 为 null */
+  permissions: (id: string) =>
+    http.get<{ report: D.PermReportDTO | null }>(`/api/accounts/${encodeURIComponent(id)}/permissions`),
+  checkPermissions: (id: string) =>
+    http.post<{ report: D.PermReportDTO }>(`/api/accounts/${encodeURIComponent(id)}/permissions`),
 
   regions: (id: string) =>
     http.get<{ regions: { regionName: string; isHomeRegion: boolean }[] }>(`/api/accounts/${id}/regions`),
@@ -106,7 +111,15 @@ export const accounts = {
     privateKeyPem: string; region: string; proxyUrl?: string
     /** 由服务端解析代理地址，带密码的 URL 不经过前端 */
     proxyId?: string
-  }) => http.post<D.CheckResultDTO>('/api/accounts/check-draft', draft)
+  }) => http.post<D.CheckResultDTO>('/api/accounts/check-draft', draft),
+  /** 保存前对草稿凭据做权限自检，结果不落库 */
+  checkDraftPermissions: (draft: {
+    tenancyOcid: string; userOcid: string; fingerprint: string
+    privateKeyPem: string; region: string; proxyUrl?: string
+    /** 由服务端解析代理地址，带密码的 URL 不经过前端 */
+    proxyId?: string
+  }) =>
+    http.post<{ report: D.PermReportDTO }>('/api/accounts/check-draft/permissions', draft)
 }
 
 /* ---------- 实例 ---------- */

@@ -26,6 +26,7 @@ import acctDrawer from './acctDrawer'
 import createInst from './createInst'
 import settingsPage from './settingsPage'
 import instDrawer from './instDrawer'
+import perm from './perm'
 
 const zh = {
   common: common.zh,
@@ -52,7 +53,8 @@ const zh = {
   acctDrawer: acctDrawer.zh,
   createInst: createInst.zh,
   settingsPage: settingsPage.zh,
-  instDrawer: instDrawer.zh
+  instDrawer: instDrawer.zh,
+  perm: perm.zh
 }
 
 export type Messages = typeof zh
@@ -82,7 +84,8 @@ const en: Messages = {
   acctDrawer: acctDrawer.en,
   createInst: createInst.en,
   settingsPage: settingsPage.en,
-  instDrawer: instDrawer.en
+  instDrawer: instDrawer.en,
+  perm: perm.en
 }
 
 export const messages = { 'zh-CN': zh, en } as const

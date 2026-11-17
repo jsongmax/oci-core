@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
 import { mask } from '@/lib/mask'
-import { accounts as accountsApi, proxies as proxiesApi, errorText, type CheckStepDTO, type ProxyDTO } from '@/api'
+import { accounts as accountsApi, proxies as proxiesApi, errorText, type CheckStepDTO, type PermReportDTO, type ProxyDTO } from '@/api'
 import type { AccountColorIndex, CheckItem } from '@/types'
 import AppDrawer from '@/components/AppDrawer.vue'
 import DrawerBody from '@/components/DrawerBody.vue'
@@ -14,6 +14,8 @@ import SectionCard from '@/components/SectionCard.vue'
 import CredentialField from '@/components/CredentialField.vue'
 import CheckList from '@/components/CheckList.vue'
 import SelectMenu from '@/components/SelectMenu.vue'
+import PermissionReport from '@/components/PermissionReport.vue'
+import ApiSetupGuide from '@/components/ApiSetupGuide.vue'
 
 const { state, closeDrawer, toast, toastError, nextColorIndex, loadAccounts, syncNow } = useStore()
 
@@ -83,6 +85,7 @@ watch(() => form.egress, () => {
   steps.value = []
   testError.value = ''
   testAdvice.value = ''
+  permReport.value = null
 })
 
 const proxyId = computed(() => (form.egress && form.egress !== DIRECT ? form.egress : undefined))
@@ -97,6 +100,36 @@ const saving = ref(false)
 const steps = ref<CheckStepDTO[]>([])
 const testError = ref('')
 const testAdvice = ref('')
+
+/* ---------- 权限自检 ---------- */
+
+const permReport = ref<PermReportDTO | null>(null)
+const permLoading = ref(false)
+const permError = ref('')
+
+function draftBody() {
+  return {
+    tenancyOcid: form.tenancy,
+    userOcid: form.user,
+    fingerprint: form.fingerprint,
+    privateKeyPem: form.key,
+    region: form.region,
+    proxyId: proxyId.value
+  }
+}
+
+/** 连接测试通过后接着查权限：凭据都不通时查权限没有意义。 */
+async function runPermCheck() {
+  permLoading.value = true
+  permError.value = ''
+  try {
+    permReport.value = (await accountsApi.checkDraftPermissions(draftBody())).report
+  } catch (err) {
+    permError.value = errorText(err)
+  } finally {
+    permLoading.value = false
+  }
+}
 
 /**
  * 一个交互消除 80% 的配置错误：整段粘贴 → 自动填充。
@@ -182,16 +215,13 @@ async function runTest() {
   steps.value = []
   testError.value = ''
   testAdvice.value = ''
+  permReport.value = null
+  permError.value = ''
 
+  let passed = false
   try {
-    const result = await accountsApi.checkDraft({
-      tenancyOcid: form.tenancy,
-      userOcid: form.user,
-      fingerprint: form.fingerprint,
-      privateKeyPem: form.key,
-      region: form.region,
-      proxyId: proxyId.value
-    })
+    const result = await accountsApi.checkDraft(draftBody())
+    passed = result.ok
     steps.value = result.steps
     if (!result.ok) {
       testError.value = [result.errorCode, result.errorText].filter(Boolean).join(' · ')
@@ -206,6 +236,7 @@ async function runTest() {
   } finally {
     testing.value = false
   }
+  if (passed) void runPermCheck()
 }
 
 async function save() {
@@ -251,6 +282,8 @@ async function save() {
     </header>
 
     <DrawerBody>
+      <ApiSetupGuide />
+
       <SectionCard :title="t.addAcctProxy.add.pasteTitle" :note="t.addAcctProxy.add.pasteNote">
         <div class="pad">
           <textarea v-model="form.paste" class="textarea paste" spellcheck="false"
@@ -342,6 +375,16 @@ async function save() {
           </button>
         </template>
         <CheckList :items="checks" />
+      </SectionCard>
+
+      <SectionCard :title="t.perm.title" :note="t.perm.draftNote">
+        <template v-if="permReport || permError" #action>
+          <button class="btn btn--sm" :disabled="permLoading" @click="runPermCheck()">
+            {{ permLoading ? t.perm.running : t.perm.rerun }}
+          </button>
+        </template>
+        <CheckList v-if="permError" :items="[{ tone: 'fail', text: `${t.perm.failed} · ${permError}` }]" />
+        <PermissionReport v-else :report="permReport" :loading="permLoading" :empty-text="t.perm.draftWait" />
       </SectionCard>
     </DrawerBody>
 

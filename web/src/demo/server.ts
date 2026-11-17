@@ -13,6 +13,7 @@
  *   - 没有实现的接口统一返回 demo_unsupported，页面会提示而不是白屏。
  */
 import { ApiError, AUTH_REQUIRED_EVENT } from '@/api/http'
+import { demoPermReport } from './perm'
 import type { ServerEvent, ServerEventType, EventHandlers } from '@/api/events'
 import type * as D from '@/api/types'
 import { staticData } from './static'
@@ -88,6 +89,17 @@ const accounts: Acct[] = [
   })
 ]
 const acctById = (id: string) => accounts.find(a => a.id === id) ?? fail(404, 'not_found', L('账号不存在', 'Account not found'))
+
+/* 权限自检：东京策略齐全，新加坡写成了 use，凤凰城读不到策略；法兰克福凭据失效，从未检查。 */
+const permScenario: Record<string, 'full' | 'use' | 'probe'> = { 'acc-tok': 'full', 'acc-sin': 'use', 'acc-pho': 'probe' }
+const permReports = new Map<string, D.PermReportDTO>()
+function runPermCheck(a: Acct, at = iso(Date.now())): D.PermReportDTO {
+  const r = demoPermReport(permScenario[a.id] ?? 'full', L, at)
+  permReports.set(a.id, r)
+  a.permissions = r.summary
+  return r
+}
+for (const a of accounts) if (permScenario[a.id]) runPermCheck(a, ago(3 * HOUR))
 
 /* ---------- 网络（每个账号 × 区域一套） ---------- */
 
@@ -588,6 +600,15 @@ on('DELETE', '/api/accounts/{id}', (p, q) => {
   log('account_delete', a.alias, a.id)
   return { ok: true }
 })
+// 必须排在 {id}/permissions 前面：路由按登记顺序匹配，{id} 会吞掉 check-draft。
+on('POST', '/api/accounts/check-draft/permissions', () => ({ report: demoPermReport('use', L, iso(Date.now())) }))
+on('GET', '/api/accounts/{id}/permissions', p => {
+  const a = acctById(p.id)
+  // 换了语言要重新生成文案：报告里的文字是按生成时的语言写死的。
+  const r = permReports.get(a.id)
+  return { report: r ? demoPermReport(permScenario[a.id] ?? 'full', L, r.checkedAt) : null }
+})
+on('POST', '/api/accounts/{id}/permissions', p => ({ report: runPermCheck(acctById(p.id)) }))
 on('POST', '/api/accounts/{id}/check', p => { const a = acctById(p.id); a.lastCheckedAt = iso(Date.now()); return checkOk(a) })
 on('GET', '/api/accounts/{id}/regions', p => {
   const a = acctById(p.id)

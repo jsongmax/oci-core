@@ -4,7 +4,7 @@ import { t } from '@/i18n'
 import { computed, ref, watch } from 'vue'
 import { useStore } from '@/store'
 import { acctColor, pct, usageTone } from '@/lib/format'
-import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
+import { accountAgeText, accountStatusText, relativeTime, trialDaysLeft } from '@/lib/adapt'
 import type { Account } from '@/types'
 import MaskedText from '@/components/MaskedText.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -48,6 +48,19 @@ const summary = computed(() => {
   const off = state.accounts.filter(a => a.status === 'disabled').length
   return t.accountsPage.summary(state.accounts.length, err, off)
 })
+
+/**
+ * 权限概要徽标。缺失优先显示（红），其次无法判断（灰），全部可用为绿；
+ * 从未检查过也明说，免得用户以为"没提示 = 没问题"。
+ */
+function permBadge(a: Account): { text: string; tone: 'ok' | 'missing' | 'unknown' | 'none'; title: string } {
+  const p = a.permissions
+  if (!p) return { text: t.perm.cardNone, tone: 'none', title: t.perm.cardNone }
+  const title = t.perm.cardTitle(p.ok, p.missing, p.unknown, relativeTime(p.checkedAt))
+  if (p.missing > 0) return { text: t.perm.cardMissing(p.missing), tone: 'missing', title }
+  if (p.unknown > 0) return { text: t.perm.cardUnknown(p.unknown), tone: 'unknown', title }
+  return { text: t.perm.cardOk, tone: 'ok', title }
+}
 
 const instancesOf = (id: string) => state.instances.filter(i => i.accountId === id && i.state !== 'TERMINATED')
 
@@ -171,8 +184,14 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
             </span>
           </div>
 
-          <footer class="acct__foot" :style="{ color: lampTone[a.status] }">
-            <span>{{ checkIcon[a.status] }}</span><span>{{ accountStatusText(a) }}</span>
+          <footer class="acct__foot">
+            <span class="acct__foot-status" :style="{ color: lampTone[a.status] }">
+              <span>{{ checkIcon[a.status] }}</span><span>{{ accountStatusText(a) }}</span>
+            </span>
+            <button class="perm-badge" :class="`is-${permBadge(a).tone}`" :title="permBadge(a).title"
+                    @click.stop="openDrawer({ kind: 'account', id: a.id, tab: 'permissions' })">
+              {{ permBadge(a).text }}
+            </button>
           </footer>
         </div>
       </article>
@@ -232,8 +251,12 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
           </span>
         </span>
 
-        <span class="cell t-xs" :style="{ color: lampTone[a.status] }">
-          {{ checkIcon[a.status] }} {{ accountStatusText(a) }}
+        <span class="cell lcell">
+          <span class="t-xs" :style="{ color: lampTone[a.status] }">{{ checkIcon[a.status] }} {{ accountStatusText(a) }}</span>
+          <button class="perm-badge perm-badge--inline" :class="`is-${permBadge(a).tone}`" :title="permBadge(a).title"
+                  @click.stop="openDrawer({ kind: 'account', id: a.id, tab: 'permissions' })">
+            {{ permBadge(a).text }}
+          </button>
         </span>
 
         <span class="cell">
@@ -247,6 +270,17 @@ watch(view, v => localStorage.setItem('oci.accountView', v))
 
 <style scoped>
 .head-actions { display: flex; align-items: center; gap: 10px; }
+.acct__foot-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.perm-badge {
+  margin-left: auto; flex: 0 0 auto; border: 0; cursor: pointer;
+  font: inherit; font-size: 11px; line-height: 18px; padding: 0 8px; border-radius: var(--radius-full);
+  color: var(--c-badge); background: var(--bg-badge);
+}
+.perm-badge:hover { filter: brightness(1.1); text-decoration: underline; }
+.perm-badge--inline { margin-left: 0; align-self: flex-start; margin-top: 2px; }
+.perm-badge.is-ok { --c-badge: var(--success); --bg-badge: var(--success-soft); }
+.perm-badge.is-missing { --c-badge: var(--danger); --bg-badge: var(--danger-soft); font-weight: 600; }
+.perm-badge.is-unknown, .perm-badge.is-none { --c-badge: var(--text-secondary); --bg-badge: var(--bg-inset); }
 
 .segmented { display: inline-flex; border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; }
 .segmented__btn {

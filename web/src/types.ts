@@ -1,4 +1,5 @@
 import type { MaskKind } from '@/lib/mask'
+import type { PermSummaryDTO } from '@/api/types'
 
 export type LifecycleState =
   | 'RUNNING' | 'STOPPED' | 'PROVISIONING' | 'STARTING' | 'STOPPING' | 'TERMINATING' | 'TERMINATED'
@@ -49,6 +50,8 @@ export interface Account {
   /** 配额数据来自哪个区域（后端只查主区域），为空表示还没拉到 */
   quotaRegion: string
   createdAt: string
+  /** 最近一次权限自检的概要；从未检查时为 null */
+  permissions?: PermSummaryDTO | null
 }
 
 export interface Instance {

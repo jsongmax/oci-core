@@ -103,6 +103,9 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 			if refreshed, err := s.st.GetAccount(r.Context(), acc.ID); err == nil {
 				resp["account"] = refreshed
 			}
+			if result.OK {
+				s.checkPermissionsAsync(acc)
+			}
 		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
@@ -355,27 +358,35 @@ type checkDraftRequest struct {
 // 选了代理就必须走代理：这是这个租户第一次被访问，用本机 IP 直连一次，
 // 之后再换代理也抹不掉这次记录。
 func (s *Server) handleCheckDraft(w http.ResponseWriter, r *http.Request) {
+	draft, ok := s.decodeDraft(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, accountsvc.CheckDraft(r.Context(), draft))
+}
+
+// decodeDraft 读取草稿凭据；选了代理池里的代理时由服务端解析出地址。
+func (s *Server) decodeDraft(w http.ResponseWriter, r *http.Request) (accountsvc.Draft, bool) {
 	var req checkDraftRequest
 	if !decodeJSON(w, r, &req) {
-		return
+		return accountsvc.Draft{}, false
 	}
 	if req.ProxyID != "" {
 		u, err := s.st.ProxyURL(r.Context(), req.ProxyID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_proxy", i18n.M("api.proxy_unusable", err.Error()))
-			return
+			return accountsvc.Draft{}, false
 		}
 		req.ProxyUrl = u
 	}
-	result := accountsvc.CheckDraft(r.Context(), accountsvc.Draft{
+	return accountsvc.Draft{
 		TenancyOCID:   req.TenancyOcid,
 		UserOCID:      req.UserOcid,
 		Fingerprint:   req.Fingerprint,
 		PrivateKeyPEM: req.PrivateKeyPem,
 		Region:        req.Region,
 		ProxyURL:      req.ProxyUrl,
-	})
-	writeJSON(w, http.StatusOK, result)
+	}, true
 }
 
 // ---- 审计与区域 ----
@@ -497,4 +508,19 @@ func writeOCIError(w http.ResponseWriter, err error) {
 		OciCode: apiErr.Code,
 		Advice:  apiErr.Advice(),
 	})
+}
+
+// writeOCIErrorWithPermHint 与 writeOCIError 相同，但无权限时把笼统建议换成
+// 这项操作具体缺的那条策略——Oracle 的 NotAuthorizedOrNotFound 不会点明缺什么。
+func writeOCIErrorWithPermHint(w http.ResponseWriter, err error, hint string) {
+	if apiErr, ok := ociclient.AsAPIError(err); ok && apiErr.Class == ociclient.ClassNotAuthorized {
+		writeJSON(w, http.StatusForbidden, errorBody{
+			Code:    "oci_error",
+			Message: apiErr.Message,
+			OciCode: apiErr.Code,
+			Advice:  hint,
+		})
+		return
+	}
+	writeOCIError(w, err)
 }

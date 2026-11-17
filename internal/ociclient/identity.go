@@ -154,3 +154,113 @@ func (c *Client) ListAvailabilityDomains(ctx context.Context, region, compartmen
 	}
 	return out, nil
 }
+
+// Policy 是一条 IAM 策略。Statements 是策略语句原文，权限自检靠解析它们推算权限。
+type Policy struct {
+	ID             string   `json:"id"`
+	CompartmentID  string   `json:"compartmentId"`
+	Name           string   `json:"name"`
+	Statements     []string `json:"statements"`
+	LifecycleState string   `json:"lifecycleState"`
+}
+
+// Group 是经典 IAM（默认身份域）里的用户组。
+type Group struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// UserGroupMembership 表示用户属于某个组。
+type UserGroupMembership struct {
+	GroupID        string `json:"groupId"`
+	UserID         string `json:"userId"`
+	LifecycleState string `json:"lifecycleState"`
+}
+
+// ListPolicies 列出某个区间里直接挂载的策略（不含子区间）。
+//
+// 需要 inspect policies（POLICY_READ）。精简权限的 IAM 用户通常没有这项权限，
+// 调用方要把失败当作"无法判断"而不是"账号有问题"。
+func (c *Client) ListPolicies(ctx context.Context, compartmentID string) ([]Policy, error) {
+	if compartmentID == "" {
+		compartmentID = c.creds.TenancyOCID
+	}
+	query := url.Values{}
+	query.Set("compartmentId", compartmentID)
+	query.Set("limit", "100")
+
+	all := make([]Policy, 0)
+	err := listPages(ctx, c, Request{
+		Method:  http.MethodGet,
+		Service: ServiceIdentity,
+		Path:    "/policies",
+		Query:   query,
+	}, 20, func(page []byte) error {
+		var batch []Policy
+		if err := json.Unmarshal(page, &batch); err != nil {
+			return err
+		}
+		all = append(all, batch...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+// ListUserGroupMemberships 列出本客户端用户所属的组。
+//
+// 需要 inspect users 与 inspect groups（USER_INSPECT、GROUP_INSPECT）。
+// 这是经典 IAM 接口，只覆盖默认身份域。
+func (c *Client) ListUserGroupMemberships(ctx context.Context) ([]UserGroupMembership, error) {
+	query := url.Values{}
+	query.Set("compartmentId", c.creds.TenancyOCID)
+	query.Set("userId", c.creds.UserOCID)
+	query.Set("limit", "100")
+
+	all := make([]UserGroupMembership, 0)
+	err := listPages(ctx, c, Request{
+		Method:  http.MethodGet,
+		Service: ServiceIdentity,
+		Path:    "/userGroupMemberships",
+		Query:   query,
+	}, 10, func(page []byte) error {
+		var batch []UserGroupMembership
+		if err := json.Unmarshal(page, &batch); err != nil {
+			return err
+		}
+		all = append(all, batch...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}
+
+// ListGroups 列出租户里的组（经典 IAM / 默认身份域）。需要 inspect groups（GROUP_INSPECT）。
+func (c *Client) ListGroups(ctx context.Context) ([]Group, error) {
+	query := url.Values{}
+	query.Set("compartmentId", c.creds.TenancyOCID)
+	query.Set("limit", "100")
+
+	all := make([]Group, 0)
+	err := listPages(ctx, c, Request{
+		Method:  http.MethodGet,
+		Service: ServiceIdentity,
+		Path:    "/groups",
+		Query:   query,
+	}, 20, func(page []byte) error {
+		var batch []Group
+		if err := json.Unmarshal(page, &batch); err != nil {
+			return err
+		}
+		all = append(all, batch...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return all, nil
+}

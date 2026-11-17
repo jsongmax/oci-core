@@ -63,6 +63,54 @@ export interface AccountDTO {
   tenancyName: string
   createdAt: string
   updatedAt: string
+  /** 最近一次权限自检的概要；从未自检时没有这个字段 */
+  permissions?: PermSummaryDTO | null
+}
+
+/* ---------- 权限自检 ---------- */
+
+export type PermStatusDTO = 'ok' | 'missing' | 'unknown'
+
+export interface PermSummaryDTO {
+  ok: number
+  missing: number
+  unknown: number
+  checkedAt: string
+}
+
+export interface PermNeedDTO {
+  /** 官方权限名，例如 SECURITY_LIST_UPDATE */
+  perm: string
+  /** 单项资源类型，例如 security-lists */
+  type: string
+  /** 包含该权限的最低动词 */
+  verb: string
+  status: PermStatusDTO
+  /** 结论来源：probe 只读探测 / policy 策略解析 */
+  source?: 'probe' | 'policy'
+  /** 依据：探测的接口名，或授予它的策略语句原文 */
+  via?: string
+  reason?: string
+}
+
+export interface PermItemDTO {
+  key: string
+  category: 'compute' | 'network' | 'storage' | 'account'
+  label: string
+  status: PermStatusDTO
+  reason?: string
+  /** 补齐缺失权限的策略语句 */
+  fix?: string[]
+  needs: PermNeedDTO[]
+}
+
+export interface PermReportDTO {
+  checkedAt: string
+  policy: 'ok' | 'partial' | 'unavailable'
+  policyNote?: string[]
+  groups: string[]
+  summary: PermSummaryDTO
+  items: PermItemDTO[]
 }
 
 export interface InstanceDTO {

@@ -211,7 +211,8 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
     fingerprint: dto.fingerprint,
     quota: toQuota(quota),
     quotaRegion: quota?.region ?? '',
-    createdAt: dateText(dto.createdAt)
+    createdAt: dateText(dto.createdAt),
+    permissions: dto.permissions ?? null
   }
 }
 

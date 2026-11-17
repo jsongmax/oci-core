@@ -123,6 +123,9 @@ var migrations = []string{
 	`ALTER TABLE instances ADD COLUMN baseline_ocpu TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE instances ADD COLUMN secondary_ipv4 TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE instances ADD COLUMN secondary_ipv6 TEXT NOT NULL DEFAULT ''`,
+	// 权限自检：概要随账号列表返回，完整报告只在打开详情时读取。
+	`ALTER TABLE accounts ADD COLUMN perm_summary TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE accounts ADD COLUMN perm_report TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {

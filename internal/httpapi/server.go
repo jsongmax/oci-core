@@ -136,6 +136,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/accounts/{id}", s.guard(s.requireAuth(s.handleUpdateAccount)))
 	s.mux.HandleFunc("DELETE /api/accounts/{id}", s.guard(s.requireAuth(s.danger(s.handleDeleteAccount))))
 	s.mux.HandleFunc("POST /api/accounts/{id}/check", s.guard(s.requireAuth(s.handleCheckAccount)))
+	s.mux.HandleFunc("GET /api/accounts/{id}/permissions", s.requireAuth(s.handleGetPermissions))
+	s.mux.HandleFunc("POST /api/accounts/{id}/permissions", s.guard(s.requireAuth(s.handleCheckPermissions)))
 	s.mux.HandleFunc("GET /api/accounts/{id}/regions", s.requireAuth(s.handleAccountRegions))
 	// 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与免费额度用量。只读。
 	s.mux.HandleFunc("GET /api/accounts/{id}/resources", s.requireAuth(s.handleAccountResources))
@@ -148,6 +150,7 @@ func (s *Server) routes() {
 	// 添加账号抽屉的两个辅助接口：粘贴解析与保存前测试。
 	s.mux.HandleFunc("POST /api/accounts/parse-config", s.guard(s.requireAuth(s.handleParseConfig)))
 	s.mux.HandleFunc("POST /api/accounts/check-draft", s.guard(s.requireAuth(s.handleCheckDraft)))
+	s.mux.HandleFunc("POST /api/accounts/check-draft/permissions", s.guard(s.requireAuth(s.handleCheckDraftPermissions)))
 
 	s.mux.HandleFunc("GET /api/audit", s.requireAuth(s.handleListAudit))
 	s.mux.HandleFunc("GET /api/audit/export", s.requireAuth(s.handleExportAudit))

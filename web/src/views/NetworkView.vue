@@ -246,9 +246,9 @@ const ruleRows = computed<RuleRow[]>(() => {
  * OCI 的语义是整体替换而非增量追加，因此必须把当前完整的入站+出站
  * 一起提交——只提交改动的那几条会把其余规则静默删掉。
  */
-async function saveRules(ingress: IngressRuleDTO[], egress: EgressRuleDTO[], successText: string) {
+async function saveRules(ingress: IngressRuleDTO[], egress: EgressRuleDTO[], successText: string): Promise<boolean> {
   const target = selectedList.value
-  if (!target) return
+  if (!target) return false
 
   savingRules.value = true
   try {
@@ -257,9 +257,11 @@ async function saveRules(ingress: IngressRuleDTO[], egress: EgressRuleDTO[], suc
     )
     target.item = { ...updated, allowAllRules: updated.allowAllRules ?? null }
     toast({ tone: 'success', title: successText })
+    return true
   } catch (err) {
     toastError(t.networkPage.saveFailed, err)
     await loadNetwork()
+    return false
   } finally {
     savingRules.value = false
   }
@@ -472,8 +474,10 @@ function addManualRule() {
     } else {
       ingress.push(buildIngress(manual.protocol, cidr, desc, range ?? undefined))
     }
-    void saveRules(ingress, egress, t.networkPage.customAdded)
-    manual.description = ''
+    // 等保存结果再清空：失败时（常见是权限不足）用户还要拿这段描述重试，提前清掉就找不回了。
+    void saveRules(ingress, egress, t.networkPage.customAdded).then(ok => {
+      if (ok) manual.description = ''
+    })
   }
 
   // 入站 + 全网 + 不限端口 = 把所有端口挂到公网上，和模板里那条危险规则等价。

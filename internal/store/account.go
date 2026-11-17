@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,6 +73,10 @@ type Account struct {
 	SubscriptionStartsAt *time.Time `json:"subscriptionStartsAt"`
 	// SubscriptionEndsAt 在试用订阅上就是试用到期日。
 	SubscriptionEndsAt *time.Time `json:"subscriptionEndsAt"`
+
+	// Permissions 是最近一次权限自检的概要（permsvc.Summary 的 JSON），从未自检时为空。
+	// 存成原始 JSON：store 不必认识 permsvc 的类型，里面的 i18n 信封在写响应时展开。
+	Permissions json.RawMessage `json:"permissions,omitempty"`
 }
 
 // EffectiveRegions 返回同步实例时应当遍历的区域列表。
@@ -128,7 +133,7 @@ const accountColumns = `id, alias, code, color_index, tenancy_ocid, user_ocid, f
 	default_region, compartment_ocid, enabled, status, status_message,
 	last_checked_at, created_at, updated_at, subscribed_regions, home_region,
 	email, tenancy_name, payment_model, subscription_state,
-	subscription_starts_at, subscription_ends_at`
+	subscription_starts_at, subscription_ends_at, perm_summary`
 
 // CreateAccount 校验凭据格式、加密私钥并落库。
 //
@@ -577,13 +582,14 @@ func scanAccount(sc rowScanner) (*Account, error) {
 		regionsCSV string
 		subStarts  sql.NullInt64
 		subEnds    sql.NullInt64
+		permSum    string
 	)
 	err := sc.Scan(
 		&a.ID, &a.Alias, &a.Code, &a.ColorIndex, &a.TenancyOCID, &a.UserOCID, &a.Fingerprint,
 		&a.DefaultRegion, &a.CompartmentOCID, &enabled, &a.Status, &a.StatusMessage,
 		&lastCheck, &created, &updated, &regionsCSV, &a.HomeRegion,
 		&a.Email, &a.TenancyName,
-		&a.PaymentModel, &a.SubscriptionState, &subStarts, &subEnds,
+		&a.PaymentModel, &a.SubscriptionState, &subStarts, &subEnds, &permSum,
 	)
 	if err != nil {
 		return nil, err
@@ -594,6 +600,9 @@ func scanAccount(sc rowScanner) (*Account, error) {
 	a.SubscriptionEndsAt = nullUnixToTime(subEnds)
 	a.CreatedAt = unixToTime(created)
 	a.UpdatedAt = unixToTime(updated)
+	if permSum != "" {
+		a.Permissions = json.RawMessage(permSum)
+	}
 	// 区域名里不含逗号，用 CSV 存比 JSON 更省事也更容易人工查看。
 	if regionsCSV != "" {
 		a.SubscribedRegions = strings.Split(regionsCSV, ",")
@@ -606,4 +615,34 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// SetAccountPermissions 保存一次权限自检的概要与完整报告（均为 JSON）。
+func (s *Store) SetAccountPermissions(ctx context.Context, id string, summary, report []byte) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE accounts SET perm_summary = ?, perm_report = ? WHERE id = ?`,
+		string(summary), string(report), id)
+	if err != nil {
+		return fmt.Errorf("store: 保存权限自检结果失败: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AccountPermissions 返回最近一次权限自检的完整报告。从未自检时返回 nil。
+func (s *Store) AccountPermissions(ctx context.Context, id string) (json.RawMessage, error) {
+	var report string
+	err := s.db.QueryRowContext(ctx, `SELECT perm_report FROM accounts WHERE id = ?`, id).Scan(&report)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: 读取权限自检结果失败: %w", err)
+	}
+	if report == "" {
+		return nil, nil
+	}
+	return json.RawMessage(report), nil
 }

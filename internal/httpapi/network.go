@@ -138,7 +138,7 @@ func (s *Server) handleUpdateSecurityList(w http.ResponseWriter, r *http.Request
 	listID := r.PathValue("id")
 	updated, err := client.UpdateSecurityList(r.Context(), region, listID, req.Ingress, req.Egress)
 	if err != nil {
-		writeOCIError(w, err)
+		writeOCIErrorWithPermHint(w, err, i18n.M("oci.net_perm_hint"))
 		return
 	}
 

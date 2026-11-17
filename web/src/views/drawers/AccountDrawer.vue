@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** §4.3.2 账号详情抽屉（720）：概览 / 区域订阅 / 配额 / 权限自检 / 密钥 */
 import { t } from '@/i18n'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from '@/store'
 import { acctColor } from '@/lib/format'
@@ -9,7 +9,7 @@ import { passwordPolicy, type PasswordPolicyDTO } from '@/api'
 import { mask } from '@/lib/mask'
 import { accountAgeText, accountStatusText, trialDaysLeft } from '@/lib/adapt'
 import { ALWAYS_FREE, armFreeText } from '@/lib/freetier'
-import { accounts as accountsApi, type CheckStepDTO } from '@/api'
+import { accounts as accountsApi, errorText, type CheckStepDTO, type PermReportDTO } from '@/api'
 import type { CheckItem } from '@/types'
 import AppDrawer from '@/components/AppDrawer.vue'
 import DrawerHeader from '@/components/DrawerHeader.vue'
@@ -22,6 +22,7 @@ import CodeBlock from '@/components/CodeBlock.vue'
 import QuotaMeter from '@/components/QuotaMeter.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import CredentialField from '@/components/CredentialField.vue'
+import PermissionReport from '@/components/PermissionReport.vue'
 
 const props = defineProps<{ id: string; tab?: string }>()
 const router = useRouter()
@@ -183,6 +184,44 @@ const drawerSub = computed(() => {
   return `ocid1.tenancy…${tail} · ${mail}`
 })
 const active = ref(props.tab && TABS.includes(props.tab) ? props.tab : 'overview')
+
+/* ---------- 功能权限 ---------- */
+
+const permReport = ref<PermReportDTO | null>(null)
+const permLoaded = ref(false)
+const permLoading = ref(false)
+const permError = ref('')
+
+/** 打开「权限自检」页时读上次的结果；从未检查过就留空，等用户点按钮。 */
+async function loadPermissions() {
+  permError.value = ''
+  try {
+    permReport.value = (await accountsApi.permissions(props.id)).report
+  } catch (err) {
+    permError.value = errorText(err)
+  } finally {
+    permLoaded.value = true
+  }
+}
+
+async function runPermissions() {
+  permLoading.value = true
+  permError.value = ''
+  try {
+    permReport.value = (await accountsApi.checkPermissions(props.id)).report
+    // 账号卡片上的概要来自账号列表，刷新一次。
+    await loadAccounts()
+  } catch (err) {
+    permError.value = errorText(err)
+    toastError(t.perm.failed, err)
+  } finally {
+    permLoading.value = false
+  }
+}
+
+watch([active, () => props.id], ([tab]) => {
+  if (tab === 'permissions') void loadPermissions()
+}, { immediate: true })
 
 const account = computed(() => state.accounts.find(a => a.id === props.id))
 const color = computed(() => (account.value ? acctColor(account.value.colorIndex) : 'var(--border-default)'))
@@ -441,6 +480,16 @@ function askDelete() {
       </template>
 
       <template v-else-if="active === 'permissions'">
+        <SectionCard :title="t.perm.title" :note="t.perm.note">
+          <template #action>
+            <button class="btn btn--sm" :disabled="permLoading || !permLoaded" @click="runPermissions()">
+              {{ permLoading ? t.perm.running : permReport ? t.perm.rerun : t.perm.run }}
+            </button>
+          </template>
+          <CheckList v-if="permError && !permReport" :items="[{ tone: 'fail', text: `${t.perm.failed} · ${permError}` }]" />
+          <PermissionReport v-else :report="permReport" :loading="permLoading || !permLoaded" :empty-text="t.perm.notRun" />
+        </SectionCard>
+
         <SectionCard :title="t.acctDrawer.credCheck" :note="t.acctDrawer.credCheckNote">
           <template #action>
             <button class="btn btn--sm" :disabled="checking" @click="recheck()">
@@ -453,8 +502,7 @@ function askDelete() {
         <SectionCard :title="t.acctDrawer.minPerms"
                      :note="t.acctDrawer.minPermsNote">
           <CheckList :items="[
-            { tone: 'info', text: t.acctDrawer.permInspect },
-            { tone: 'info', text: t.acctDrawer.permUse },
+            { tone: 'warn', text: t.acctDrawer.permUseWarn },
             { tone: 'info', text: t.acctDrawer.permManage },
             { tone: 'info', text: t.acctDrawer.permNet },
             { tone: 'info', text: t.acctDrawer.permVol },
