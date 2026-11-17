@@ -392,7 +392,7 @@ ci: 多架构镜像推送到 GHCR
 
 这个面板持有你**所有** Oracle 租户的完整控制权。
 
-1. **为本工具创建专用 IAM 用户**，只授予 compute / vcn / block-storage 的必要策略，不要用 Administrators 组的密钥。**这一条比其余所有加固加起来都管用。** 账号详情的「权限自检」页有可直接照抄的策略示例。账单页额外需要 `read usage-report in tenancy`——**不想让它读账单就别加这条**，其余功能不受影响。容量监控与守候的容量预检需要 `manage compute-capacity-reports in tenancy`，它不含在 `instance-family` 里。组名带空格时要加引号，例如 `Allow group 'OCI Core' to …`。
+1. **为本工具创建专用 IAM 用户**，只授予 compute / vcn / block-storage 的必要策略，不要用 Administrators 组的密钥。**这一条比其余所有加固加起来都管用。** 添加账号页顶部的「如何创建 API 密钥并配置权限」有完整步骤和可直接复制的策略语句。实例、网络、卷都必须用 `manage` 动词：`use` 不包含创建与终止实例、修改安全列表、创建 IPv6 地址等权限。添加账号时，连接测试通过后会自动做一次权限自检，逐项列出可用、缺失（标红并给出补齐语句）或无法判断的功能；之后可在账号详情的「权限自检」页重新检查。自检要读取策略，需要 `inspect policies`、`inspect users`、`inspect groups in tenancy`；不加这三条也能正常使用，只是多数项会显示「无法判断」。账单页额外需要 `read usage-report in tenancy`——**不想让它读账单就别加这条**，其余功能不受影响。容量监控与守候的容量预检需要 `manage compute-capacity-reports in tenancy`，它不含在 `instance-family` 里。组名带空格时要加引号，例如 `Allow group 'OCI Core' to …`。
 2. **默认只监听回环。** 远程访问请置于 TLS 反向代理之后。
 3. **备份 `master.key`。** 它是所有已存 OCI 私钥的唯一解密钥匙，丢失后账号需全部重新录入；同时它绝不能进版本库（`.gitignore` 已覆盖）。
 4. **启用两步验证。** 首次设置后会直接引导绑定，用验证器扫码即可。

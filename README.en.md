@@ -388,7 +388,15 @@ This panel holds full control over **all** of your Oracle tenancies.
 1. **Create a dedicated IAM user for this tool** with only the compute / vcn / block-storage
    policies it needs. Do not use a key from the Administrators group.
    **This single step matters more than everything else combined.**
-   The account detail page has a "permission self-check" tab with copy-pasteable policy examples.
+   The "How to create an API key and set up permissions" panel at the top of the add-account page
+   has the full steps and copy-pasteable policy statements. Instances, networking and volumes all
+   need the `manage` verb: `use` does not include launching and terminating instances, updating
+   security lists or creating IPv6 addresses. After the connection test passes, adding an account
+   runs a permission self-check that marks each feature as available, missing (in red, with the
+   statements that fix it) or undetermined; run it again from the account's "Permissions" tab.
+   The self-check reads policies, which needs `inspect policies`, `inspect users` and
+   `inspect groups in tenancy`; without them everything still works, but most items show
+   undetermined.
    The billing page additionally needs `read usage-report in tenancy` — **leave it out if you
    would rather the tool could not read your bill**; nothing else is affected.
    The capacity monitor and the hunter's capacity pre-check need `manage compute-capacity-reports
