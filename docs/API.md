@@ -111,7 +111,7 @@ X-OCI-Tools: 1
 | GET | `/api/accounts/{id}/regions` | 该账号已订阅的区域 |
 | GET | `/api/accounts/{id}/resources` | 资源盘点：各区域的卷、公网 IP、控制台连接、VCN 与额度用量 |
 | DELETE | `/api/accounts/{id}/resources/volumes/{volumeId}?region=&kind=&confirm={name}` | 删除未挂载的引导卷 / 块存储，**需回传卷名** |
-| DELETE | `/api/accounts/{id}/resources/public-ips/{ipId}?region=&confirm={ip}` | 释放未绑定的保留 IP，**需回传 IP 地址** |
+| DELETE | `/api/accounts/{id}/resources/public-ips/{ipId}?region=&confirm={ip}` | 释放未绑定的预留 IP，**需回传 IP 地址** |
 | DELETE | `/api/accounts/{id}/resources/console-connections/{connId}?region=&confirm=true` | 删除串行控制台连接 |
 | POST | `/api/accounts/parse-config` | 解析粘贴的 OCI 配置 |
 | POST | `/api/accounts/check-draft` | 保存前测试凭据 |
@@ -187,7 +187,12 @@ X-OCI-Tools: 1
 | DELETE | `/api/instances/{ocid}?confirm={name}` | 终止，**需回传实例名** |
 | POST | `/api/instances/{ocid}/replace-boot-volume` | 用镜像替换引导卷（重装系统），**需回传实例名** |
 | POST | `/api/instances/{ocid}/dismiss-error` | 清除该行的错误提示 |
-| POST | `/api/instances/{ocid}/change-ip?confirm=true&vnicId=` | 更换公网 IP；`vnicId` 留空为主网卡，网卡没有公网 IP 时即分配一个 |
+| POST | `/api/instances/{ocid}/change-ip?confirm={true\|oldIp}&vnicId=&privateIpId=&allowReserved=` | 更换/分配公网 IP（后台任务）；更换现有预留 IP 时须传 `allowReserved=true&confirm={原预留IP}` |
+| POST | `/api/instances/{ocid}/bind-reserved-ip?confirm=true` | 将已有空闲预留 IP 绑定到实例的主/辅助私网 IP 槽（后台任务） |
+| POST | `/api/instances/{ocid}/switch-ephemeral-ip?confirm=true` | 将主/附属网卡的主私网 IP 槽切回临时 IP，原预留 IP 无损解绑回空闲池（后台任务） |
+| POST | `/api/instances/{ocid}/unassign-ip?confirm=true` | 取消绑定指定私网 IP 槽的公网 IP（临时 IP 释放，预留 IP 无损解绑） |
+| POST | `/api/instances/{ocid}/vnics/{vnicId}/private-ips` | 为指定网卡创建一个辅助私网 IPv4（`displayName`、`ipAddress` 均可选） |
+| DELETE | `/api/instances/{ocid}/vnics/{vnicId}/private-ips/{privateIpId}?confirm=true` | 释放辅助私网 IP（若已绑定预留公网 IP 会先无损解绑回空闲池） |
 | POST | `/api/instances/{ocid}/vnics/{vnicId}/ipv6` | 给指定网卡再分配一个 IPv6（已有地址也照样新分配，后台任务） |
 | POST | `/api/instances/{ocid}/enable-ipv6` | 启用 IPv6 |
 | DELETE | `/api/instances/{ocid}/ipv6?address=&confirm=true` | 移除网卡上的一个 IPv6 地址（后台任务） |
@@ -300,6 +305,8 @@ Oracle 用提交的公钥鉴权，**本工具不代管任何 SSH 私钥**。同�
 |---|---|
 | `instance.launch` | `POST /api/launch`（等到实例 RUNNING 才算完成） |
 | `instance.change_ip` | `POST /api/instances/{ocid}/change-ip` |
+| `instance.bind_ip` | `POST /api/instances/{ocid}/bind-reserved-ip` |
+| `instance.switch_ephemeral_ip` | `POST /api/instances/{ocid}/switch-ephemeral-ip` |
 | `instance.reshape` | `POST /api/instances/{ocid}/reshape`（运行中的实例会等 Oracle 重启落定） |
 | `instance.terminate` | `DELETE /api/instances/{ocid}` |
 | `instance.enable_ipv6` | `POST /api/instances/{ocid}/enable-ipv6` |
@@ -404,7 +411,9 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 | GET | `/api/network/security-lists` `?vcnId=` |
 | PUT | `/api/network/security-lists/{id}` |
 | GET | `/api/network/rule-templates` |
-| GET | `/api/network/public-ips` `?scope=REGION\|AVAILABILITY_DOMAIN` |
+| GET | `/api/network/public-ips` `?scope=REGION\|AVAILABILITY_DOMAIN\|ALL\|RESERVED` |
+| POST | `/api/network/reserved-ips` |
+| POST | `/api/network/reserved-ips/{id}/unbind` `?confirm=true` |
 | POST | `/api/network/ensure` `?ipv6=true` |
 
 均需 `?accountId=`。
@@ -424,7 +433,7 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 **`GET /api/accounts/{id}/resources`** — `?region=` 只看一个区域（默认全部已订阅区域），`?refresh=true` 绕过 2 分钟缓存
 
 只读。返回 `instances`（来自实例缓存）、`volumes`（引导卷与块存储，`attachedTo` 为空表示未挂载；
-只认 `ATTACHED` / `ATTACHING` 的挂载关系，分离过的历史关系不算）、`publicIps`（临时与保留，
+只认 `ATTACHED` / `ATTACHING` 的挂载关系，分离过的历史关系不算）、`publicIps`（临时与预留，
 `assigned` 表示是否绑定，`instance` 按地址对照实例缓存得出）、`consoleConnections`、
 `vcns`（`internetGateway` 为 `null` 表示没有互联网网关）、`usage`（按资源清单算出的用量）、
 `freeTier`（永久免费参考额度与核对日期）、`quota`（Oracle 真实限额，仅主区域）。
@@ -433,15 +442,45 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 `unknown`（尚未识别，按免费号对照）。
 
 清理接口都会先在服务端重新确认资源确实闲置，不依赖资源页的缓存：卷仍挂在实例上返回 409 `volume_attached`，
-状态不是 `AVAILABLE` 返回 409 `volume_busy`；保留 IP 仍绑定返回 409 `ip_assigned`，临时 IP 返回 400 `not_reserved`
-（临时 IP 请在实例上更换）。删卷与释放保留 IP 不可恢复，需要两步验证复核（若已启用）。成功后清除该账号的资源缓存。
+状态不是 `AVAILABLE` 返回 409 `volume_busy`；预留 IP 仍绑定返回 409 `ip_assigned`，临时 IP 返回 400 `not_reserved`
+（临时 IP 请在实例上更换）。删卷与释放预留 IP 不可恢复，需要两步验证复核（若已启用）。成功后清除该账号的资源缓存。
 
 **`POST /api/instances/{ocid}/console`** 已有活跃连接时，公钥指纹一致则直接复用；不一致则删除旧连接、等它消失后
 用新公钥重建，响应带 `replaced: true`。
 
-**`POST /api/instances/{ocid}/change-ip?confirm=true`**
+**`POST /api/instances/{ocid}/change-ip`**（异步后台任务，`instance.change_ip`）
 
-不带 `confirm=true` 返回 `confirm_required` 与后果说明。通过后返回 202 与任务（`instance.change_ip`），`result` 为 `{ "oldIp", "newIp" }`。保留 IP 会被拒绝（任务失败）——删掉就永久释放了。
+- 查询参数：`vnicId`（留空为主网卡）、`privateIpId`（留空为主私网 IP；辅助私网 IP 按 OCI 规则仅支持预留 IP）、`allowReserved=true`（仅在更换已有预留 IP 时传）、`confirm`（普通更换/分配传 `true`；`allowReserved=true` 时必须回传原预留 IP 地址，L3 确认）。
+- 可选 JSON 请求体：`{ "expectPublicIpId": "", "expectPublicIp": "" }`（乐观并发锁，传入空串表示预期该槽位无公网 IP；与 OCI 实时状态不符时失败并返回状态已变更错误）。
+- 响应：202 与任务对象，`result` 为 `{ "oldIp", "newIp", "lifetime", "privateIp", "isPrimary", "isPrimaryVnic" }`。更换已有预留 IP 优先走「先建新 → 解旧 → 绑新 → 删旧」并在中途失败时回滚；仅配额打满时回退先删后建。实例详情中的 `vnics[].publicIpUnknown` / `secondaryIps[].publicIpUnknown` 为 `true` 时表示公网 IP 状态查询失败，前端会暂停操作以防误删。
+
+**`POST /api/instances/{ocid}/bind-reserved-ip?confirm=true`**（异步后台任务，`instance.bind_ip`）
+
+- 请求体：`{ "reservedIpId": "ocid1.publicip…", "vnicId": "", "privateIpId": "", "expectPublicIpId": "", "expectPublicIp": "" }`。
+- 校验目标预留 IP 为 `AVAILABLE`；若目标槽位已有临时 IP 会先释放，已有预留 IP 会先无损解绑并轮询至 `AVAILABLE`；若后续绑定失败会自动将原预留 IP 回滚绑回。`result` 为 `{ "oldIp", "oldLifetime", "newIp", "publicIpId", "privateIp", "isPrimary" }`。
+
+**`POST /api/instances/{ocid}/switch-ephemeral-ip?confirm=true`**（异步后台任务，`instance.switch_ephemeral_ip`）
+
+- 请求体：`{ "vnicId": "", "privateIpId": "", "expectPublicIpId": "", "expectPublicIp": "" }`（仅允许主私网 IP）。
+- 无损解绑原预留 IP 并轮询至 `AVAILABLE`，再在私网 IP 所在区间申请临时公网 IP；申请失败时自动回滚重绑原预留 IP。`result` 为 `{ "oldIp", "oldLifetime", "newIp", "lifetime", "privateIp", "isPrimary" }`。
+
+**`POST /api/instances/{ocid}/unassign-ip?confirm=true`**（同步，持有实例锁）
+
+- 请求体：`{ "vnicId": "", "privateIpId": "", "expectPublicIpId": "", "expectPublicIp": "" }`。乐观锁不符返回 `409 state_changed`。
+- 临时 IP 删除释放，预留 IP 无损解绑并轮询至 `AVAILABLE`。返回 `{ "oldIp", "lifetime", "publicIpId", "privateIp", "isPrimary" }`。
+
+**`POST /api/instances/{ocid}/vnics/{vnicId}/private-ips`**（同步，持有实例锁）
+
+- 请求体：`{ "displayName": "", "ipAddress": "" }`（均可选，`ipAddress` 留空由子网自动分配）。返回 201 `{ "privateIpId", "privateIp", "vnicId", "displayName" }`。
+
+**`DELETE /api/instances/{ocid}/vnics/{vnicId}/private-ips/{privateIpId}?confirm=true`**（同步，持有实例锁）
+
+- 拒绝删除主私网 IP（400 `primary_private_ip`）。若槽位已绑定预留公网 IP 会先无损解绑并轮询至 `AVAILABLE` 再删除私网 IP（删除失败时自动回滚重绑）。返回 `{ "privateIpId", "privateIp", "unboundPublicIp", "publicIpLifetime" }`。
+
+**`POST /api/network/reserved-ips`** / **`POST /api/network/reserved-ips/{id}/unbind?confirm=true`**（同步）
+
+- `POST /api/network/reserved-ips?accountId=&region=` 请求体 `{ "displayName": "" }`，在目标区域创建空闲预留公网 IP（201）。
+- `POST /api/network/reserved-ips/{id}/unbind?accountId=&region=&confirm=true` 定位受影响实例并持有实例锁，解绑并轮询至 `AVAILABLE` 后刷新缓存。
 
 **`POST /api/instances/{ocid}/vnics`**
 

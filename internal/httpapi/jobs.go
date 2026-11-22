@@ -17,6 +17,8 @@ import (
 const (
 	jobLaunch       = "instance.launch"
 	jobChangeIP     = "instance.change_ip"
+	jobBindIP       = "instance.bind_ip"
+	jobSwitchEphIP  = "instance.switch_ephemeral_ip"
 	jobReshape      = "instance.reshape"
 	jobTerminate    = "instance.terminate"
 	jobReplaceBoot  = "instance.replace_boot_volume"

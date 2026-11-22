@@ -473,7 +473,8 @@ func (s *Service) refreshNetwork(ctx context.Context, cached *store.Instance, cl
 	fresh.VnicID = vnic.ID
 	fresh.SubnetID = vnic.SubnetID
 	fresh.IPv6 = strings.Join(vnic.Ipv6Addresses, ",")
-	fresh.SecondaryIPv4, fresh.SecondaryIPv6 = secondaryIPs(secondary)
+	extraV4 := secondaryPrivatePublicIPs(ctx, client, cached.Region, vnic, secondary, nil)
+	fresh.SecondaryIPv4, fresh.SecondaryIPv6 = secondaryIPs(vnic.PublicIP, secondary, extraV4)
 	if err := s.st.UpsertInstance(ctx, *fresh); err != nil {
 		return
 	}
