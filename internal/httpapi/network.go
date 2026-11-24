@@ -3,8 +3,12 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/netip"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"ocicore/internal/i18n"
@@ -171,14 +175,45 @@ func (s *Server) handleRuleTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"templates": netsvc.RuleTemplates()})
 }
 
+// boundPublicIP 是带实例与网卡/私网归属信息的公网 IPv4，供网络页「公网 IP」列表使用。
+type boundPublicIP struct {
+	ociclient.PublicIP
+	InstanceID         string `json:"instanceId,omitempty"`
+	InstanceName       string `json:"instanceName,omitempty"`
+	InstanceState      string `json:"instanceState,omitempty"`
+	VnicID             string `json:"vnicId,omitempty"`
+	VnicName           string `json:"vnicName,omitempty"`
+	IsPrimaryVnic      bool   `json:"isPrimaryVnic"`
+	PrivateIP          string `json:"privateIp,omitempty"`
+	IsPrimaryPrivateIP bool   `json:"isPrimaryPrivateIp"`
+}
+
 func (s *Server) handleListPublicIPs(w http.ResponseWriter, r *http.Request) {
 	client, acc, region, ok := s.resolveTarget(w, r)
 	if !ok {
 		return
 	}
-	scope := r.URL.Query().Get("scope")
+	scope := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("scope")))
 	if scope == "" {
 		scope = "REGION" // 保留 IP
+	}
+	if scope == "ALL" {
+		items, err := s.listBoundPublicIPs(r.Context(), client, acc, region)
+		if err != nil {
+			writeOCIError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"publicIps": items})
+		return
+	}
+	if scope == "RESERVED" {
+		items, err := s.listReservedPublicIPs(r.Context(), client, acc, region)
+		if err != nil {
+			writeOCIError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"publicIps": items})
+		return
 	}
 	ips, err := client.ListPublicIPs(r.Context(), region, acc.CompartmentOCID,
 		scope, r.URL.Query().Get("availabilityDomain"))
@@ -187,6 +222,1019 @@ func (s *Server) handleListPublicIPs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"publicIps": ips})
+}
+
+func boundPublicIPPrivateID(pub ociclient.PublicIP) string {
+	if pub.PrivateIPID != "" {
+		return pub.PrivateIPID
+	}
+	if strings.HasPrefix(pub.AssignedEntityID, "ocid1.privateip.") {
+		return pub.AssignedEntityID
+	}
+	return ""
+}
+
+func compareIPAddr(a, b string) int {
+	addrA, errA := netip.ParseAddr(a)
+	addrB, errB := netip.ParseAddr(b)
+	if errA == nil && errB == nil {
+		return addrA.Compare(addrB)
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func (s *Server) refreshInstanceAfterIPMutation(ctx context.Context, instID, accountID string) {
+	rfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if s.instances != nil && instID != "" {
+		_ = s.instances.RefreshNetwork(rfCtx, instID)
+	}
+	if s.resources != nil && accountID != "" {
+		s.resources.invalidate(accountID)
+	}
+}
+
+// resolveBoundReservedPrivateIPs 解析已绑定预留 IP 对应的私网槽位。
+// 已命中实例主公网 IP 的预留 IP 直接复用缓存信息，避免多余的 GetPrivateIP 调用；
+// 单个 GetPrivateIP 失败时不回退到全区 VNIC 串行 ListPrivateIPs，防止触发限流放大。
+func resolveBoundReservedPrivateIPs(ctx context.Context, client *ociclient.Client, region string,
+	boundReserved []ociclient.PublicIP, instByPrimaryPub map[string]store.Instance) map[string]ociclient.PrivateIP {
+
+	privByID := make(map[string]ociclient.PrivateIP, len(boundReserved))
+	toLookup := make([]string, 0, len(boundReserved))
+	for _, pub := range boundReserved {
+		privID := boundPublicIPPrivateID(pub)
+		if privID == "" {
+			continue
+		}
+		if inst, ok := instByPrimaryPub[pub.IPAddress]; ok && inst.VnicID != "" {
+			privByID[privID] = ociclient.PrivateIP{
+				ID:        privID,
+				VnicID:    inst.VnicID,
+				IPAddress: inst.PrivateIP,
+				IsPrimary: true,
+			}
+			continue
+		}
+		toLookup = append(toLookup, privID)
+	}
+	if len(toLookup) == 0 {
+		return privByID
+	}
+
+	var (
+		privMu  sync.Mutex
+		privWG  sync.WaitGroup
+		privSem = make(chan struct{}, 4)
+	)
+	for _, privID := range toLookup {
+		privWG.Add(1)
+		go func(privID string) {
+			defer privWG.Done()
+			privSem <- struct{}{}
+			defer func() { <-privSem }()
+			priv, err := client.GetPrivateIP(ctx, region, privID)
+			if err != nil || priv == nil {
+				return
+			}
+			privMu.Lock()
+			privByID[privID] = *priv
+			privMu.Unlock()
+		}(privID)
+	}
+	privWG.Wait()
+	return privByID
+}
+
+func (s *Server) listBoundPublicIPs(ctx context.Context, client *ociclient.Client, acc *store.Account, region string) ([]boundPublicIP, error) {
+	insts, err := s.st.ListInstances(ctx, store.InstanceFilter{
+		AccountIDs: []string{acc.ID},
+		Regions:    []string{region},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(insts) == 0 {
+		return make([]boundPublicIP, 0), nil
+	}
+
+	reserved, err := client.ListPublicIPs(ctx, region, acc.CompartmentOCID, "REGION", "")
+	if err != nil {
+		return nil, err
+	}
+
+	reservedByIP := make(map[string]ociclient.PublicIP, len(reserved))
+	boundReserved := make([]ociclient.PublicIP, 0, len(reserved))
+	for _, pub := range reserved {
+		if pub.IPAddress == "" {
+			continue
+		}
+		reservedByIP[pub.IPAddress] = pub
+		if boundPublicIPPrivateID(pub) != "" {
+			boundReserved = append(boundReserved, pub)
+		}
+	}
+
+	instByID := make(map[string]store.Instance, len(insts))
+	instByPrimaryVnic := make(map[string]store.Instance, len(insts))
+	instByPrimaryPub := make(map[string]store.Instance, len(insts))
+	for _, inst := range insts {
+		instByID[inst.ID] = inst
+		if inst.VnicID != "" {
+			instByPrimaryVnic[inst.VnicID] = inst
+		}
+		if inst.PublicIP != "" {
+			instByPrimaryPub[inst.PublicIP] = inst
+		}
+	}
+
+	privByID := resolveBoundReservedPrivateIPs(ctx, client, region, boundReserved, instByPrimaryPub)
+
+	needAttachments := false
+	instNeedSecVnic := make(map[string]bool)
+	unknownVnicIDs := make(map[string]bool)
+	for _, priv := range privByID {
+		if priv.VnicID != "" {
+			if _, ok := instByPrimaryVnic[priv.VnicID]; !ok {
+				needAttachments = true
+				unknownVnicIDs[priv.VnicID] = true
+			}
+		}
+	}
+	for _, inst := range insts {
+		for _, ip := range splitCSV(inst.SecondaryIPv4) {
+			if _, isReserved := reservedByIP[ip]; !isReserved {
+				needAttachments = true
+				instNeedSecVnic[inst.ID] = true
+			}
+		}
+	}
+
+	vnicToInst := make(map[string]store.Instance, len(instByPrimaryVnic))
+	for vnicID, inst := range instByPrimaryVnic {
+		vnicToInst[vnicID] = inst
+	}
+	secVnicsByInst := make(map[string][]ociclient.Vnic)
+	vnicByID := make(map[string]ociclient.Vnic)
+
+	if needAttachments {
+		if atts, err := client.ListVnicAttachments(ctx, region, acc.CompartmentOCID, ""); err == nil {
+			var toFetch []ociclient.VnicAttachment
+			for _, att := range atts {
+				if att.LifecycleState != "ATTACHED" || att.VnicID == "" {
+					continue
+				}
+				inst, ok := instByID[att.InstanceID]
+				if !ok {
+					continue
+				}
+				vnicToInst[att.VnicID] = inst
+				isSecondaryVnic := inst.VnicID == "" || att.VnicID != inst.VnicID
+				if isSecondaryVnic && (instNeedSecVnic[inst.ID] || unknownVnicIDs[att.VnicID]) {
+					toFetch = append(toFetch, att)
+				}
+			}
+			var (
+				vnicMu  sync.Mutex
+				vnicWG  sync.WaitGroup
+				vnicSem = make(chan struct{}, 4)
+			)
+			for _, att := range toFetch {
+				vnicWG.Add(1)
+				go func(att ociclient.VnicAttachment) {
+					defer vnicWG.Done()
+					vnicSem <- struct{}{}
+					defer func() { <-vnicSem }()
+					vnic, err := client.GetVnic(ctx, region, att.VnicID)
+					if err != nil || vnic == nil {
+						return
+					}
+					vnicMu.Lock()
+					vnicByID[vnic.ID] = *vnic
+					if !vnic.IsPrimary {
+						secVnicsByInst[att.InstanceID] = append(secVnicsByInst[att.InstanceID], *vnic)
+					}
+					vnicMu.Unlock()
+				}(att)
+			}
+			vnicWG.Wait()
+		}
+	}
+
+	type resolvedReserved struct {
+		pub  ociclient.PublicIP
+		priv ociclient.PrivateIP
+	}
+	reservedByInst := make(map[string][]resolvedReserved)
+	for _, pub := range boundReserved {
+		privID := boundPublicIPPrivateID(pub)
+		priv, ok := privByID[privID]
+		if !ok || priv.VnicID == "" {
+			continue
+		}
+		inst, ok := vnicToInst[priv.VnicID]
+		if !ok {
+			continue
+		}
+		reservedByInst[inst.ID] = append(reservedByInst[inst.ID], resolvedReserved{pub: pub, priv: priv})
+	}
+
+	out := make([]boundPublicIP, 0, len(insts)+len(boundReserved))
+	for _, inst := range insts {
+		seenIP := make(map[string]bool)
+
+		if inst.PublicIP != "" {
+			row := boundPublicIP{
+				PublicIP: ociclient.PublicIP{
+					ID:             "primary:" + inst.ID,
+					IPAddress:      inst.PublicIP,
+					Lifetime:       ociclient.PublicIPEphemeral,
+					Scope:          "AVAILABILITY_DOMAIN",
+					LifecycleState: "ASSIGNED",
+				},
+				InstanceID:         inst.ID,
+				InstanceName:       inst.DisplayName,
+				InstanceState:      inst.LifecycleState,
+				VnicID:             inst.VnicID,
+				IsPrimaryVnic:      true,
+				PrivateIP:          inst.PrivateIP,
+				IsPrimaryPrivateIP: true,
+			}
+			if pub, ok := reservedByIP[inst.PublicIP]; ok {
+				privID := boundPublicIPPrivateID(pub)
+				if priv, hasPriv := privByID[privID]; !hasPriv || priv.IsPrimary {
+					row.PublicIP = pub
+					row.PrivateIPID = privID
+					if hasPriv && priv.IPAddress != "" {
+						row.PrivateIP = priv.IPAddress
+					}
+				}
+			}
+			out = append(out, row)
+			seenIP[inst.PublicIP] = true
+		}
+
+		secVnics := secVnicsByInst[inst.ID]
+		sort.Slice(secVnics, func(i, j int) bool {
+			if secVnics[i].DisplayName != secVnics[j].DisplayName {
+				return secVnics[i].DisplayName < secVnics[j].DisplayName
+			}
+			return secVnics[i].ID < secVnics[j].ID
+		})
+		for _, vnic := range secVnics {
+			if vnic.PublicIP == "" || seenIP[vnic.PublicIP] {
+				continue
+			}
+			row := boundPublicIP{
+				PublicIP: ociclient.PublicIP{
+					ID:             "vnic:" + vnic.ID,
+					IPAddress:      vnic.PublicIP,
+					Lifetime:       ociclient.PublicIPEphemeral,
+					Scope:          "AVAILABILITY_DOMAIN",
+					LifecycleState: "ASSIGNED",
+				},
+				InstanceID:         inst.ID,
+				InstanceName:       inst.DisplayName,
+				InstanceState:      inst.LifecycleState,
+				VnicID:             vnic.ID,
+				VnicName:           vnic.DisplayName,
+				IsPrimaryVnic:      false,
+				PrivateIP:          vnic.PrivateIP,
+				IsPrimaryPrivateIP: true,
+			}
+			if pub, ok := reservedByIP[vnic.PublicIP]; ok {
+				privID := boundPublicIPPrivateID(pub)
+				if priv, hasPriv := privByID[privID]; !hasPriv || priv.IsPrimary {
+					row.PublicIP = pub
+					row.PrivateIPID = privID
+				}
+			}
+			out = append(out, row)
+			seenIP[vnic.PublicIP] = true
+		}
+
+		extra := reservedByInst[inst.ID]
+		sort.Slice(extra, func(i, j int) bool {
+			iPrimaryVnic := extra[i].priv.VnicID == inst.VnicID
+			jPrimaryVnic := extra[j].priv.VnicID == inst.VnicID
+			if iPrimaryVnic != jPrimaryVnic {
+				return iPrimaryVnic
+			}
+			if extra[i].priv.IPAddress != extra[j].priv.IPAddress {
+				return compareIPAddr(extra[i].priv.IPAddress, extra[j].priv.IPAddress) < 0
+			}
+			return compareIPAddr(extra[i].pub.IPAddress, extra[j].pub.IPAddress) < 0
+		})
+		for _, item := range extra {
+			if seenIP[item.pub.IPAddress] {
+				continue
+			}
+			isPrimaryVnic := inst.VnicID != "" && item.priv.VnicID == inst.VnicID
+			vnicName := ""
+			if vnic, ok := vnicByID[item.priv.VnicID]; ok {
+				isPrimaryVnic = vnic.IsPrimary
+				vnicName = vnic.DisplayName
+			}
+			row := boundPublicIP{
+				PublicIP:           item.pub,
+				InstanceID:         inst.ID,
+				InstanceName:       inst.DisplayName,
+				InstanceState:      inst.LifecycleState,
+				VnicID:             item.priv.VnicID,
+				VnicName:           vnicName,
+				IsPrimaryVnic:      isPrimaryVnic,
+				PrivateIP:          item.priv.IPAddress,
+				IsPrimaryPrivateIP: item.priv.IsPrimary,
+			}
+			row.PrivateIPID = item.priv.ID
+			out = append(out, row)
+			seenIP[item.pub.IPAddress] = true
+		}
+	}
+
+	return out, nil
+}
+
+// listReservedPublicIPs 列出某账号某区域的全部预留公网 IP（含空闲与已绑定），并补齐实例和私网槽位归属。
+func (s *Server) listReservedPublicIPs(ctx context.Context, client *ociclient.Client, acc *store.Account, region string) ([]boundPublicIP, error) {
+	reserved, err := client.ListPublicIPs(ctx, region, acc.CompartmentOCID, "REGION", "")
+	if err != nil {
+		return nil, err
+	}
+	live := make([]ociclient.PublicIP, 0, len(reserved))
+	boundReserved := make([]ociclient.PublicIP, 0, len(reserved))
+	for _, pub := range reserved {
+		if pub.LifecycleState == "TERMINATED" || pub.LifecycleState == "TERMINATING" {
+			continue
+		}
+		live = append(live, pub)
+		if boundPublicIPPrivateID(pub) != "" {
+			boundReserved = append(boundReserved, pub)
+		}
+	}
+	if len(live) == 0 {
+		return make([]boundPublicIP, 0), nil
+	}
+
+	insts, _ := s.st.ListInstances(ctx, store.InstanceFilter{
+		AccountIDs: []string{acc.ID},
+		Regions:    []string{region},
+	})
+	instByID := make(map[string]store.Instance, len(insts))
+	instByPrimaryVnic := make(map[string]store.Instance, len(insts))
+	instByPrimaryPub := make(map[string]store.Instance, len(insts))
+	for _, inst := range insts {
+		instByID[inst.ID] = inst
+		if inst.VnicID != "" {
+			instByPrimaryVnic[inst.VnicID] = inst
+		}
+		if inst.PublicIP != "" {
+			instByPrimaryPub[inst.PublicIP] = inst
+		}
+	}
+
+	privByID := resolveBoundReservedPrivateIPs(ctx, client, region, boundReserved, instByPrimaryPub)
+
+	vnicToInst := make(map[string]store.Instance, len(instByPrimaryVnic))
+	for vnicID, inst := range instByPrimaryVnic {
+		vnicToInst[vnicID] = inst
+	}
+	vnicByID := make(map[string]ociclient.Vnic)
+	unknownVnicIDs := make(map[string]bool)
+	needAttachments := false
+	for _, priv := range privByID {
+		if priv.VnicID != "" {
+			if _, ok := instByPrimaryVnic[priv.VnicID]; !ok {
+				needAttachments = true
+				unknownVnicIDs[priv.VnicID] = true
+			}
+		}
+	}
+	if needAttachments && len(insts) > 0 {
+		if atts, err := client.ListVnicAttachments(ctx, region, acc.CompartmentOCID, ""); err == nil {
+			var toFetch []string
+			for _, att := range atts {
+				if att.LifecycleState != "ATTACHED" || att.VnicID == "" {
+					continue
+				}
+				inst, ok := instByID[att.InstanceID]
+				if !ok {
+					continue
+				}
+				vnicToInst[att.VnicID] = inst
+				if unknownVnicIDs[att.VnicID] {
+					toFetch = append(toFetch, att.VnicID)
+				}
+			}
+			var (
+				vnicMu  sync.Mutex
+				vnicWG  sync.WaitGroup
+				vnicSem = make(chan struct{}, 4)
+			)
+			for _, vnicID := range toFetch {
+				vnicWG.Add(1)
+				go func(vnicID string) {
+					defer vnicWG.Done()
+					vnicSem <- struct{}{}
+					defer func() { <-vnicSem }()
+					if vnic, err := client.GetVnic(ctx, region, vnicID); err == nil && vnic != nil {
+						vnicMu.Lock()
+						vnicByID[vnic.ID] = *vnic
+						vnicMu.Unlock()
+					}
+				}(vnicID)
+			}
+			vnicWG.Wait()
+		}
+	}
+
+	out := make([]boundPublicIP, 0, len(live))
+	for _, pub := range live {
+		privID := boundPublicIPPrivateID(pub)
+		row := boundPublicIP{PublicIP: pub}
+		if privID != "" {
+			row.PrivateIPID = privID
+			if priv, ok := privByID[privID]; ok {
+				row.PrivateIP = priv.IPAddress
+				row.IsPrimaryPrivateIP = priv.IsPrimary
+				row.VnicID = priv.VnicID
+				if inst, ok := vnicToInst[priv.VnicID]; ok {
+					row.InstanceID = inst.ID
+					row.InstanceName = inst.DisplayName
+					row.InstanceState = inst.LifecycleState
+					row.IsPrimaryVnic = inst.VnicID != "" && priv.VnicID == inst.VnicID
+				}
+				if vnic, ok := vnicByID[priv.VnicID]; ok {
+					row.IsPrimaryVnic = vnic.IsPrimary
+					row.VnicName = vnic.DisplayName
+				}
+			}
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		iBound := boundPublicIPPrivateID(out[i].PublicIP) != ""
+		jBound := boundPublicIPPrivateID(out[j].PublicIP) != ""
+		if iBound != jBound {
+			return iBound
+		}
+		return compareIPAddr(out[i].IPAddress, out[j].IPAddress) < 0
+	})
+	return out, nil
+}
+
+type createReservedIPRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+// handleCreateReservedIP 在目标账号区域创建一个空闲的预留公网 IPv4。
+func (s *Server) handleCreateReservedIP(w http.ResponseWriter, r *http.Request) {
+	client, acc, region, ok := s.resolveTarget(w, r)
+	if !ok {
+		return
+	}
+	var req createReservedIPRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	created, err := client.CreatePublicIP(ctx, region, acc.CompartmentOCID,
+		ociclient.PublicIPReserved, "", strings.TrimSpace(req.DisplayName))
+	if err != nil {
+		writeOCIError(w, err)
+		return
+	}
+	s.resources.invalidate(acc.ID)
+	user := userFrom(r.Context())
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "reserved_ip_create", AccountID: acc.ID,
+		Target: created.IPAddress, Detail: orText(created.DisplayName, i18n.M("api.reserved_ip")) + " · " + region, IP: s.clientIP(r),
+	})
+	writeJSON(w, http.StatusCreated, created)
+}
+
+// handleUnbindReservedIP 将预留公网 IP 从当前私网 IP 解绑（不删除预留 IP，回到空闲池）。
+func (s *Server) handleUnbindReservedIP(w http.ResponseWriter, r *http.Request) {
+	client, acc, region, ok := s.resolveTarget(w, r)
+	if !ok {
+		return
+	}
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: i18n.M("api.unbind_reserved_confirm"),
+		})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	ipID := r.PathValue("id")
+	pub, err := client.GetPublicIP(ctx, region, ipID)
+	if err != nil {
+		writeOCIError(w, err)
+		return
+	}
+	if pub.Lifetime != ociclient.PublicIPReserved {
+		writeError(w, http.StatusBadRequest, "not_reserved", i18n.M("api.not_reserved"))
+		return
+	}
+	privID := boundPublicIPPrivateID(*pub)
+	if privID == "" {
+		writeError(w, http.StatusConflict, "not_bound", i18n.M("api.ip_not_bound"))
+		return
+	}
+
+	// 先定位受影响的实例，解绑后同步刷新它的缓存。
+	var affectedInst *store.Instance
+	var affectedPrimary bool
+	if priv, err := client.GetPrivateIP(ctx, region, privID); err == nil && priv != nil && priv.VnicID != "" {
+		affectedPrimary = priv.IsPrimary
+		if insts, err := s.st.ListInstances(ctx, store.InstanceFilter{
+			AccountIDs: []string{acc.ID},
+			Regions:    []string{region},
+		}); err == nil {
+			for idx := range insts {
+				if insts[idx].VnicID == priv.VnicID {
+					affectedInst = &insts[idx]
+					break
+				}
+			}
+			if affectedInst == nil {
+				if atts, err := client.ListVnicAttachments(ctx, region, acc.CompartmentOCID, ""); err == nil {
+					for _, att := range atts {
+						if att.LifecycleState == "ATTACHED" && att.VnicID == priv.VnicID {
+							for idx := range insts {
+								if insts[idx].ID == att.InstanceID {
+									affectedInst = &insts[idx]
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if affectedInst != nil && s.jobs != nil {
+		unlock, lockErr := s.jobs.AcquireKey(ctx, affectedInst.ID)
+		if lockErr != nil {
+			writeError(w, http.StatusRequestTimeout, "lock_timeout", lockErr.Error())
+			return
+		}
+		defer unlock()
+	}
+
+	refreshed := false
+	defer func() {
+		if !refreshed {
+			instID := ""
+			if affectedInst != nil {
+				instID = affectedInst.ID
+			}
+			s.refreshInstanceAfterIPMutation(ctx, instID, acc.ID)
+		}
+	}()
+
+	updated, err := netsvc.UnbindReservedIP(ctx, client, region, pub.ID)
+	if err != nil {
+		writeOCIError(w, err)
+		return
+	}
+
+	if affectedInst != nil {
+		if affectedPrimary && affectedInst.PublicIP == pub.IPAddress {
+			if fresh, err := s.st.GetInstance(ctx, affectedInst.ID); err == nil {
+				fresh.PublicIP = ""
+				if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+					s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+				}
+			}
+		} else {
+			_ = s.instances.RefreshNetwork(ctx, affectedInst.ID)
+		}
+	}
+	s.resources.invalidate(acc.ID)
+	refreshed = true
+
+	user := userFrom(r.Context())
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "reserved_ip_unbind", AccountID: acc.ID,
+		Target: pub.IPAddress, Detail: orText(pub.DisplayName, i18n.M("api.reserved_ip")) + " · " + region, IP: s.clientIP(r),
+	})
+	s.notifier.Dispatch(r.Context(), notify.Message{
+		Event: notify.EventDangerOperation,
+		Title: i18n.M("api.reserved_unbound_title", pub.IPAddress),
+		Body:  i18n.M("api.reserved_unbound_body"),
+		Fields: map[string]string{
+			i18n.M("f.account"): acc.Alias, "IP": pub.IPAddress, i18n.M("f.region"): region, i18n.M("f.operator"): user.Username,
+		},
+	})
+	writeJSON(w, http.StatusOK, updated)
+}
+
+type bindReservedIPRequest struct {
+	ReservedIPID     string  `json:"reservedIpId"`
+	VnicID           string  `json:"vnicId"`
+	PrivateIPID      string  `json:"privateIpId"`
+	ExpectPublicIPID *string `json:"expectPublicIpId,omitempty"`
+	ExpectPublicIP   *string `json:"expectPublicIp,omitempty"`
+}
+
+// handleBindReservedIP 将已有预留公网 IP 绑定到实例的指定私网 IP 槽位（支持从临时 IP 或空槽切换）。
+func (s *Server) handleBindReservedIP(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("id")
+	inst, err := s.st.GetInstance(r.Context(), instanceID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var req bindReservedIPRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.ReservedIPID = strings.TrimSpace(req.ReservedIPID)
+	req.VnicID = strings.TrimSpace(req.VnicID)
+	req.PrivateIPID = strings.TrimSpace(req.PrivateIPID)
+	if req.ReservedIPID == "" {
+		writeError(w, http.StatusBadRequest, "missing_reserved_ip", i18n.M("api.reserved_ip_id_required"))
+		return
+	}
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: i18n.M("api.bind_ip_confirm"),
+		})
+		return
+	}
+
+	vnicID := req.VnicID
+	primaryVnic := vnicID == "" || vnicID == inst.VnicID
+	if primaryVnic {
+		vnicID = inst.VnicID
+	}
+	if vnicID == "" {
+		writeError(w, http.StatusBadRequest, "no_vnic", i18n.M("api.no_vnic_synced"))
+		return
+	}
+
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+	who := s.actorOf(r)
+
+	title := i18n.M("api.bind_ip_title", inst.DisplayName)
+	if req.PrivateIPID != "" {
+		title += i18n.M("api.secondary_ip_suffix")
+	} else if !primaryVnic {
+		title += i18n.M("api.secondary_suffix")
+	}
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobBindIP, Title: title,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		where := i18n.M("api.primary_vnic")
+		if !primaryVnic {
+			p.Step(i18n.M("api.step.check_vnic"))
+			vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+			if err != nil {
+				return jobsvc.Outcome{}, err
+			}
+			where = vnicLabel(vnic)
+		}
+		p.Step(i18n.M("api.step.bind_ip", where))
+		p.Set(25)
+
+		refreshed := false
+		defer func() {
+			if !refreshed {
+				s.refreshInstanceAfterIPMutation(ctx, inst.ID, acc.ID)
+			}
+		}()
+
+		result, err := netsvc.BindReservedIP(ctx, client, inst.Region, vnicID, netsvc.BindReservedIPOptions{
+			PrivateIPID:      req.PrivateIPID,
+			ReservedIPID:     req.ReservedIPID,
+			ExpectPublicIPID: req.ExpectPublicIPID,
+			ExpectPublicIP:   req.ExpectPublicIP,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		p.Step(i18n.M("api.ip_bound_summary", result.NewIP))
+
+		if primaryVnic && result.IsPrimary {
+			if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+				fresh.PublicIP = result.NewIP
+				if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+					s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+				}
+			}
+		} else {
+			_ = s.instances.RefreshNetwork(ctx, inst.ID)
+		}
+		s.resources.invalidate(acc.ID)
+		refreshed = true
+
+		auditWhere := where
+		if !result.IsPrimary && result.PrivateIP != "" {
+			auditWhere = where + " · " + result.PrivateIP
+		}
+		detail := result.NewIP
+		if result.OldIP != "" {
+			detail = result.OldIP + " → " + result.NewIP
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_bind_reserved_ip", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: auditWhere + " · " + detail,
+		})
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event: notify.EventDangerOperation,
+			Title: i18n.M("api.ip_bound_title", inst.DisplayName),
+			Body:  i18n.M("api.ip_bound_body"),
+			Fields: map[string]string{
+				i18n.M("f.instance"): inst.DisplayName,
+				i18n.M("f.old_ip"):   result.OldIP,
+				i18n.M("f.new_ip"):   result.NewIP,
+				i18n.M("f.operator"): who.username,
+			},
+		})
+
+		summary := i18n.M("api.ip_bound_summary", result.NewIP)
+		if result.OldIP != "" {
+			summary = result.OldIP + " → " + result.NewIP
+		}
+		return jobsvc.Outcome{Summary: summary, Result: result}, nil
+	})
+}
+
+type unassignPublicIPRequest struct {
+	VnicID           string  `json:"vnicId"`
+	PrivateIPID      string  `json:"privateIpId"`
+	ExpectPublicIPID *string `json:"expectPublicIpId,omitempty"`
+	ExpectPublicIP   *string `json:"expectPublicIp,omitempty"`
+}
+
+// handleUnassignPublicIP 取消绑定实例指定私网 IP 槽位的公网 IP（临时 IP 删除释放，预留 IP 无损解绑）。
+func (s *Server) handleUnassignPublicIP(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("id")
+	inst, err := s.st.GetInstance(r.Context(), instanceID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var req unassignPublicIPRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: i18n.M("api.unassign_ip_confirm"),
+		})
+		return
+	}
+
+	vnicID := strings.TrimSpace(req.VnicID)
+	privateIPID := strings.TrimSpace(req.PrivateIPID)
+	primaryVnic := vnicID == "" || vnicID == inst.VnicID
+	if primaryVnic {
+		vnicID = inst.VnicID
+	}
+	if vnicID == "" {
+		writeError(w, http.StatusBadRequest, "no_vnic", i18n.M("api.no_vnic_synced"))
+		return
+	}
+
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	if s.jobs != nil {
+		unlock, lockErr := s.jobs.AcquireKey(ctx, inst.ID)
+		if lockErr != nil {
+			writeError(w, http.StatusRequestTimeout, "lock_timeout", lockErr.Error())
+			return
+		}
+		defer unlock()
+	}
+
+	where := i18n.M("api.primary_vnic")
+	if !primaryVnic {
+		vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+		if err != nil {
+			writeOCIError(w, err)
+			return
+		}
+		where = vnicLabel(vnic)
+	}
+
+	refreshed := false
+	defer func() {
+		if !refreshed {
+			s.refreshInstanceAfterIPMutation(ctx, inst.ID, acc.ID)
+		}
+	}()
+
+	result, err := netsvc.UnassignPublicIP(ctx, client, inst.Region, vnicID, netsvc.UnassignPublicIPOptions{
+		PrivateIPID:      privateIPID,
+		ExpectPublicIPID: req.ExpectPublicIPID,
+		ExpectPublicIP:   req.ExpectPublicIP,
+	})
+	if err != nil {
+		if errors.Is(err, netsvc.ErrStateChanged) {
+			writeError(w, http.StatusConflict, "state_changed", err.Error())
+			return
+		}
+		writeOCIError(w, err)
+		return
+	}
+
+	if primaryVnic && result.IsPrimary {
+		if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+			fresh.PublicIP = ""
+			if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+				s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+			}
+		}
+	} else {
+		_ = s.instances.RefreshNetwork(ctx, inst.ID)
+	}
+	s.resources.invalidate(acc.ID)
+	refreshed = true
+
+	user := userFrom(r.Context())
+	auditWhere := where
+	if !result.IsPrimary && result.PrivateIP != "" {
+		auditWhere = where + " · " + result.PrivateIP
+	}
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "instance_unassign_ip", AccountID: inst.AccountID,
+		Target: inst.DisplayName, Detail: auditWhere + " · " + result.OldIP, IP: s.clientIP(r),
+	})
+	bodyKey := "api.ip_unassigned_ephemeral"
+	if result.Lifetime == ociclient.PublicIPReserved {
+		bodyKey = "api.ip_unassigned_reserved"
+	}
+	s.notifier.Dispatch(r.Context(), notify.Message{
+		Event: notify.EventDangerOperation,
+		Title: i18n.M("api.ip_unassigned_title", inst.DisplayName),
+		Body:  i18n.M(bodyKey),
+		Fields: map[string]string{
+			i18n.M("f.instance"):    inst.DisplayName,
+			i18n.M("f.released_ip"): result.OldIP,
+			i18n.M("f.operator"):    user.Username,
+		},
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
+type switchEphemeralIPRequest struct {
+	VnicID           string  `json:"vnicId"`
+	PrivateIPID      string  `json:"privateIpId"`
+	ExpectPublicIPID *string `json:"expectPublicIpId,omitempty"`
+	ExpectPublicIP   *string `json:"expectPublicIp,omitempty"`
+}
+
+// handleSwitchEphemeralIP 将实例网卡的主私网 IP 槽切回临时公网 IP（若当前是预留 IP 会无损解绑回空闲池）。
+func (s *Server) handleSwitchEphemeralIP(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("id")
+	inst, err := s.st.GetInstance(r.Context(), instanceID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var req switchEphemeralIPRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: i18n.M("api.switch_ephemeral_confirm"),
+		})
+		return
+	}
+
+	vnicID := strings.TrimSpace(req.VnicID)
+	privateIPID := strings.TrimSpace(req.PrivateIPID)
+	primaryVnic := vnicID == "" || vnicID == inst.VnicID
+	if primaryVnic {
+		vnicID = inst.VnicID
+	}
+	if vnicID == "" {
+		writeError(w, http.StatusBadRequest, "no_vnic", i18n.M("api.no_vnic_synced"))
+		return
+	}
+
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+	who := s.actorOf(r)
+
+	title := i18n.M("api.switch_ephemeral_title", inst.DisplayName)
+	if !primaryVnic {
+		title += i18n.M("api.secondary_suffix")
+	}
+
+	s.submitJob(w, jobsvc.Spec{
+		Kind: jobSwitchEphIP, Title: title,
+		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
+	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
+		where := i18n.M("api.primary_vnic")
+		if !primaryVnic {
+			p.Step(i18n.M("api.step.check_vnic"))
+			vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+			if err != nil {
+				return jobsvc.Outcome{}, err
+			}
+			where = vnicLabel(vnic)
+		}
+		p.Step(i18n.M("api.step.switch_ephemeral", where))
+		p.Set(25)
+
+		refreshed := false
+		defer func() {
+			if !refreshed {
+				s.refreshInstanceAfterIPMutation(ctx, inst.ID, acc.ID)
+			}
+		}()
+
+		result, err := netsvc.SwitchToEphemeralIP(ctx, client, inst.Region, vnicID, acc.CompartmentOCID, netsvc.SwitchToEphemeralIPOptions{
+			PrivateIPID:      privateIPID,
+			ExpectPublicIPID: req.ExpectPublicIPID,
+			ExpectPublicIP:   req.ExpectPublicIP,
+		})
+		if err != nil {
+			return jobsvc.Outcome{}, err
+		}
+		p.Step(i18n.M("api.ip_switched_ephemeral_summary", result.NewIP))
+
+		if primaryVnic && result.IsPrimary {
+			if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
+				fresh.PublicIP = result.NewIP
+				if err := s.st.UpsertInstance(ctx, *fresh); err == nil {
+					s.instances.Bus().Publish(instanceUpdatedEvent(fresh))
+				}
+			}
+		} else {
+			_ = s.instances.RefreshNetwork(ctx, inst.ID)
+		}
+		s.resources.invalidate(acc.ID)
+		refreshed = true
+
+		detail := result.NewIP
+		if result.OldIP != "" {
+			detail = result.OldIP + " → " + result.NewIP
+		}
+		s.audit(who, store.AuditEntry{
+			Action: "instance_switch_ephemeral_ip", AccountID: inst.AccountID,
+			Target: inst.DisplayName, Detail: where + " · " + detail,
+		})
+		s.notifier.Dispatch(ctx, notify.Message{
+			Event: notify.EventDangerOperation,
+			Title: i18n.M("api.ip_switched_ephemeral_title", inst.DisplayName),
+			Body:  i18n.M("api.ip_switched_ephemeral_body"),
+			Fields: map[string]string{
+				i18n.M("f.instance"): inst.DisplayName,
+				i18n.M("f.old_ip"):   result.OldIP,
+				i18n.M("f.new_ip"):   result.NewIP,
+				i18n.M("f.operator"): who.username,
+			},
+		})
+
+		summary := i18n.M("api.ip_switched_ephemeral_summary", result.NewIP)
+		if result.OldIP != "" {
+			summary = result.OldIP + " → " + result.NewIP
+		}
+		return jobsvc.Outcome{Summary: summary, Result: result}, nil
+	})
 }
 
 // handleEnsureNetwork 在目标区域准备好一个可用的公网子网。建网要连着建
@@ -246,7 +1294,15 @@ func (s *Server) handleEnsureNetwork(w http.ResponseWriter, r *http.Request) {
 
 // handleChangePublicIP 更换实例某张网卡的公网 IP。这是 L2 级操作。
 //
-// 查询参数 vnicId 可选，留空为主网卡。网卡上还没有公网 IP 时就是直接分配一个。
+// 查询参数 vnicId 可选，留空为主网卡；privateIpId 可选，留空为该网卡的主私网 IP；
+// allowReserved=true 时允许释放现有保留公网 IP 并重新申请新的保留 IP。
+// changePublicIPRequest 是更换公网 IP 的可选请求体（用于可靠传递可为空串的乐观锁字段）。
+type changePublicIPRequest struct {
+	ExpectPublicIPID *string `json:"expectPublicIpId,omitempty"`
+	ExpectPublicIP   *string `json:"expectPublicIp,omitempty"`
+}
+
+// 目标私网 IP 上还没有公网 IP 时就是直接分配一个。
 // 确认与凭据在请求里校验，换 IP 本身（删旧地址、等释放、申请新地址）
 // 交给后台任务。
 func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
@@ -257,28 +1313,59 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	var req changePublicIPRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
 	vnicID := strings.TrimSpace(r.URL.Query().Get("vnicId"))
-	primary := vnicID == "" || vnicID == inst.VnicID
-	if primary {
+	privateIPID := strings.TrimSpace(r.URL.Query().Get("privateIpId"))
+	allowReserved := r.URL.Query().Get("allowReserved") == "true"
+	expectPublicIPID := req.ExpectPublicIPID
+	if r.URL.Query().Has("expectPublicIpId") {
+		v := r.URL.Query().Get("expectPublicIpId")
+		expectPublicIPID = &v
+	}
+	expectPublicIP := req.ExpectPublicIP
+	if r.URL.Query().Has("expectPublicIp") {
+		v := r.URL.Query().Get("expectPublicIp")
+		expectPublicIP = &v
+	}
+	primaryVnic := vnicID == "" || vnicID == inst.VnicID
+	if primaryVnic {
 		vnicID = inst.VnicID
 	}
+	primaryTarget := primaryVnic && privateIPID == ""
 	if vnicID == "" {
 		writeError(w, http.StatusBadRequest, "no_vnic",
 			i18n.M("api.no_vnic_synced"))
 		return
 	}
 
-	// L2 门槛：原 IP 不可找回，SSH 会立刻中断，必须显式确认。
-	if r.URL.Query().Get("confirm") != "true" {
-		msg := i18n.M("api.change_ip_confirm")
-		if primary && inst.PublicIP != "" {
-			msg = i18n.M("api.change_ip_confirm_ip", inst.PublicIP)
+	confirmVal := strings.TrimSpace(r.URL.Query().Get("confirm"))
+	if allowReserved {
+		// 删除/更换预留公网 IP 属于 L3 危险操作，必须在 confirm 中回传原预留 IP 地址。
+		if net.ParseIP(confirmVal) == nil {
+			writeJSON(w, http.StatusBadRequest, errorBody{
+				Code:    "confirm_required",
+				Message: i18n.M("api.change_reserved_ip_confirm"),
+			})
+			return
 		}
-		writeJSON(w, http.StatusBadRequest, errorBody{
-			Code:    "confirm_required",
-			Message: msg,
-		})
-		return
+	} else {
+		// L2 门槛：原 IP 不可找回，SSH 会立刻中断，必须显式确认。
+		if confirmVal != "true" {
+			msg := i18n.M("api.change_ip_confirm")
+			if primaryTarget && inst.PublicIP != "" {
+				msg = i18n.M("api.change_ip_confirm_ip", inst.PublicIP)
+			}
+			writeJSON(w, http.StatusBadRequest, errorBody{
+				Code:    "confirm_required",
+				Message: msg,
+			})
+			return
+		}
 	}
 
 	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
@@ -289,7 +1376,9 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 	who := s.actorOf(r)
 
 	title := i18n.M("api.change_ip_title", inst.DisplayName)
-	if !primary {
+	if privateIPID != "" {
+		title += i18n.M("api.secondary_ip_suffix")
+	} else if !primaryVnic {
 		title += i18n.M("api.secondary_suffix")
 	}
 	s.submitJob(w, jobsvc.Spec{
@@ -297,7 +1386,7 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 		AccountID: inst.AccountID, InstanceID: inst.ID, Timeout: 3 * time.Minute,
 	}, func(ctx context.Context, p *jobsvc.Progress) (jobsvc.Outcome, error) {
 		where := i18n.M("api.primary_vnic")
-		if !primary {
+		if !primaryVnic {
 			p.Step(i18n.M("api.step.check_vnic"))
 			vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
 			if err != nil {
@@ -305,20 +1394,34 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 			}
 			where = vnicLabel(vnic)
 		}
-		if primary && inst.PublicIP != "" {
+		if primaryTarget && inst.PublicIP != "" {
 			p.Step(i18n.M("api.step.release_ip", inst.PublicIP))
 		} else {
 			p.Step(i18n.M("api.step.request_ip", where))
 		}
 		p.Set(20)
 
-		result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, vnicID, acc.CompartmentOCID)
+		refreshed := false
+		defer func() {
+			if !refreshed {
+				s.refreshInstanceAfterIPMutation(ctx, inst.ID, acc.ID)
+			}
+		}()
+
+		result, err := netsvc.ChangePublicIP(ctx, client, inst.Region, vnicID, acc.CompartmentOCID, netsvc.ChangePublicIPOptions{
+			PrivateIPID:      privateIPID,
+			AllowReserved:    allowReserved,
+			ConfirmIP:        confirmVal,
+			ExpectPublicIPID: expectPublicIPID,
+			ExpectPublicIP:   expectPublicIP,
+		})
 		if err != nil {
 			return jobsvc.Outcome{}, err
 		}
+		result.IsPrimaryVnic = primaryVnic
 		p.Step(i18n.M("api.step.new_ip", result.NewIP))
 
-		if primary {
+		if primaryVnic && result.IsPrimary {
 			// 立刻把新 IP 写回缓存，用户不必等下一轮同步才看到。重新读一次：
 			// 任务排队期间这一行可能已被同步改过，不能拿请求时的旧快照覆盖。
 			if fresh, err := s.st.GetInstance(ctx, inst.ID); err == nil {
@@ -328,17 +1431,23 @@ func (s *Server) handleChangePublicIP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
-			// 附属网卡的地址记在 secondary 列里，整体重读一次网络信息。
+			// 附属网卡或辅助私网 IP 的地址记在 secondary 列里，整体重读一次网络信息。
 			_ = s.instances.RefreshNetwork(ctx, inst.ID)
 		}
+		s.resources.invalidate(acc.ID)
+		refreshed = true
 
+		auditWhere := where
+		if !result.IsPrimary && result.PrivateIP != "" {
+			auditWhere = where + " · " + result.PrivateIP
+		}
 		change := result.OldIP + " → " + result.NewIP
 		if result.OldIP == "" {
 			change = i18n.M("api.newly_assigned", result.NewIP)
 		}
 		s.audit(who, store.AuditEntry{
 			Action: "instance_change_ip", AccountID: inst.AccountID,
-			Target: inst.DisplayName, Detail: where + " · " + change,
+			Target: inst.DisplayName, Detail: auditWhere + " · " + change,
 		})
 		s.notifier.Dispatch(ctx, notify.Message{
 			Event: notify.EventDangerOperation,
@@ -407,6 +1516,181 @@ func (s *Server) handleEnableIPv6(w http.ResponseWriter, r *http.Request) {
 		})
 		return jobsvc.Outcome{Summary: i18n.M("api.v6_assigned", result.Address), Result: result}, nil
 	})
+}
+
+type createSecondaryPrivateIPRequest struct {
+	DisplayName string `json:"displayName"`
+	IPAddress   string `json:"ipAddress"`
+}
+
+// handleCreateSecondaryPrivateIP 为实例指定网卡创建一个辅助私网 IPv4 槽位。
+func (s *Server) handleCreateSecondaryPrivateIP(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	var req createSecondaryPrivateIPRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	vnicID := strings.TrimSpace(r.PathValue("vnicId"))
+	if vnicID == "" {
+		writeError(w, http.StatusBadRequest, "no_vnic", i18n.M("api.no_vnic_synced"))
+		return
+	}
+
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if s.jobs != nil {
+		unlock, lockErr := s.jobs.AcquireKey(ctx, inst.ID)
+		if lockErr != nil {
+			writeError(w, http.StatusRequestTimeout, "lock_timeout", lockErr.Error())
+			return
+		}
+		defer unlock()
+	}
+
+	where := i18n.M("api.primary_vnic")
+	if vnicID != inst.VnicID {
+		vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+		if err != nil {
+			writeOCIError(w, err)
+			return
+		}
+		where = vnicLabel(vnic)
+	}
+
+	result, err := netsvc.CreateSecondaryPrivateIP(ctx, client, inst.Region, vnicID, req.DisplayName, req.IPAddress)
+	if err != nil {
+		if errors.Is(err, netsvc.ErrInvalidPrivateIP) {
+			writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
+			return
+		}
+		writeOCIError(w, err)
+		return
+	}
+
+	_ = s.instances.RefreshNetwork(ctx, inst.ID)
+	s.resources.invalidate(acc.ID)
+
+	user := userFrom(r.Context())
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "instance_create_private_ip", AccountID: inst.AccountID,
+		Target: inst.DisplayName, Detail: where + " · " + result.PrivateIP, IP: s.clientIP(r),
+	})
+	writeJSON(w, http.StatusCreated, result)
+}
+
+// handleDeleteSecondaryPrivateIP 释放（删除）实例网卡上的辅助私网 IP。
+// 若其上绑定了预留公网 IP，会先无损解绑回空闲池。
+func (s *Server) handleDeleteSecondaryPrivateIP(w http.ResponseWriter, r *http.Request) {
+	inst, err := s.st.GetInstance(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if r.URL.Query().Get("confirm") != "true" {
+		writeJSON(w, http.StatusBadRequest, errorBody{
+			Code:    "confirm_required",
+			Message: i18n.M("api.delete_private_ip_confirm"),
+		})
+		return
+	}
+	vnicID := strings.TrimSpace(r.PathValue("vnicId"))
+	privateIPID := strings.TrimSpace(r.PathValue("privateIpId"))
+	if vnicID == "" {
+		writeError(w, http.StatusBadRequest, "no_vnic", i18n.M("api.no_vnic_synced"))
+		return
+	}
+
+	client, acc, err := s.conns.ForID(r.Context(), inst.AccountID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credentials", err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	if s.jobs != nil {
+		unlock, lockErr := s.jobs.AcquireKey(ctx, inst.ID)
+		if lockErr != nil {
+			writeError(w, http.StatusRequestTimeout, "lock_timeout", lockErr.Error())
+			return
+		}
+		defer unlock()
+	}
+
+	where := i18n.M("api.primary_vnic")
+	if vnicID != inst.VnicID {
+		vnic, err := findInstanceVnic(ctx, client, inst, acc.CompartmentOCID, vnicID)
+		if err != nil {
+			writeOCIError(w, err)
+			return
+		}
+		where = vnicLabel(vnic)
+	}
+
+	refreshed := false
+	defer func() {
+		if !refreshed {
+			s.refreshInstanceAfterIPMutation(ctx, inst.ID, acc.ID)
+		}
+	}()
+
+	result, err := netsvc.DeleteSecondaryPrivateIP(ctx, client, inst.Region, vnicID, privateIPID)
+	if err != nil {
+		switch {
+		case errors.Is(err, netsvc.ErrPrimaryPrivateIP):
+			writeError(w, http.StatusBadRequest, "primary_private_ip", err.Error())
+		case errors.Is(err, netsvc.ErrPrivateIPNotFound):
+			writeError(w, http.StatusNotFound, "private_ip_not_found", err.Error())
+		default:
+			writeOCIError(w, err)
+		}
+		return
+	}
+
+	_ = s.instances.RefreshNetwork(ctx, inst.ID)
+	s.resources.invalidate(acc.ID)
+	refreshed = true
+
+	user := userFrom(r.Context())
+	detail := where + " · " + result.PrivateIP
+	if result.UnboundPublicIP != "" {
+		detail += " (" + result.UnboundPublicIP + ")"
+	}
+	_ = s.st.Audit(r.Context(), store.AuditEntry{
+		UserID: user.ID, Action: "instance_delete_private_ip", AccountID: inst.AccountID,
+		Target: inst.DisplayName, Detail: detail, IP: s.clientIP(r),
+	})
+	body := i18n.M("api.private_ip_deleted_body")
+	fields := map[string]string{
+		i18n.M("f.instance"): inst.DisplayName,
+		i18n.M("f.vnic"):     where,
+		i18n.M("f.operator"): user.Username,
+	}
+	if result.UnboundPublicIP != "" {
+		body = i18n.M("api.private_ip_deleted_unbound", result.UnboundPublicIP)
+		fields[i18n.M("f.released_ip")] = result.UnboundPublicIP
+	}
+	s.notifier.Dispatch(r.Context(), notify.Message{
+		Event:  notify.EventDangerOperation,
+		Title:  i18n.M("api.private_ip_deleted_title", inst.DisplayName),
+		Body:   body,
+		Fields: fields,
+	})
+	writeJSON(w, http.StatusOK, result)
 }
 
 // findInstanceVnic 确认网卡确实挂在这台实例上并取回它。

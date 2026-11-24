@@ -166,6 +166,8 @@ type PrivateIP struct {
 	ID            string `json:"id"`
 	VnicID        string `json:"vnicId"`
 	SubnetID      string `json:"subnetId"`
+	DisplayName   string `json:"displayName,omitempty"`
+	HostnameLabel string `json:"hostnameLabel,omitempty"`
 	IPAddress     string `json:"ipAddress"`
 	IsPrimary     bool   `json:"isPrimary"`
 	CompartmentID string `json:"compartmentId"`
@@ -538,6 +540,19 @@ func (c *Client) GetVnic(ctx context.Context, region, vnicID string) (*Vnic, err
 	return &out, nil
 }
 
+// GetPrivateIP 取回单个私网 IP。
+func (c *Client) GetPrivateIP(ctx context.Context, region, privateIPID string) (*PrivateIP, error) {
+	var out PrivateIP
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodGet, Service: ServiceCore,
+		Path: "/privateIps/" + url.PathEscape(privateIPID), Region: region,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListPrivateIPs 列出 VNIC 上的私网 IP。
 func (c *Client) ListPrivateIPs(ctx context.Context, region, vnicID string) ([]PrivateIP, error) {
 	query := url.Values{}
@@ -550,6 +565,42 @@ func (c *Client) ListPrivateIPs(ctx context.Context, region, vnicID string) ([]P
 		Region: region, Query: query,
 	}, &out)
 	return out, err
+}
+
+// CreatePrivateIPRequest 是为 VNIC 创建辅助私网 IP 的请求体。
+type CreatePrivateIPRequest struct {
+	VnicID        string `json:"vnicId"`
+	DisplayName   string `json:"displayName,omitempty"`
+	HostnameLabel string `json:"hostnameLabel,omitempty"`
+	IPAddress     string `json:"ipAddress,omitempty"`
+}
+
+// CreatePrivateIP 为指定 VNIC 创建一个辅助私网 IPv4 地址。
+// IPAddress 留空时由 OCI 从子网自动分配。
+func (c *Client) CreatePrivateIP(ctx context.Context, region string, req CreatePrivateIPRequest) (*PrivateIP, error) {
+	var out PrivateIP
+	_, err := c.Do(ctx, Request{
+		Method:          http.MethodPost,
+		Service:         ServiceCore,
+		Path:            "/privateIps",
+		Region:          region,
+		Body:            req,
+		NoConflictRetry: true,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeletePrivateIP 删除一个辅助私网 IP。主私网 IP 不能通过此接口删除。
+func (c *Client) DeletePrivateIP(ctx context.Context, region, privateIPID string) error {
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodDelete, Service: ServiceCore,
+		Path: "/privateIps/" + url.PathEscape(privateIPID), Region: region,
+		NoConflictRetry: true,
+	}, nil)
+	return err
 }
 
 // GetPublicIPByPrivateIP 查询某个私网 IP 当前绑定的公网 IP。
@@ -625,6 +676,7 @@ func (c *Client) CreatePublicIP(ctx context.Context, region, compartmentID, life
 	_, err := c.Do(ctx, Request{
 		Method: http.MethodPost, Service: ServiceCore, Path: "/publicIps",
 		Region: region, Body: body,
+		NoConflictRetry: true,
 	}, &out)
 	if err != nil {
 		return nil, err
@@ -645,6 +697,28 @@ func (c *Client) GetPublicIP(ctx context.Context, region, publicIPID string) (*P
 	return &out, nil
 }
 
+// UpdatePublicIPRequest 修改预留公网 IP 的名称或绑定关系。
+// PrivateIPID 传入非 nil 空字符串 "" 表示从当前私网 IP 解绑（不删除预留 IP）。
+type UpdatePublicIPRequest struct {
+	DisplayName *string `json:"displayName,omitempty"`
+	PrivateIPID *string `json:"privateIpId,omitempty"`
+}
+
+// UpdatePublicIP 更新预留公网 IP（重命名、绑定到私网 IP 或传空字符串解绑）。
+func (c *Client) UpdatePublicIP(ctx context.Context, region, publicIPID string, req UpdatePublicIPRequest) (*PublicIP, error) {
+	var out PublicIP
+	_, err := c.Do(ctx, Request{
+		Method: http.MethodPut, Service: ServiceCore,
+		Path: "/publicIps/" + url.PathEscape(publicIPID), Region: region,
+		Body:            req,
+		NoConflictRetry: true,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DeletePublicIP 删除公网 IP。
 //
 // 对 EPHEMERAL 类型来说这就是「更换 IP」的实现：删掉之后 OCI 会自动分配一个新的。
@@ -653,6 +727,7 @@ func (c *Client) DeletePublicIP(ctx context.Context, region, publicIPID string) 
 	_, err := c.Do(ctx, Request{
 		Method: http.MethodDelete, Service: ServiceCore,
 		Path: "/publicIps/" + url.PathEscape(publicIPID), Region: region,
+		NoConflictRetry: true,
 	}, nil)
 	return err
 }

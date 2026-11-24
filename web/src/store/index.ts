@@ -4,6 +4,7 @@ import type {
 } from '@/types'
 import { LIFECYCLE, isTransitional } from '@/lib/lifecycle'
 import { toAccount, toInstance, toQuota } from '@/lib/adapt'
+import { mask } from '@/lib/mask'
 import {
   accounts as accountsApi, auth as authApi, instances as instancesApi,
   insights, jobs as jobsApi, launch as launchApi, settings as settingsApi,
@@ -232,17 +233,23 @@ function toast(payload: ToastPayload, ms = 6000) {
  * 提示不自动消失：新 IP 是用户接下来要复制去连的东西，6 秒根本来不及。
  * 列表那一行同时标出原 IP，刷新列表也保留，直到页面重新加载。
  */
-function markIpChanged(instanceId: string, oldIp: string, newIp: string): void {
+function markIpChanged(instanceId: string, oldIp: string, newIp: string, isPrimarySlot = true): void {
   // 按 id 取当前对象：换 IP 在后台任务里跑，等它结束时列表可能已经整体刷新过，
   // 提交时拿到的那个对象早就不在 state.instances 里了。
   const inst = state.instances.find(i => i.id === instanceId)
   if (!inst) return
-  inst.previousIp = oldIp
-  inst.publicIp = newIp
+  if (isPrimarySlot) {
+    inst.previousIp = oldIp
+    inst.publicIp = newIp
+  } else {
+    void refreshInstances()
+  }
+  const shownOld = oldIp && state.privacyMode ? mask(oldIp, 'ip') : oldIp
+  const shownNew = newIp && state.privacyMode ? mask(newIp, 'ip') : newIp
   toast({
     tone: 'success', title: t.store.ipChanged(inst.name),
-    body: t.store.ipChangedBody(oldIp, newIp),
-    command: `ssh ${inst.sshUser}@${newIp}`
+    body: t.store.ipChangedBody(shownOld, shownNew),
+    command: state.privacyMode ? undefined : `ssh ${inst.sshUser}@${newIp}`
   }, 0)
 }
 
@@ -520,7 +527,8 @@ function finishJob(job: JobDTO): void {
   switch (job.kind) {
     case 'instance.change_ip': {
       const r = job.result as ChangeIpDTO | undefined
-      if (r && job.instanceId) markIpChanged(job.instanceId, r.oldIp, r.newIp)
+      const isPrimarySlot = r?.isPrimaryVnic !== false && r?.isPrimary !== false
+      if (r && job.instanceId) markIpChanged(job.instanceId, r.oldIp, r.newIp, isPrimarySlot)
       return
     }
     case 'instance.sync':

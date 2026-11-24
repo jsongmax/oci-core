@@ -239,6 +239,16 @@ export interface AccountQuotaDTO {
   fetchedAt: string
 }
 
+export interface SecondaryIPInfoDTO {
+  privateIpId: string
+  privateIp: string
+  displayName?: string
+  publicIpId?: string
+  publicIp?: string
+  publicIpType?: string
+  publicIpUnknown?: boolean
+}
+
 export interface VnicInfoDTO {
   attachmentId: string
   vnicId: string
@@ -249,7 +259,9 @@ export interface VnicInfoDTO {
   publicIp: string
   publicIpId?: string
   publicIpType?: string
+  publicIpUnknown?: boolean
   privateIpId?: string
+  secondaryIps?: SecondaryIPInfoDTO[]
   ipv6: string[] | null
   /** 与 ipv6 一一对应，多带创建时间（旧后端没有这个字段） */
   ipv6Info?: { address: string; timeCreated?: string }[] | null
@@ -577,6 +589,15 @@ export interface PublicIpDTO {
   scope: string
   privateIpId: string
   lifecycleState: string
+  assignedEntityId?: string
+  instanceId?: string
+  instanceName?: string
+  instanceState?: string
+  vnicId?: string
+  vnicName?: string
+  isPrimaryVnic?: boolean
+  privateIp?: string
+  isPrimaryPrivateIp?: boolean
 }
 
 export interface EnsureNetworkDTO {
@@ -591,6 +612,50 @@ export interface EnsureNetworkDTO {
 export interface ChangeIpDTO {
   oldIp: string
   newIp: string
+  lifetime?: string
+  privateIp?: string
+  isPrimary?: boolean
+  isPrimaryVnic?: boolean
+}
+
+export interface BindReservedIpDTO {
+  oldIp?: string
+  oldLifetime?: string
+  newIp: string
+  publicIpId: string
+  privateIp?: string
+  isPrimary?: boolean
+}
+
+export interface SwitchEphemeralIpDTO {
+  oldIp?: string
+  oldLifetime?: string
+  newIp: string
+  lifetime: string
+  privateIp?: string
+  isPrimary?: boolean
+}
+
+export interface UnassignIpDTO {
+  oldIp: string
+  lifetime: string
+  publicIpId: string
+  privateIp?: string
+  isPrimary?: boolean
+}
+
+export interface CreatePrivateIpDTO {
+  privateIpId: string
+  privateIp: string
+  vnicId: string
+  displayName?: string
+}
+
+export interface DeletePrivateIpDTO {
+  privateIpId: string
+  privateIp: string
+  unboundPublicIp?: string
+  publicIpLifetime?: string
 }
 
 export interface EnableIpv6DTO {

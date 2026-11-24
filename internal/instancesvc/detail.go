@@ -3,6 +3,7 @@ package instancesvc
 import (
 	"context"
 	"log/slog"
+	"net/netip"
 	"sort"
 	"sync"
 	"time"
@@ -17,17 +18,21 @@ const detailTimeout = 25 * time.Second
 
 // VnicInfo 是详情页展示的一张网卡。
 type VnicInfo struct {
-	AttachmentID string   `json:"attachmentId"`
-	VnicID       string   `json:"vnicId"`
-	DisplayName  string   `json:"displayName"`
-	IsPrimary    bool     `json:"isPrimary"`
-	NicIndex     int      `json:"nicIndex"`
-	PrivateIP    string   `json:"privateIp"`
-	PublicIP     string   `json:"publicIp"`
-	PublicIPID   string   `json:"publicIpId,omitempty"`
-	PublicIPType string   `json:"publicIpType,omitempty"`
-	PrivateIPID  string   `json:"privateIpId,omitempty"`
-	IPv6         []string `json:"ipv6"`
+	AttachmentID string `json:"attachmentId"`
+	VnicID       string `json:"vnicId"`
+	DisplayName  string `json:"displayName"`
+	IsPrimary    bool   `json:"isPrimary"`
+	NicIndex     int    `json:"nicIndex"`
+	PrivateIP    string `json:"privateIp"`
+	PublicIP     string `json:"publicIp"`
+	PublicIPID   string `json:"publicIpId,omitempty"`
+	PublicIPType string `json:"publicIpType,omitempty"`
+	// PublicIPUnknown 为 true 表示查询该私网槽位的公网 IP 对象失败（非 404），
+	// 前端据此禁用公网 IP 变更按钮，避免把"查不到"误当成"未分配"。
+	PublicIPUnknown bool              `json:"publicIpUnknown,omitempty"`
+	PrivateIPID     string            `json:"privateIpId,omitempty"`
+	SecondaryIPs    []SecondaryIPInfo `json:"secondaryIps,omitempty"`
+	IPv6            []string          `json:"ipv6"`
 	// IPv6Info 与 IPv6 一一对应，多带创建时间。保留 IPv6 是为了不打断已有调用方。
 	IPv6Info   []IPv6Entry `json:"ipv6Info"`
 	MacAddress string      `json:"macAddress"`
@@ -35,6 +40,17 @@ type VnicInfo struct {
 	SubnetName string      `json:"subnetName,omitempty"`
 	VcnID      string      `json:"vcnId,omitempty"`
 	VcnName    string      `json:"vcnName,omitempty"`
+}
+
+// SecondaryIPInfo 是同一张网卡上的辅助私网 IP 及其绑定的公网 IP。
+type SecondaryIPInfo struct {
+	PrivateIPID     string `json:"privateIpId"`
+	PrivateIP       string `json:"privateIp"`
+	DisplayName     string `json:"displayName,omitempty"`
+	PublicIPID      string `json:"publicIpId,omitempty"`
+	PublicIP        string `json:"publicIp,omitempty"`
+	PublicIPType    string `json:"publicIpType,omitempty"`
+	PublicIPUnknown bool   `json:"publicIpUnknown,omitempty"`
 }
 
 // IPv6Entry 是网卡上的一个 IPv6 地址。
@@ -132,6 +148,21 @@ func (s *Service) Detail(ctx context.Context, instanceID string) (*Detail, error
 		mu.Lock()
 		detail.Vnics = vnics
 		mu.Unlock()
+		for _, v := range vnics {
+			unknown := v.PublicIPUnknown
+			if !unknown {
+				for _, s := range v.SecondaryIPs {
+					if s.PublicIPUnknown {
+						unknown = true
+						break
+					}
+				}
+			}
+			if unknown {
+				warn(i18n.M("inst.warn.read_public_ip"))
+				break
+			}
+		}
 	}()
 
 	// 引导卷及其挂载关系。
@@ -219,20 +250,64 @@ func (s *Service) collectVnicDetail(ctx context.Context, client *ociclient.Clien
 			SubnetID:     vnic.SubnetID,
 		}
 
-		// 找到主私网 IP 对应的公网 IP 对象。
+		// 读取网卡上的全部私网 IP（主 + 辅助）及其绑定的公网 IP 对象。
 		// 换 IP 功能需要它的 OCID，而 vnic.publicIp 只是个字符串。
-		if privateIPs, err := client.ListPrivateIPs(ctx, cached.Region, vnic.ID); err == nil {
-			for _, p := range privateIPs {
-				if !p.IsPrimary {
+		privateIPs, privErr := client.ListPrivateIPs(ctx, cached.Region, vnic.ID)
+		if privErr != nil {
+			slog.Debug("读取网卡私网 IP 失败", "vnic", vnic.ID, "err", privErr)
+			info.PublicIPUnknown = true
+		} else if len(privateIPs) > 0 {
+			pubs := make([]*ociclient.PublicIP, len(privateIPs))
+			pubErrs := make([]error, len(privateIPs))
+			var ipWG sync.WaitGroup
+			for idx, priv := range privateIPs {
+				ipWG.Add(1)
+				go func(pos int, privID string) {
+					defer ipWG.Done()
+					pub, err := client.GetPublicIPByPrivateIP(ctx, cached.Region, privID)
+					if err != nil {
+						slog.Debug("查询私网槽位公网 IP 失败", "privateIp", privID, "err", err)
+						pubErrs[pos] = err
+						return
+					}
+					if pub != nil {
+						pubs[pos] = pub
+					}
+				}(idx, priv.ID)
+			}
+			ipWG.Wait()
+
+			for idx, priv := range privateIPs {
+				pub := pubs[idx]
+				if priv.IsPrimary {
+					info.PrivateIPID = priv.ID
+					if pubErrs[idx] != nil {
+						info.PublicIPUnknown = true
+					} else if pub != nil {
+						info.PublicIPID = pub.ID
+						info.PublicIPType = pub.Lifetime
+						if info.PublicIP == "" {
+							info.PublicIP = pub.IPAddress
+						}
+					}
 					continue
 				}
-				info.PrivateIPID = p.ID
-				if pub, err := client.GetPublicIPByPrivateIP(ctx, cached.Region, p.ID); err == nil && pub != nil {
-					info.PublicIPID = pub.ID
-					info.PublicIPType = pub.Lifetime
+				sec := SecondaryIPInfo{
+					PrivateIPID:     priv.ID,
+					PrivateIP:       priv.IPAddress,
+					DisplayName:     priv.DisplayName,
+					PublicIPUnknown: pubErrs[idx] != nil,
 				}
-				break
+				if pub != nil {
+					sec.PublicIPID = pub.ID
+					sec.PublicIP = pub.IPAddress
+					sec.PublicIPType = pub.Lifetime
+				}
+				info.SecondaryIPs = append(info.SecondaryIPs, sec)
 			}
+			sort.SliceStable(info.SecondaryIPs, func(i, j int) bool {
+				return compareIPAddr(info.SecondaryIPs[i].PrivateIP, info.SecondaryIPs[j].PrivateIP) < 0
+			})
 		}
 
 		if v6s, err := client.ListIpv6s(ctx, cached.Region, vnic.ID); err == nil {
@@ -328,4 +403,20 @@ func shortErr(err error) string {
 		return apiErr.Message
 	}
 	return err.Error()
+}
+
+// compareIPAddr 按 IP 数值顺序比较，解析失败时回退到字典序。
+func compareIPAddr(a, b string) int {
+	addrA, errA := netip.ParseAddr(a)
+	addrB, errB := netip.ParseAddr(b)
+	if errA == nil && errB == nil {
+		return addrA.Compare(addrB)
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }

@@ -127,7 +127,7 @@ func init() {
 		"api.res.eph_ip":      {"临时公网 IP", "Ephemeral public IPs"},
 		"api.res.block":       {"块存储", "Block volumes"},
 		"api.res.block_att":   {"块存储挂载", "Block volume attachments"},
-		"api.res.reserved_ip": {"保留公网 IP", "Reserved public IPs"},
+		"api.res.reserved_ip": {"预留公网 IP", "Reserved public IPs"},
 		"api.res.console":     {"控制台连接", "Console connections"},
 		"api.res.subnet":      {"子网", "Subnets"},
 		"api.res.igw":         {"互联网网关", "Internet gateways"},

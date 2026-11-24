@@ -177,15 +177,21 @@ function makeInstance(opts: {
     displayName: opts.name, isPrimary: true, nicIndex: 0,
     privateIp: `10.0.0.${Math.floor(rand(10, 250))}`, publicIp: state === 'STOPPED' && Math.random() < 0.3 ? '' : ip,
     publicIpId: ocid('publicip', opts.region), publicIpType: 'EPHEMERAL', privateIpId: ocid('privateip', opts.region),
+    secondaryIps: [],
     ipv6: v6, macAddress: '02:00:17:' + Array.from({ length: 3 }, () => Math.floor(rand(16, 255)).toString(16)).join(':').toUpperCase(),
     subnetId: net.subnets[0].id, subnetName: net.subnets[0].displayName, vcnId: net.vcn.id, vcnName: net.vcn.displayName
+  }
+  if (!primary.publicIp) {
+    primary.publicIpId = ''
+    primary.publicIpType = ''
   }
   const vnics = [primary]
   if (opts.secondary) {
     vnics.push({
       ...primary, attachmentId: ocid('vnicattachment', opts.region), vnicId: ocid('vnic', opts.region),
-      displayName: `${opts.name}-nic2`, isPrimary: false, privateIp: `10.0.0.${Math.floor(rand(10, 250))}`,
-      publicIp: freshIp(), publicIpId: ocid('publicip', opts.region), ipv6: [freshV6()],
+      displayName: `${opts.name}-nic2`, isPrimary: false, nicIndex: 1, privateIp: `10.0.0.${Math.floor(rand(10, 250))}`,
+      publicIp: freshIp(), publicIpId: ocid('publicip', opts.region), publicIpType: 'EPHEMERAL',
+      privateIpId: ocid('privateip', opts.region), secondaryIps: [], ipv6: [freshV6()],
       macAddress: '02:00:17:0A:' + Math.floor(rand(16, 255)).toString(16).toUpperCase() + ':3C'
     })
   }
@@ -214,9 +220,20 @@ function makeInstance(opts: {
 
 function syncSecondary(i: Inst) {
   const sec = i.vnics.filter(v => !v.isPrimary)
-  i.dto.secondaryIpv4 = sec.map(v => v.publicIp).filter(Boolean).join(',')
-  i.dto.secondaryIpv6 = sec.flatMap(v => v.ipv6 ?? []).join(',')
   const p = i.vnics.find(v => v.isPrimary)
+  const extraV4: string[] = []
+  const seen = new Set<string>(p?.publicIp ? [p.publicIp] : [])
+  const addV4 = (ip?: string) => {
+    if (!ip || seen.has(ip)) return
+    seen.add(ip)
+    extraV4.push(ip)
+  }
+  for (const v of i.vnics) {
+    if (!v.isPrimary) addV4(v.publicIp)
+    for (const sip of v.secondaryIps ?? []) addV4(sip.publicIp)
+  }
+  i.dto.secondaryIpv4 = extraV4.join(',')
+  i.dto.secondaryIpv6 = sec.flatMap(v => v.ipv6 ?? []).join(',')
   if (p) { i.dto.publicIp = p.publicIp; i.dto.privateIp = p.privateIp; i.dto.ipv6 = (p.ipv6 ?? []).join(',') }
 }
 
@@ -244,10 +261,22 @@ web.blockVolumes.push({
   volumeId: ocid('volume', 'ap-tokyo-1'), attachmentId: ocid('volumeattachment', 'ap-tokyo-1'),
   displayName: 'data-01', sizeInGbs: 100, vpusPerGb: 10, device: '/dev/oracleoci/oraclevdb', isReadOnly: false, state: 'ATTACHED'
 })
+const webSecPrivId = ocid('privateip', 'ap-tokyo-1')
+const webSecResId = ocid('publicip', 'ap-tokyo-1')
+const webSecResIp = freshIp()
+web.vnics[0].secondaryIps = [{
+  privateIpId: webSecPrivId,
+  privateIp: '10.0.0.210',
+  displayName: 'tok-web-sec',
+  publicIpId: webSecResId,
+  publicIp: webSecResIp,
+  publicIpType: 'RESERVED'
+}]
+syncSecondary(web)
 
 const instById = (id: string) => instances.find(i => i.dto.id === id) ?? fail(404, 'not_found', L('实例不存在或尚未同步', 'Instance not found or not synced yet'))
 
-/* ---------- 未挂载的卷、保留 IP、控制台连接（资源页用） ---------- */
+/* ---------- 未挂载的卷、预留 IP、控制台连接（资源页用） ---------- */
 
 interface LooseVolume { accountId: string; vol: D.ResourceVolumeDTO }
 const looseVolumes: LooseVolume[] = [
@@ -265,8 +294,56 @@ interface Reserved { accountId: string; ip: D.ResourcePublicIpDTO }
 const reservedIps: Reserved[] = [
   { accountId: 'acc-tok', ip: {
     id: ocid('publicip', 'ap-tokyo-1'), ipAddress: freshIp(), region: 'ap-tokyo-1', lifetime: 'RESERVED',
-    lifecycleState: 'AVAILABLE', displayName: 'web-reserved', assigned: false } }
+    lifecycleState: 'AVAILABLE', displayName: 'web-reserved', assigned: false } },
+  { accountId: 'acc-tok', ip: {
+    id: webSecResId, ipAddress: webSecResIp, region: 'ap-tokyo-1', lifetime: 'RESERVED',
+    lifecycleState: 'ASSIGNED', displayName: 'tok-web-sec', assigned: true,
+    instance: { instanceId: web.dto.id, name: web.dto.displayName } } }
 ]
+
+function findReservedSlot(publicIpId: string): { inst: Inst; vnic: D.VnicInfoDTO; sip?: D.SecondaryIPInfoDTO } | null {
+  for (const inst of instances) {
+    for (const vnic of inst.vnics) {
+      if (vnic.publicIpId === publicIpId) return { inst, vnic }
+      for (const sip of vnic.secondaryIps ?? []) {
+        if (sip.publicIpId === publicIpId) return { inst, vnic, sip }
+      }
+    }
+  }
+  return null
+}
+
+function unbindReservedInDemo(publicIpId: string) {
+  const entry = reservedIps.find(r => r.ip.id === publicIpId)
+  if (entry) {
+    entry.ip.assigned = false
+    entry.ip.instance = undefined
+    entry.ip.lifecycleState = 'AVAILABLE'
+  }
+  const bound = findReservedSlot(publicIpId)
+  if (bound) {
+    if (bound.sip) {
+      bound.sip.publicIp = ''
+      bound.sip.publicIpId = ''
+      bound.sip.publicIpType = ''
+    } else {
+      bound.vnic.publicIp = ''
+      bound.vnic.publicIpId = ''
+      bound.vnic.publicIpType = ''
+    }
+    syncSecondary(bound.inst)
+  }
+  return entry
+}
+
+function checkDemoExpect(curId: string | undefined, curIp: string | undefined, expectId?: string, expectIp?: string) {
+  if (expectId !== undefined && (curId ?? '') !== expectId.trim()) {
+    fail(409, 'state_changed', L('该私网槽位的公网 IP 状态已变更，请刷新后重试', 'The public IP state on this slot has changed; refresh and try again'))
+  }
+  if (expectIp !== undefined && (curIp ?? '') !== expectIp.trim()) {
+    fail(409, 'state_changed', L('该私网槽位的公网 IP 状态已变更，请刷新后重试', 'The public IP state on this slot has changed; refresh and try again'))
+  }
+}
 
 interface Console { accountId: string; conn: D.ResourceConsoleDTO }
 const consoles: Console[] = [
@@ -744,18 +821,162 @@ on('DELETE', '/api/instances/{id}', (p, q) => {
       return { summary: L('实例已终止', 'Instance terminated') }
     } })
 })
-on('POST', '/api/instances/{id}/change-ip', (p, q) => {
+on('POST', '/api/instances/{id}/change-ip', (p, q, b) => {
   const i = instById(p.id)
   const v = q.vnicId ? i.vnics.find(x => x.vnicId === q.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'This VNIC is not on the instance')) : i.vnics[0]
-  return submit({ kind: 'instance.change_ip', title: L('更换公网 IP · ', 'Change public IP · ') + i.dto.displayName + (v.isPrimary ? '' : L('（附属网卡）', ' (secondary VNIC)')),
+  const sip = q.privateIpId ? (v.secondaryIps ?? []).find(x => x.privateIpId === q.privateIpId) ?? fail(404, 'private_ip_not_found', L('在这张网卡上未找到指定的私网 IP', 'The specified private IP was not found on this VNIC')) : undefined
+  const curId = sip ? sip.publicIpId : v.publicIpId
+  const curIp = sip ? sip.publicIp : v.publicIp
+  const curType = sip ? sip.publicIpType : v.publicIpType
+  const allowReserved = q.allowReserved === 'true'
+  checkDemoExpect(curId, curIp, b?.expectPublicIpId, b?.expectPublicIp)
+  if (curIp && curType === 'RESERVED') {
+    if (!allowReserved) fail(409, 'reserved_ip', L('该实例使用的是预留公网 IP，请显式确认后再操作', 'This slot uses a reserved public IP'))
+    if ((q.confirm ?? '').trim() !== curIp) fail(400, 'confirm_required', L('更换预留 IP 需在 confirm 中回传原预留 IP 地址', 'Pass the current reserved IP address in confirm'))
+  }
+  return submit({
+    kind: 'instance.change_ip',
+    title: L('更换公网 IP · ', 'Change public IP · ') + i.dto.displayName + (sip ? L('（辅助 IP）', ' (secondary IP)') : v.isPrimary ? '' : L('（附属网卡）', ' (secondary VNIC)')),
     accountId: i.dto.accountId, instanceId: i.dto.id,
-    steps: v.publicIp ? [L('释放旧的临时 IP', 'Releasing the old ephemeral IP'), L('申请新的临时 IP', 'Requesting a new ephemeral IP')] : [L('申请临时公网 IP', 'Requesting an ephemeral public IP')], ms: 3500,
+    steps: curIp ? [L('释放旧的公网 IP', 'Releasing the old public IP'), L('申请新的公网 IP', 'Requesting a new public IP')] : [L('申请公网 IP', 'Requesting a public IP')],
+    ms: 1800,
     run: () => {
-      const oldIp = v.publicIp
-      v.publicIp = freshIp(); v.publicIpType = 'EPHEMERAL'; syncSecondary(i)
-      log('instance_change_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${v.publicIp}` : L(`新分配 ${v.publicIp}`, `Newly assigned ${v.publicIp}`))
-      return { summary: oldIp ? L('新 IP 已生效', 'New IP is live') : L('新 IP ', 'New IP ') + v.publicIp, result: { oldIp, newIp: v.publicIp } }
-    } })
+      const oldIp = curIp || ''
+      const newIp = freshIp()
+      const newId = ocid('publicip', i.dto.region)
+      const lifetime = sip || curType === 'RESERVED' ? 'RESERVED' : 'EPHEMERAL'
+      if (curId && curType === 'RESERVED') {
+        const idx = reservedIps.findIndex(r => r.ip.id === curId)
+        if (idx >= 0) reservedIps.splice(idx, 1)
+      }
+      if (lifetime === 'RESERVED') {
+        reservedIps.push({
+          accountId: i.dto.accountId,
+          ip: {
+            id: newId, ipAddress: newIp, region: i.dto.region, lifetime: 'RESERVED',
+            lifecycleState: 'ASSIGNED', displayName: sip?.displayName || v.displayName, assigned: true,
+            instance: { instanceId: i.dto.id, name: i.dto.displayName }
+          }
+        })
+      }
+      if (sip) {
+        sip.publicIp = newIp; sip.publicIpId = newId; sip.publicIpType = 'RESERVED'
+      } else {
+        v.publicIp = newIp; v.publicIpId = newId; v.publicIpType = lifetime
+      }
+      syncSecondary(i)
+      log('instance_change_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${newIp}` : L(`新分配 ${newIp}`, `Newly assigned ${newIp}`))
+      return {
+        summary: oldIp ? `${oldIp} → ${newIp}` : L('新 IP ', 'New IP ') + newIp,
+        result: { oldIp, newIp, lifetime, privateIp: sip ? sip.privateIp : v.privateIp, isPrimary: !sip, isPrimaryVnic: v.isPrimary }
+      }
+    }
+  })
+})
+on('POST', '/api/instances/{id}/bind-reserved-ip', (p, _, b) => {
+  const i = instById(p.id)
+  const v = b?.vnicId ? i.vnics.find(x => x.vnicId === b.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'VNIC not found')) : i.vnics[0]
+  const sip = b?.privateIpId ? (v.secondaryIps ?? []).find(x => x.privateIpId === b.privateIpId) ?? fail(404, 'private_ip_not_found', L('在这张网卡上未找到指定的私网 IP', 'Private IP not found')) : undefined
+  const entry = reservedIps.find(r => r.ip.id === b?.reservedIpId) ?? fail(404, 'not_found', L('预留 IP 不存在', 'Reserved IP not found'))
+  if (entry.ip.assigned || entry.ip.lifecycleState !== 'AVAILABLE') fail(409, 'reserved_ip_in_use', L('该预留 IP 当前不是空闲可用状态', 'Reserved IP is not AVAILABLE'))
+  const curId = sip ? sip.publicIpId : v.publicIpId
+  const curIp = sip ? sip.publicIp : v.publicIp
+  const curType = sip ? sip.publicIpType : v.publicIpType
+  checkDemoExpect(curId, curIp, b?.expectPublicIpId, b?.expectPublicIp)
+  return submit({
+    kind: 'instance.bind_ip',
+    title: L('绑定预留 IP · ', 'Bind reserved IP · ') + i.dto.displayName,
+    accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('绑定预留公网 IP', 'Binding reserved public IP')], ms: 1500,
+    run: () => {
+      const oldIp = curIp || ''
+      if (curId && curType === 'RESERVED') unbindReservedInDemo(curId)
+      entry.ip.assigned = true
+      entry.ip.lifecycleState = 'ASSIGNED'
+      entry.ip.instance = { instanceId: i.dto.id, name: i.dto.displayName }
+      if (sip) {
+        sip.publicIp = entry.ip.ipAddress; sip.publicIpId = entry.ip.id; sip.publicIpType = 'RESERVED'
+      } else {
+        v.publicIp = entry.ip.ipAddress; v.publicIpId = entry.ip.id; v.publicIpType = 'RESERVED'
+      }
+      syncSecondary(i)
+      log('instance_bind_reserved_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${entry.ip.ipAddress}` : entry.ip.ipAddress)
+      return {
+        summary: oldIp ? `${oldIp} → ${entry.ip.ipAddress}` : L('已绑定预留 IP ', 'Bound reserved IP ') + entry.ip.ipAddress,
+        result: { oldIp, oldLifetime: curType, newIp: entry.ip.ipAddress, publicIpId: entry.ip.id, privateIp: sip ? sip.privateIp : v.privateIp, isPrimary: !sip }
+      }
+    }
+  })
+})
+on('POST', '/api/instances/{id}/switch-ephemeral-ip', (p, _, b) => {
+  const i = instById(p.id)
+  const v = b?.vnicId ? i.vnics.find(x => x.vnicId === b.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'VNIC not found')) : i.vnics[0]
+  if (b?.privateIpId) fail(400, 'invalid_input', L('辅助私网 IP 仅支持预留公网 IP', 'Secondary private IPs only support reserved public IPs'))
+  checkDemoExpect(v.publicIpId, v.publicIp, b?.expectPublicIpId, b?.expectPublicIp)
+  return submit({
+    kind: 'instance.switch_ephemeral_ip',
+    title: L('切回临时 IP · ', 'Switch to ephemeral IP · ') + i.dto.displayName,
+    accountId: i.dto.accountId, instanceId: i.dto.id,
+    steps: [L('解绑预留 IP 并申请临时公网 IP', 'Unbinding reserved IP and requesting ephemeral public IP')], ms: 1500,
+    run: () => {
+      const oldIp = v.publicIp || ''
+      const oldLifetime = v.publicIpType || ''
+      if (v.publicIpId && v.publicIpType === 'RESERVED') unbindReservedInDemo(v.publicIpId)
+      v.publicIp = freshIp(); v.publicIpId = ocid('publicip', i.dto.region); v.publicIpType = 'EPHEMERAL'
+      syncSecondary(i)
+      log('instance_switch_ephemeral_ip', i.dto.displayName, i.dto.accountId, oldIp ? `${oldIp} → ${v.publicIp}` : v.publicIp)
+      return {
+        summary: oldIp ? `${oldIp} → ${v.publicIp}` : L('已分配临时 IP ', 'Assigned ephemeral IP ') + v.publicIp,
+        result: { oldIp, oldLifetime, newIp: v.publicIp, lifetime: 'EPHEMERAL', privateIp: v.privateIp, isPrimary: true }
+      }
+    }
+  })
+})
+on('POST', '/api/instances/{id}/unassign-ip', (p, _, b) => {
+  const i = instById(p.id)
+  const v = b?.vnicId ? i.vnics.find(x => x.vnicId === b.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'VNIC not found')) : i.vnics[0]
+  const sip = b?.privateIpId ? (v.secondaryIps ?? []).find(x => x.privateIpId === b.privateIpId) ?? fail(404, 'private_ip_not_found', L('在这张网卡上未找到指定的私网 IP', 'Private IP not found')) : undefined
+  const curId = sip ? sip.publicIpId : v.publicIpId
+  const curIp = sip ? sip.publicIp : v.publicIp
+  const curType = sip ? (sip.publicIpType || 'RESERVED') : (v.publicIpType || 'EPHEMERAL')
+  checkDemoExpect(curId, curIp, b?.expectPublicIpId, b?.expectPublicIp)
+  if (!curIp) fail(400, 'no_public_ip', L('该私网 IP 当前没有绑定公网 IP', 'This private IP has no public IP'))
+  if (curId && curType === 'RESERVED') {
+    unbindReservedInDemo(curId)
+  } else if (sip) {
+    sip.publicIp = ''; sip.publicIpId = ''; sip.publicIpType = ''
+  } else {
+    v.publicIp = ''; v.publicIpId = ''; v.publicIpType = ''
+  }
+  syncSecondary(i)
+  log('instance_unassign_ip', i.dto.displayName, i.dto.accountId, curIp)
+  return { oldIp: curIp, lifetime: curType, publicIpId: curId ?? '', privateIp: sip ? sip.privateIp : v.privateIp, isPrimary: !sip }
+})
+on('POST', '/api/instances/{id}/vnics/{vnicId}/private-ips', (p, _, b) => {
+  const i = instById(p.id)
+  const v = i.vnics.find(x => x.vnicId === p.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'VNIC not found'))
+  const ipAddr = (b?.ipAddress ?? '').trim() || `10.0.0.${Math.floor(rand(100, 250))}`
+  const privId = ocid('privateip', i.dto.region)
+  const displayName = (b?.displayName ?? '').trim()
+  v.secondaryIps = [...(v.secondaryIps ?? []), { privateIpId: privId, privateIp: ipAddr, displayName }]
+  log('instance_create_private_ip', i.dto.displayName, i.dto.accountId, ipAddr)
+  return { privateIpId: privId, privateIp: ipAddr, vnicId: v.vnicId, displayName }
+})
+on('DELETE', '/api/instances/{id}/vnics/{vnicId}/private-ips/{privateIpId}', (p) => {
+  const i = instById(p.id)
+  const v = i.vnics.find(x => x.vnicId === p.vnicId) ?? fail(404, 'not_found', L('这张网卡不在该实例上', 'VNIC not found'))
+  const list = v.secondaryIps ?? []
+  const idx = list.findIndex(x => x.privateIpId === p.privateIpId)
+  if (idx < 0) fail(404, 'private_ip_not_found', L('在这张网卡上未找到指定的私网 IP', 'Private IP not found'))
+  const target = list[idx]
+  const unboundPublicIp = target.publicIp || ''
+  const publicIpLifetime = target.publicIpType || ''
+  if (target.publicIpId && target.publicIpType === 'RESERVED') unbindReservedInDemo(target.publicIpId)
+  list.splice(idx, 1)
+  v.secondaryIps = list
+  syncSecondary(i)
+  log('instance_delete_private_ip', i.dto.displayName, i.dto.accountId, target.privateIp)
+  return { privateIpId: target.privateIpId, privateIp: target.privateIp, unboundPublicIp, publicIpLifetime }
 })
 on('POST', '/api/instances/{id}/vnics/{vnicId}/ipv6', p => {
   const i = instById(p.id)
@@ -934,9 +1155,82 @@ on('PUT', '/api/network/security-lists/{id}', (p, q, b) => {
 })
 on('GET', '/api/network/rule-templates', () => ({ templates: staticData().ruleTemplates }))
 on('GET', '/api/network/public-ips', (_, q) => ({
-  publicIps: reservedIps.filter(r => r.accountId === q.accountId).map(r => ({ id: r.ip.id, displayName: r.ip.displayName,
-    ipAddress: r.ip.ipAddress, lifetime: 'RESERVED', scope: 'REGION', privateIpId: '', lifecycleState: r.ip.lifecycleState }))
+  publicIps: q.scope === 'ALL'
+    ? liveInstances()
+      .filter(i => i.dto.accountId === q.accountId && (!q.region || i.dto.region === q.region))
+      .flatMap(i => i.vnics.flatMap(v => {
+        const rows: D.PublicIpDTO[] = []
+        if (v.publicIp) {
+          rows.push({
+            id: v.publicIpId ?? `${v.isPrimary ? 'primary' : 'vnic'}:${v.vnicId}`,
+            displayName: '',
+            ipAddress: v.publicIp,
+            lifetime: v.publicIpType || 'EPHEMERAL',
+            scope: v.publicIpType === 'RESERVED' ? 'REGION' : 'AVAILABILITY_DOMAIN',
+            privateIpId: v.privateIpId || '',
+            lifecycleState: 'ASSIGNED',
+            instanceId: i.dto.id,
+            instanceName: i.dto.displayName,
+            instanceState: i.dto.lifecycleState,
+            vnicId: v.vnicId,
+            vnicName: v.displayName,
+            isPrimaryVnic: v.isPrimary,
+            privateIp: v.privateIp,
+            isPrimaryPrivateIp: true
+          })
+        }
+        for (const sip of v.secondaryIps ?? []) {
+          if (!sip.publicIp) continue
+          rows.push({
+            id: sip.publicIpId ?? `sec:${sip.privateIpId}`,
+            displayName: sip.displayName || '',
+            ipAddress: sip.publicIp,
+            lifetime: sip.publicIpType || 'RESERVED',
+            scope: 'REGION',
+            privateIpId: sip.privateIpId,
+            lifecycleState: 'ASSIGNED',
+            instanceId: i.dto.id,
+            instanceName: i.dto.displayName,
+            instanceState: i.dto.lifecycleState,
+            vnicId: v.vnicId,
+            vnicName: v.displayName,
+            isPrimaryVnic: v.isPrimary,
+            privateIp: sip.privateIp,
+            isPrimaryPrivateIp: false
+          })
+        }
+        return rows
+      }))
+    : reservedIps.filter(r => r.accountId === q.accountId && (!q.region || r.ip.region === q.region)).map(r => {
+      const slot = findReservedSlot(r.ip.id)
+      return {
+        id: r.ip.id, displayName: r.ip.displayName, ipAddress: r.ip.ipAddress,
+        lifetime: 'RESERVED', scope: 'REGION',
+        privateIpId: slot ? (slot.sip ? slot.sip.privateIpId : (slot.vnic.privateIpId || 'priv-demo')) : (r.ip.assigned ? 'priv-demo' : ''),
+        lifecycleState: r.ip.lifecycleState,
+        instanceId: slot?.inst.dto.id ?? r.ip.instance?.instanceId,
+        instanceName: slot?.inst.dto.displayName ?? r.ip.instance?.name,
+        instanceState: slot?.inst.dto.lifecycleState,
+        vnicId: slot?.vnic.vnicId,
+        vnicName: slot?.vnic.displayName,
+        isPrimaryVnic: slot ? slot.vnic.isPrimary : true,
+        privateIp: slot ? (slot.sip ? slot.sip.privateIp : slot.vnic.privateIp) : undefined,
+        isPrimaryPrivateIp: slot ? !slot.sip : true
+      }
+    })
 }))
+on('POST', '/api/network/reserved-ips', (_, q, b) => {
+  const ip = `152.67.${Math.floor(Math.random() * 200 + 10)}.${Math.floor(Math.random() * 200 + 10)}`
+  const id = `ip-res-${Date.now()}`
+  const region = q.region || acctById(q.accountId).defaultRegion
+  const displayName = b?.displayName || `reserved-${id.slice(-4)}`
+  reservedIps.push({ accountId: q.accountId, ip: { id, ipAddress: ip, region, lifetime: 'RESERVED', lifecycleState: 'AVAILABLE', displayName, assigned: false } })
+  return { id, displayName, ipAddress: ip, lifetime: 'RESERVED', scope: 'REGION', privateIpId: '', lifecycleState: 'AVAILABLE' }
+})
+on('POST', '/api/network/reserved-ips/{id}/unbind', (p) => {
+  const entry = unbindReservedInDemo(p.id) ?? fail(404, 'not_found', 'Not found')
+  return { id: entry.ip.id, displayName: entry.ip.displayName, ipAddress: entry.ip.ipAddress, lifetime: 'RESERVED', scope: 'REGION', privateIpId: '', lifecycleState: 'AVAILABLE' }
+})
 on('POST', '/api/network/ensure', (_, q) => {
   const n = netFor(q.accountId, q.region || acctById(q.accountId).defaultRegion)
   return submit({ kind: 'network.ensure', title: L('准备网络 · ', 'Prepare network · ') + n.region, accountId: q.accountId,

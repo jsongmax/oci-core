@@ -229,6 +229,15 @@ func (s *Service) call(ctx context.Context, p *Progress, fn Func) (out Outcome, 
 	return fn(ctx, p)
 }
 
+// AcquireKey 获取某个键（通常为实例 ID）的独占锁，供同步接口与后台任务互斥。
+func (s *Service) AcquireKey(ctx context.Context, key string) (func(), error) {
+	unlock, ok := s.lockKey(ctx, key)
+	if !ok {
+		return nil, ctx.Err()
+	}
+	return unlock, nil
+}
+
 // lockKey 获取某个键的独占锁。key 为空时不加锁。
 func (s *Service) lockKey(ctx context.Context, key string) (func(), bool) {
 	if key == "" {

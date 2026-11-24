@@ -198,11 +198,80 @@ export const instances = {
     http.post<{ ok: boolean }>(`/api/instances/${encodeURIComponent(id)}/dismiss-error`),
 
   /** 后台任务，结果（D.ChangeIpDTO）在任务的 result 里 */
-  /** vnicId 留空为主网卡；网卡还没有公网 IP 时就是新分配一个 */
-  changeIp: (id: string, vnicId?: string) =>
-    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/change-ip`, undefined, {
-      query: { confirm: 'true', vnicId }
+  /** vnicId 留空为主网卡，privateIpId 留空为主私网 IP；还没有公网 IP 时就是新分配一个 */
+  changeIp: (id: string, opts?: string | {
+    vnicId?: string
+    privateIpId?: string
+    allowReserved?: boolean
+    confirm?: string
+    expectPublicIpId?: string
+    expectPublicIp?: string
+  }) => {
+    const params = typeof opts === 'string' ? { vnicId: opts } : (opts ?? {})
+    const body: { expectPublicIpId?: string; expectPublicIp?: string } = {}
+    if (params.expectPublicIpId !== undefined) body.expectPublicIpId = params.expectPublicIpId
+    if (params.expectPublicIp !== undefined) body.expectPublicIp = params.expectPublicIp
+    return http.post<D.JobAcceptedDTO>(
+      `/api/instances/${encodeURIComponent(id)}/change-ip`,
+      Object.keys(body).length > 0 ? body : undefined,
+      {
+      query: {
+        confirm: params.confirm ?? 'true',
+        vnicId: params.vnicId,
+        privateIpId: params.privateIpId,
+        allowReserved: params.allowReserved ? 'true' : undefined
+      }
+      }
+    )
+  },
+
+  /** 将已有预留公网 IP 绑定到实例的指定私网 IP 槽（后台任务，结果 D.BindReservedIpDTO） */
+  bindReservedIp: (id: string, body: {
+    reservedIpId: string
+    vnicId?: string
+    privateIpId?: string
+    expectPublicIpId?: string
+    expectPublicIp?: string
+  }) =>
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/bind-reserved-ip`, body, {
+      query: { confirm: 'true' }
     }),
+
+  /** 将网卡的主私网 IP 槽切回临时公网 IP（预留 IP 会无损解绑回空闲池，后台任务，结果 D.SwitchEphemeralIpDTO） */
+  switchEphemeralIp: (id: string, body?: {
+    vnicId?: string
+    privateIpId?: string
+    expectPublicIpId?: string
+    expectPublicIp?: string
+  }) =>
+    http.post<D.JobAcceptedDTO>(`/api/instances/${encodeURIComponent(id)}/switch-ephemeral-ip`, body ?? {}, {
+      query: { confirm: 'true' }
+    }),
+
+  /** 取消绑定实例指定私网 IP 槽的公网 IP（临时 IP 删除释放，预留 IP 无损解绑回空闲池） */
+  unassignIp: (id: string, body?: {
+    vnicId?: string
+    privateIpId?: string
+    expectPublicIpId?: string
+    expectPublicIp?: string
+  }) =>
+    http.post<D.UnassignIpDTO>(`/api/instances/${encodeURIComponent(id)}/unassign-ip`, body ?? {}, {
+      query: { confirm: 'true' }
+    }),
+
+  /** 为指定网卡创建一个辅助私网 IPv4 槽位（ipAddress 留空则自动分配） */
+  createPrivateIp: (id: string, vnicId: string, body?: { displayName?: string; ipAddress?: string }) =>
+    http.post<D.CreatePrivateIpDTO>(
+      `/api/instances/${encodeURIComponent(id)}/vnics/${encodeURIComponent(vnicId)}/private-ips`,
+      body ?? {}
+    ),
+
+  /** 释放（删除）指定网卡上的辅助私网 IP（如有预留公网 IP 会先无损解绑回空闲池） */
+  deletePrivateIp: (id: string, vnicId: string, privateIpId: string) =>
+    http.del<D.DeletePrivateIpDTO>(
+      `/api/instances/${encodeURIComponent(id)}/vnics/${encodeURIComponent(vnicId)}/private-ips/${encodeURIComponent(privateIpId)}`,
+      { query: { confirm: 'true' } }
+    ),
 
   /** 给指定网卡再分配一个 IPv6，已有地址也照样新分配。结果（D.EnableIpv6DTO）在任务里 */
   addIpv6: (id: string, vnicId: string) =>
@@ -323,6 +392,16 @@ export const network = {
   publicIps: (accountId: string, region?: string, scope?: string) =>
     http.get<{ publicIps: D.PublicIpDTO[] }>('/api/network/public-ips', {
       query: { accountId, region, scope }
+    }),
+
+  createReservedIp: (accountId: string, region: string, displayName?: string) =>
+    http.post<D.PublicIpDTO>('/api/network/reserved-ips', { displayName: displayName || undefined }, {
+      query: { accountId, region }
+    }),
+
+  unbindReservedIp: (id: string, accountId: string, region: string) =>
+    http.post<D.PublicIpDTO>(`/api/network/reserved-ips/${encodeURIComponent(id)}/unbind`, undefined, {
+      query: { accountId, region, confirm: 'true' }
     }),
 
   ensure: (accountId: string, region?: string, ipv6 = false) =>

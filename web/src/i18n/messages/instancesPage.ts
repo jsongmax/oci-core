@@ -4,7 +4,7 @@ const zh = {
   renamed: '已重命名',
   renameFailed: '重命名失败',
   primaryV6: '主网卡 IPv6',
-  secondaryV4: '附属网卡 IPv4',
+  secondaryV4: '辅助 / 附属 IPv4',
   secondaryV6: '附属网卡 IPv6',
   ipCopied: '已复制公网 IP',
   col: {
@@ -55,7 +55,7 @@ const en: typeof zh = {
   renamed: 'Renamed',
   renameFailed: 'Couldn\'t rename',
   primaryV6: 'Primary VNIC IPv6',
-  secondaryV4: 'Secondary VNIC IPv4',
+  secondaryV4: 'Secondary IPv4',
   secondaryV6: 'Secondary VNIC IPv6',
   ipCopied: 'Public IP copied',
   col: {

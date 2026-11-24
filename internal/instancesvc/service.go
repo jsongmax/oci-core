@@ -388,10 +388,37 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 		byInstance[att.InstanceID] = append(byInstance[att.InstanceID], att)
 	}
 
+	// 同一张网卡上的辅助私网 IP 只能绑定预留公网 IP（scope=REGION）。
+	// 整个区域拉一次预留 IP 列表；后续只对不在网卡主公网 IP 集合中的已绑预留 IP 反查私网归属，
+	// 避免因为存在主槽预留 IP 就对全区网卡做全量 ListPrivateIPs。
+	reservedByPrivateID := map[string]string{}
+	if pubs, err := client.ListPublicIPs(ctx, region, acc.CompartmentOCID, "REGION", ""); err == nil {
+		for _, pub := range pubs {
+			if privID := publicIPPrivateID(pub); privID != "" && pub.IPAddress != "" {
+				reservedByPrivateID[privID] = pub.IPAddress
+			}
+		}
+	} else {
+		slog.Debug("读取预留公网 IP 失败", "account", acc.Alias, "region", region, "err", err)
+	}
+
+	type instVnicSet struct {
+		primary   *ociclient.Vnic
+		secondary []ociclient.Vnic
+	}
+
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
+		mu                   sync.Mutex
+		wg                   sync.WaitGroup
+		vnicSets             = make(map[string]instVnicSet, len(byInstance))
+		vnicPrimaryPublicIPs = make(map[string]bool)
+		vnicToInstance       = make(map[string]string)
 	)
+	for _, att := range attachments {
+		if att.LifecycleState == "ATTACHED" && att.VnicID != "" {
+			vnicToInstance[att.VnicID] = att.InstanceID
+		}
+	}
 	sem := make(chan struct{}, syncConcurrency)
 
 	for instanceID, atts := range byInstance {
@@ -405,31 +432,136 @@ func (s *Service) collectNetworkInfo(ctx context.Context, client *ociclient.Clie
 			if primary == nil {
 				return
 			}
-			d := netDetail{
-				vnicID:    primary.ID,
-				subnetID:  primary.SubnetID,
-				publicIP:  primary.PublicIP,
-				privateIP: primary.PrivateIP,
-				ipv6:      strings.Join(primary.Ipv6Addresses, ","),
-			}
-			d.secondaryIPv4, d.secondaryIPv6 = secondaryIPs(secondary)
-
 			mu.Lock()
-			out[instanceID] = d
+			vnicSets[instanceID] = instVnicSet{primary: primary, secondary: secondary}
+			if primary.PublicIP != "" {
+				vnicPrimaryPublicIPs[primary.PublicIP] = true
+			}
+			vnicToInstance[primary.ID] = instanceID
+			for _, v := range secondary {
+				if v.PublicIP != "" {
+					vnicPrimaryPublicIPs[v.PublicIP] = true
+				}
+				vnicToInstance[v.ID] = instanceID
+			}
 			mu.Unlock()
 		}(instanceID, atts)
 	}
 	wg.Wait()
+
+	extraV4ByInst := make(map[string][]string)
+	if len(reservedByPrivateID) > 0 {
+		var lookupWG sync.WaitGroup
+		for privID, ip := range reservedByPrivateID {
+			if vnicPrimaryPublicIPs[ip] {
+				continue
+			}
+			lookupWG.Add(1)
+			go func(privID, ip string) {
+				defer lookupWG.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				priv, err := client.GetPrivateIP(ctx, region, privID)
+				if err != nil || priv == nil || priv.IsPrimary || priv.VnicID == "" {
+					return
+				}
+				instanceID, ok := vnicToInstance[priv.VnicID]
+				if !ok {
+					return
+				}
+				mu.Lock()
+				extraV4ByInst[instanceID] = append(extraV4ByInst[instanceID], ip)
+				mu.Unlock()
+			}(privID, ip)
+		}
+		lookupWG.Wait()
+	}
+
+	for instanceID, set := range vnicSets {
+		extraV4 := extraV4ByInst[instanceID]
+		sort.Slice(extraV4, func(i, j int) bool {
+			return compareIPAddr(extraV4[i], extraV4[j]) < 0
+		})
+		d := netDetail{
+			vnicID:    set.primary.ID,
+			subnetID:  set.primary.SubnetID,
+			publicIP:  set.primary.PublicIP,
+			privateIP: set.primary.PrivateIP,
+			ipv6:      strings.Join(set.primary.Ipv6Addresses, ","),
+		}
+		d.secondaryIPv4, d.secondaryIPv6 = secondaryIPs(set.primary.PublicIP, set.secondary, extraV4)
+		out[instanceID] = d
+	}
 	return out
 }
 
-// secondaryIPs 汇总附属网卡上的公网 IPv4 与 IPv6，各自逗号分隔。
-func secondaryIPs(vnics []ociclient.Vnic) (v4, v6 string) {
-	var a, b []string
-	for _, v := range vnics {
-		if v.PublicIP != "" {
-			a = append(a, v.PublicIP)
+// publicIPPrivateID 返回保留公网 IP 当前绑定的私网 IP OCID。
+func publicIPPrivateID(pub ociclient.PublicIP) string {
+	if pub.PrivateIPID != "" {
+		return pub.PrivateIPID
+	}
+	if strings.HasPrefix(pub.AssignedEntityID, "ocid1.privateip.") {
+		return pub.AssignedEntityID
+	}
+	return ""
+}
+
+// secondaryPrivatePublicIPs 查出主网卡与附属网卡上所有辅助私网 IP 绑定的公网 IPv4。
+// reservedByPrivateID 非 nil 时直接用区域级映射（同步路径，避免 N+1）；
+// 为 nil 时对每个辅助私网 IP 单独查询（单实例刷新路径）。
+func secondaryPrivatePublicIPs(ctx context.Context, client *ociclient.Client, region string,
+	primary *ociclient.Vnic, secondary []ociclient.Vnic, reservedByPrivateID map[string]string) []string {
+
+	vnics := make([]ociclient.Vnic, 0, 1+len(secondary))
+	if primary != nil {
+		vnics = append(vnics, *primary)
+	}
+	vnics = append(vnics, secondary...)
+
+	var out []string
+	for _, vnic := range vnics {
+		privs, err := client.ListPrivateIPs(ctx, region, vnic.ID)
+		if err != nil {
+			slog.Debug("读取网卡私网 IP 失败", "vnic", vnic.ID, "err", err)
+			continue
 		}
+		for _, priv := range privs {
+			if priv.IsPrimary {
+				continue
+			}
+			if reservedByPrivateID != nil {
+				if ip := reservedByPrivateID[priv.ID]; ip != "" {
+					out = append(out, ip)
+				}
+				continue
+			}
+			if pub, err := client.GetPublicIPByPrivateIP(ctx, region, priv.ID); err == nil && pub != nil && pub.IPAddress != "" {
+				out = append(out, pub.IPAddress)
+			}
+		}
+	}
+	return out
+}
+
+// secondaryIPs 汇总附属网卡及辅助私网 IP 上的公网 IPv4 与附属网卡 IPv6，各自逗号分隔。
+func secondaryIPs(primaryPublicIP string, vnics []ociclient.Vnic, extraV4 []string) (v4, v6 string) {
+	seenV4 := make(map[string]bool)
+	if primaryPublicIP != "" {
+		seenV4[primaryPublicIP] = true
+	}
+	var a, b []string
+	addV4 := func(ip string) {
+		if ip == "" || seenV4[ip] {
+			return
+		}
+		seenV4[ip] = true
+		a = append(a, ip)
+	}
+	for _, ip := range extraV4 {
+		addV4(ip)
+	}
+	for _, v := range vnics {
+		addV4(v.PublicIP)
 		b = append(b, v.Ipv6Addresses...)
 	}
 	return strings.Join(a, ","), strings.Join(b, ",")

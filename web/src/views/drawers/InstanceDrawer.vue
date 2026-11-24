@@ -19,6 +19,7 @@ import DrawerTabs from '@/components/DrawerTabs.vue'
 import DrawerBody from '@/components/DrawerBody.vue'
 import SectionCard from '@/components/SectionCard.vue'
 import KeyValueList from '@/components/KeyValueList.vue'
+import MaskedText from '@/components/MaskedText.vue'
 import CheckList from '@/components/CheckList.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
 import StateBadge from '@/components/StateBadge.vue'
@@ -35,7 +36,7 @@ const MetricChart = defineAsyncComponent(() => import('@/components/MetricChart.
 const props = defineProps<{ id: string; tab?: string }>()
 const {
   state, accountById, closeDrawer, ask, toast, toastError, trackJob, activeJobsFor,
-  start, stop, restart, terminate
+  start, stop, restart, terminate, refreshInstances
 } = useStore()
 
 /** 这台实例上正在后台跑的任务（换 IP、改配置……）。 */
@@ -83,6 +84,9 @@ const primaryVnic = computed(() =>
 
 const secondaryVnics = computed(() =>
   detail.value?.vnics?.filter(v => v !== primaryVnic.value) ?? [])
+
+const orderedVnics = computed(() =>
+  primaryVnic.value ? [primaryVnic.value, ...secondaryVnics.value] : secondaryVnics.value)
 
 /**
  * IPv6 每个地址单占一行。原先拼成一串显示，既不能逐个复制，
@@ -155,9 +159,6 @@ function removeIpv6(address: string, primary: boolean) {
 /** 一张网卡的地址与所在网络。主网卡与附属网卡共用，保持两边的行一致。 */
 function vnicItems(v: D.VnicInfoDTO): KvItem[] {
   return [
-    { k: t.instDrawer.publicV4, v: v.publicIp || t.instDrawer.unassigned, mono: true, copyable: !!v.publicIp, secret: 'ip' },
-    ...(v.publicIp ? [{ k: t.instDrawer.type, v: v.publicIpType === 'RESERVED' ? t.instDrawer.reservedIp : t.instDrawer.ephemeralIp }] : []),
-    { k: t.instDrawer.privateV4, v: v.privateIp || '—', mono: true, copyable: !!v.privateIp, secret: 'ip' },
     ...ipv6Items(v),
     { k: 'VCN', v: v.vcnName || '—', mono: true },
     { k: t.instDrawer.subnet, v: v.subnetName || '—', mono: true },
@@ -167,45 +168,414 @@ function vnicItems(v: D.VnicInfoDTO): KvItem[] {
 
 /* ---------- 更换 / 分配公网 IP ---------- */
 
-/** 正在换 IP 的网卡 OCID；同一时刻只允许一张。 */
-const changingIpVnic = ref('')
+/** 正在换 IP 的目标键（网卡 OCID 或辅助私网 IP OCID）；同一时刻只允许一个。 */
+const changingIpKey = ref('')
 
 /**
- * 主网卡、附属网卡共用。网卡还没有公网 IP 时就是新分配一个。
- * 与行内 ⋯ 菜单、网络页走同一个接口（那两处只管主网卡）。
+ * 主网卡、附属网卡的主私网 IP 共用。网卡还没有公网 IP 时就是新分配一个。
  * 确认框里的原 IP 按隐私模式打码——确认框同样会被截图。
  */
 function changeIp(v: D.VnicInfoDTO) {
   const i = inst.value
-  if (!i) return
+  if (!i || v.publicIpUnknown) return
   const assign = !v.publicIp
+  const reserved = !assign && v.publicIpType === 'RESERVED'
   const where = v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || '')
   const ip = v.publicIp && state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
+  const run = async () => {
+    changingIpKey.value = v.vnicId
+    try {
+      const { job } = await instancesApi.changeIp(i.id, {
+        vnicId: v.isPrimary ? undefined : v.vnicId,
+        allowReserved: reserved,
+        confirm: reserved ? v.publicIp : 'true',
+        expectPublicIpId: v.publicIpId ?? '',
+        expectPublicIp: v.publicIp || ''
+      })
+      const id = i.id
+      trackJob(job, { onSuccess: () => { if (props.id === id) void loadDetail() } })
+    } catch (err) {
+      toastError(assign ? t.instDrawer.assignIpFailed : t.instDrawer.changeIpFailed, err)
+    } finally {
+      changingIpKey.value = ''
+    }
+  }
+  if (reserved) {
+    ask({
+      level: 3,
+      title: t.instDrawer.changeIpTitle(i.name, where),
+      body: t.instDrawer.changeReservedIpBody(ip),
+      noun: v.publicIp,
+      nounLabel: t.instDrawer.reservedIpAddressLabel,
+      losses: [t.instDrawer.reservedIpLoss(ip)],
+      okLabel: t.instDrawer.changeIp,
+      onConfirm: run
+    })
+    return
+  }
   ask({
     level: 2,
     title: assign ? t.instDrawer.assignIpTitle(i.name, where) : t.instDrawer.changeIpTitle(i.name, where),
-    body: assign
-      ? t.instDrawer.assignIpBody
-      : t.instDrawer.changeIpBody(ip),
+    body: assign ? t.instDrawer.assignIpBody : t.instDrawer.changeIpBody(ip),
     okLabel: assign ? t.instDrawer.assignIp : t.instDrawer.changeIp,
+    onConfirm: run
+  })
+}
+
+/** 更换或分配同一张网卡上某个辅助私网 IP 的预留公网 IP。 */
+function changeSecondaryIp(v: D.VnicInfoDTO, sip: D.SecondaryIPInfoDTO) {
+  const i = inst.value
+  if (!i || sip.publicIpUnknown) return
+  const assign = !sip.publicIp
+  const privShown = state.privacyMode ? mask(sip.privateIp, 'ip') : sip.privateIp
+  const pubShown = sip.publicIp && state.privacyMode ? mask(sip.publicIp, 'ip') : (sip.publicIp || '')
+  const where = t.instDrawer.secondaryPrivateIp(privShown)
+  const run = async () => {
+    changingIpKey.value = sip.privateIpId
+    try {
+      const { job } = await instancesApi.changeIp(i.id, {
+        vnicId: v.isPrimary ? undefined : v.vnicId,
+        privateIpId: sip.privateIpId,
+        allowReserved: !assign,
+        confirm: assign ? 'true' : (sip.publicIp || ''),
+        expectPublicIpId: sip.publicIpId ?? '',
+        expectPublicIp: sip.publicIp || ''
+      })
+      const id = i.id
+      trackJob(job, { onSuccess: () => { if (props.id === id) void loadDetail() } })
+    } catch (err) {
+      toastError(assign ? t.instDrawer.assignIpFailed : t.instDrawer.changeIpFailed, err)
+    } finally {
+      changingIpKey.value = ''
+    }
+  }
+  if (!assign && sip.publicIp) {
+    ask({
+      level: 3,
+      title: t.instDrawer.changeIpTitle(i.name, where),
+      body: t.instDrawer.changeReservedIpBody(pubShown),
+      noun: sip.publicIp,
+      nounLabel: t.instDrawer.reservedIpAddressLabel,
+      losses: [t.instDrawer.reservedIpLoss(pubShown)],
+      okLabel: t.instDrawer.changeIp,
+      onConfirm: run
+    })
+    return
+  }
+  ask({
+    level: 2,
+    title: t.instDrawer.assignIpTitle(i.name, where),
+    body: t.instDrawer.assignReservedIpBody(privShown),
+    okLabel: t.instDrawer.assignReservedIp,
+    onConfirm: run
+  })
+}
+
+const ipButtonTitle = (v: D.VnicInfoDTO) =>
+  v.publicIpType === 'RESERVED' ? t.instDrawer.changeReservedIpHint
+    : v.publicIp ? t.instDrawer.changeIpHint : t.instDrawer.assignIpHint
+
+const secondaryIpButtonTitle = (sip: D.SecondaryIPInfoDTO) =>
+  sip.publicIp ? t.instDrawer.changeReservedIpHint : t.instDrawer.assignReservedIpHint
+
+/* ---------- 绑定预留 IP / 取消绑定公网 IP ---------- */
+
+interface BindSlotTarget {
+  key: string
+  vnicId: string
+  isPrimaryVnic: boolean
+  privateIpId?: string
+  where: string
+  currentIp: string
+  currentPublicIpId: string
+  currentType: string
+}
+
+const bindTarget = ref<BindSlotTarget | null>(null)
+const freeReservedIps = ref<D.PublicIpDTO[]>([])
+const freeReservedLoading = ref(false)
+const selectedReservedId = ref('')
+const quickCreatingReserved = ref(false)
+const bindingReserved = ref(false)
+const switchingEphemeralKey = ref('')
+const unassigningKey = ref('')
+const addingPrivateVnicId = ref('')
+const creatingPrivateIp = ref(false)
+const deletingPrivateIpKey = ref('')
+const privateIpForm = reactive({ displayName: '', ipAddress: '' })
+
+const ipBusy = computed(() =>
+  !!changingIpKey.value || !!switchingEphemeralKey.value || !!unassigningKey.value
+  || bindingReserved.value || creatingPrivateIp.value || !!deletingPrivateIpKey.value || locked.value
+)
+
+const shownIp = (ip: string) => (ip && state.privacyMode ? mask(ip, 'ip') : ip)
+
+const freeReservedGroups = computed(() => [{
+  label: '',
+  options: freeReservedIps.value.map(ip => ({
+    value: ip.id,
+    label: ip.displayName ? `${shownIp(ip.ipAddress)} · ${ip.displayName}` : shownIp(ip.ipAddress)
+  }))
+}])
+
+async function loadFreeReservedIps() {
+  const i = inst.value
+  if (!i) return
+  freeReservedLoading.value = true
+  try {
+    const { publicIps } = await network.publicIps(i.accountId, i.region, 'RESERVED')
+    freeReservedIps.value = publicIps.filter(ip =>
+      !ip.privateIpId && !ip.assignedEntityId && (!ip.lifecycleState || ip.lifecycleState === 'AVAILABLE')
+    )
+    if (!freeReservedIps.value.some(ip => ip.id === selectedReservedId.value)) {
+      selectedReservedId.value = freeReservedIps.value[0]?.id ?? ''
+    }
+  } catch (err) {
+    toastError(t.instDrawer.bindReservedFailed, err)
+  } finally {
+    freeReservedLoading.value = false
+  }
+}
+
+function openBindReserved(v: D.VnicInfoDTO, sip?: D.SecondaryIPInfoDTO) {
+  if (sip ? sip.publicIpUnknown : v.publicIpUnknown) return
+  const key = sip ? sip.privateIpId : v.vnicId
+  if (bindTarget.value?.key === key) {
+    bindTarget.value = null
+    return
+  }
+  const privRaw = sip ? sip.privateIp : v.privateIp
+  const privShown = privRaw && state.privacyMode ? mask(privRaw, 'ip') : privRaw
+  const where = sip
+    ? t.instDrawer.secondaryPrivateIp(privShown)
+    : (v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || ''))
+  const currentIp = sip ? (sip.publicIp || '') : (v.publicIp || '')
+  const currentPublicIpId = sip ? (sip.publicIpId || '') : (v.publicIpId || '')
+  const currentType = sip
+    ? (sip.publicIpType || (currentIp ? 'RESERVED' : ''))
+    : (v.publicIpType || (currentIp ? 'EPHEMERAL' : ''))
+  bindTarget.value = {
+    key,
+    vnicId: v.vnicId,
+    isPrimaryVnic: v.isPrimary,
+    privateIpId: sip?.privateIpId,
+    where,
+    currentIp,
+    currentPublicIpId,
+    currentType
+  }
+  selectedReservedId.value = ''
+  void loadFreeReservedIps()
+}
+
+async function quickCreateReserved() {
+  const i = inst.value
+  if (!i) return
+  quickCreatingReserved.value = true
+  try {
+    const created = await network.createReservedIp(i.accountId, i.region)
+    toast({ tone: 'success', title: t.instDrawer.reservedCreated(shownIp(created.ipAddress)) })
+    freeReservedIps.value = [created, ...freeReservedIps.value]
+    selectedReservedId.value = created.id
+  } catch (err) {
+    toastError(t.instDrawer.createReservedFailed, err)
+  } finally {
+    quickCreatingReserved.value = false
+  }
+}
+
+function submitBindReserved() {
+  const i = inst.value
+  const target = bindTarget.value
+  const chosen = freeReservedIps.value.find(ip => ip.id === selectedReservedId.value)
+  if (!i || !target || !chosen) return
+  const newIpShown = state.privacyMode ? mask(chosen.ipAddress, 'ip') : chosen.ipAddress
+  const curIpShown = target.currentIp && state.privacyMode ? mask(target.currentIp, 'ip') : target.currentIp
+  const body = !target.currentIp
+    ? t.instDrawer.bindReservedConfirmEmpty(newIpShown)
+    : target.currentType === 'RESERVED'
+      ? t.instDrawer.bindWillUnbindReserved(curIpShown)
+      : t.instDrawer.bindWillReleaseEphemeral(curIpShown)
+
+  ask({
+    level: 2,
+    title: t.instDrawer.bindReservedConfirmTitle(i.name, target.where, newIpShown),
+    body,
+    okLabel: t.instDrawer.confirmBind,
     onConfirm: async () => {
-      changingIpVnic.value = v.vnicId
+      bindingReserved.value = true
       try {
-        const { job } = await instancesApi.changeIp(i.id, v.isPrimary ? undefined : v.vnicId)
+        const { job } = await instancesApi.bindReservedIp(i.id, {
+          reservedIpId: chosen.id,
+          vnicId: target.isPrimaryVnic ? undefined : target.vnicId,
+          privateIpId: target.privateIpId,
+          expectPublicIpId: target.currentPublicIpId,
+          expectPublicIp: target.currentIp
+        })
+        bindTarget.value = null
         const id = i.id
-        trackJob(job, { onSuccess: () => { if (props.id === id) void loadDetail() } })
+        trackJob(job, {
+          onSuccess: (finished) => {
+            const res = finished.result as D.BindReservedIpDTO | undefined
+            toast({ tone: 'success', title: t.instDrawer.bindReservedDone(shownIp(res?.newIp || chosen.ipAddress)) })
+            if (props.id === id) void loadDetail()
+          }
+        })
       } catch (err) {
-        toastError(assign ? t.instDrawer.assignIpFailed : t.instDrawer.changeIpFailed, err)
+        toastError(t.instDrawer.bindReservedFailed, err)
       } finally {
-        changingIpVnic.value = ''
+        bindingReserved.value = false
       }
     }
   })
 }
 
-const ipButtonTitle = (v: D.VnicInfoDTO) =>
-  v.publicIpType === 'RESERVED' ? t.instDrawer.reservedNoChange
-    : v.publicIp ? t.instDrawer.changeIpHint : t.instDrawer.assignIpHint
+function unassignPublicIp(v: D.VnicInfoDTO, sip?: D.SecondaryIPInfoDTO) {
+  const i = inst.value
+  if (!i || (sip ? sip.publicIpUnknown : v.publicIpUnknown)) return
+  const currentIp = sip ? (sip.publicIp || '') : (v.publicIp || '')
+  if (!currentIp) return
+  const currentPublicIpId = sip ? (sip.publicIpId || '') : (v.publicIpId || '')
+  const reserved = sip ? (sip.publicIpType !== 'EPHEMERAL') : (v.publicIpType === 'RESERVED')
+  const key = sip ? sip.privateIpId : v.vnicId
+  const privRaw = sip ? sip.privateIp : v.privateIp
+  const privShown = privRaw && state.privacyMode ? mask(privRaw, 'ip') : privRaw
+  const where = sip
+    ? t.instDrawer.secondaryPrivateIp(privShown)
+    : (v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || ''))
+  const ipShown = state.privacyMode ? mask(currentIp, 'ip') : currentIp
+
+  ask({
+    level: 2,
+    title: reserved ? t.instDrawer.unbindTitle(i.name, where) : t.instDrawer.unassignTitle(i.name, where),
+    body: reserved ? t.instDrawer.unbindReservedBody(ipShown) : t.instDrawer.unassignEphemeralBody(ipShown),
+    okLabel: reserved ? t.instDrawer.unbindIp : t.instDrawer.unassignIp,
+    onConfirm: async () => {
+      unassigningKey.value = key
+      try {
+        const res = await instancesApi.unassignIp(i.id, {
+          vnicId: v.isPrimary ? undefined : v.vnicId,
+          privateIpId: sip?.privateIpId,
+          expectPublicIpId: currentPublicIpId || undefined,
+          expectPublicIp: currentIp
+        })
+        toast({
+          tone: 'success',
+          title: res.lifetime === 'RESERVED' ? t.instDrawer.unbindDone(shownIp(res.oldIp)) : t.instDrawer.unassignDone(shownIp(res.oldIp))
+        })
+        if (bindTarget.value?.key === key) bindTarget.value = null
+        await Promise.all([loadDetail(), refreshInstances()])
+      } catch (err) {
+        toastError(t.instDrawer.unassignFailed, err)
+      } finally {
+        unassigningKey.value = ''
+      }
+    }
+  })
+}
+
+/* ---------- 添加 / 释放辅助私网 IP ---------- */
+
+function toggleAddPrivateIp(v: D.VnicInfoDTO) {
+  if (addingPrivateVnicId.value === v.vnicId) {
+    addingPrivateVnicId.value = ''
+    return
+  }
+  addingPrivateVnicId.value = v.vnicId
+  privateIpForm.displayName = ''
+  privateIpForm.ipAddress = ''
+}
+
+async function submitCreatePrivateIp(v: D.VnicInfoDTO) {
+  const i = inst.value
+  if (!i) return
+  creatingPrivateIp.value = true
+  try {
+    const res = await instancesApi.createPrivateIp(i.id, v.vnicId, {
+      displayName: privateIpForm.displayName.trim() || undefined,
+      ipAddress: privateIpForm.ipAddress.trim() || undefined
+    })
+    toast({ tone: 'success', title: t.instDrawer.createSecondaryIpDone(shownIp(res.privateIp)) })
+    addingPrivateVnicId.value = ''
+    await Promise.all([loadDetail(), refreshInstances()])
+  } catch (err) {
+    toastError(t.instDrawer.createSecondaryIpFailed, err)
+  } finally {
+    creatingPrivateIp.value = false
+  }
+}
+
+function deleteSecondaryPrivateIp(v: D.VnicInfoDTO, sip: D.SecondaryIPInfoDTO) {
+  const i = inst.value
+  if (!i) return
+  const privShown = shownIp(sip.privateIp)
+  const pubShown = sip.publicIp ? shownIp(sip.publicIp) : ''
+  ask({
+    level: 2,
+    title: t.instDrawer.deleteSecondaryIpTitle(i.name, privShown),
+    body: pubShown
+      ? t.instDrawer.deleteSecondaryIpBoundBody(privShown, pubShown)
+      : t.instDrawer.deleteSecondaryIpBody(privShown),
+    okLabel: t.instDrawer.deleteSecondaryIp,
+    onConfirm: async () => {
+      deletingPrivateIpKey.value = sip.privateIpId
+      try {
+        const res = await instancesApi.deletePrivateIp(i.id, v.vnicId, sip.privateIpId)
+        toast({
+          tone: 'success',
+          title: res.unboundPublicIp
+            ? t.instDrawer.deleteSecondaryIpBoundDone(shownIp(res.privateIp), shownIp(res.unboundPublicIp))
+            : t.instDrawer.deleteSecondaryIpDone(shownIp(res.privateIp))
+        })
+        if (bindTarget.value?.key === sip.privateIpId) bindTarget.value = null
+        await Promise.all([loadDetail(), refreshInstances()])
+      } catch (err) {
+        toastError(t.instDrawer.deleteSecondaryIpFailed, err)
+      } finally {
+        deletingPrivateIpKey.value = ''
+      }
+    }
+  })
+}
+
+/** 将主网卡或附属网卡的主私网 IP 槽从预留 IP 无损切回临时公网 IP。 */
+function switchToEphemeral(v: D.VnicInfoDTO) {
+  const i = inst.value
+  if (!i || v.publicIpUnknown || !v.publicIp || v.publicIpType !== 'RESERVED') return
+  const where = v.isPrimary ? t.instDrawer.primaryVnic : t.instDrawer.secondaryVnic(v.displayName || '')
+  const ipShown = state.privacyMode ? mask(v.publicIp, 'ip') : v.publicIp
+
+  ask({
+    level: 2,
+    title: t.instDrawer.switchEphemeralTitle(i.name, where),
+    body: t.instDrawer.switchEphemeralBody(ipShown),
+    okLabel: t.instDrawer.switchEphemeralIp,
+    onConfirm: async () => {
+      switchingEphemeralKey.value = v.vnicId
+      try {
+        const { job } = await instancesApi.switchEphemeralIp(i.id, {
+          vnicId: v.isPrimary ? undefined : v.vnicId,
+          expectPublicIpId: v.publicIpId || undefined,
+          expectPublicIp: v.publicIp
+        })
+        if (bindTarget.value?.key === v.vnicId) bindTarget.value = null
+        const id = i.id
+        trackJob(job, {
+          onSuccess: (finished) => {
+            const res = finished.result as D.SwitchEphemeralIpDTO | undefined
+            toast({ tone: 'success', title: t.instDrawer.switchEphemeralDone(shownIp(res?.newIp || '')) })
+            if (props.id === id) void loadDetail()
+          }
+        })
+      } catch (err) {
+        toastError(t.instDrawer.switchEphemeralFailed, err)
+      } finally {
+        switchingEphemeralKey.value = ''
+      }
+    }
+  })
+}
 
 /* ---------- 附属网卡增删 ---------- */
 
@@ -859,40 +1229,198 @@ watch(metricHours, () => void loadMetrics())
         <SkeletonRows v-if="detailLoading" :rows="4" />
         <template v-else>
           <!-- 网卡放在一起：主网卡在前、附属网卡随后，增删网卡的入口放最下面。
-               主网卡的两项操作（换 IP、开 IPv6）直接挂在卡片头上，不再让人去行内菜单找。 -->
-          <SectionCard v-if="primaryVnic" :title="t.instDrawer.primaryCard(primaryVnic.displayName || t.common.unnamed)"
-                       :note="`nic ${primaryVnic.nicIndex}`">
+               卡片头只放网卡级操作（IPv6、分离）；主私网 IP 与辅助私网 IP 各自装在独立槽位框里，按钮归属一目了然。 -->
+          <SectionCard v-for="v in orderedVnics" :key="v.vnicId" class="vnic-card"
+                       :title="v.isPrimary ? t.instDrawer.primaryCard(v.displayName || t.common.unnamed) : t.instDrawer.secondaryCard(v.displayName || t.common.unnamed)"
+                       :note="`nic ${v.nicIndex}`">
             <template #action>
               <span class="card-actions">
-                <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(primaryVnic)">
-                  {{ addingIpv6Vnic === primaryVnic.vnicId ? t.instDrawer.adding : primaryVnic.ipv6?.length ? t.instDrawer.addV6 : t.instDrawer.enableV6 }}
+                <button class="btn btn--sm" :disabled="ipBusy" @click="toggleAddPrivateIp(v)">
+                  {{ t.instDrawer.addSecondaryIp }}
                 </button>
-                <button class="btn btn--sm" :class="{ 'btn--warning': primaryVnic.publicIp }"
-                        :disabled="!!changingIpVnic || locked || primaryVnic.publicIpType === 'RESERVED'"
-                        :title="ipButtonTitle(primaryVnic)" @click="changeIp(primaryVnic)">
-                  {{ changingIpVnic === primaryVnic.vnicId ? t.instDrawer.processing : primaryVnic.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignPublicIp }}
-                </button>
-              </span>
-            </template>
-            <KeyValueList :items="vnicItems(primaryVnic)" />
-          </SectionCard>
-
-          <SectionCard v-for="v in secondaryVnics" :key="v.vnicId"
-                       :title="t.instDrawer.secondaryCard(v.displayName || t.common.unnamed)" :note="`nic ${v.nicIndex}`">
-            <template #action>
-              <span class="card-actions">
                 <button class="btn btn--sm" :disabled="!!addingIpv6Vnic || locked" @click="addIpv6(v)">
-                  {{ addingIpv6Vnic === v.vnicId ? t.instDrawer.adding : t.instDrawer.addV6 }}
+                  {{ addingIpv6Vnic === v.vnicId ? t.instDrawer.adding : v.ipv6?.length ? t.instDrawer.addV6 : (v.isPrimary ? t.instDrawer.enableV6 : t.instDrawer.addV6) }}
                 </button>
-                <button class="btn btn--sm" :class="{ 'btn--warning': v.publicIp }"
-                        :disabled="!!changingIpVnic || locked || v.publicIpType === 'RESERVED'"
-                        :title="ipButtonTitle(v)" @click="changeIp(v)">
-                  {{ changingIpVnic === v.vnicId ? t.instDrawer.processing : v.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignPublicIp }}
-                </button>
-                <button class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">{{ t.instDrawer.detach }}</button>
+                <button v-if="!v.isPrimary" class="btn btn--sm" :disabled="locked" @click="detachVnic(v)">{{ t.instDrawer.detach }}</button>
               </span>
             </template>
-            <KeyValueList :items="vnicItems(v)" />
+
+            <div v-if="addingPrivateVnicId === v.vnicId" class="priv-form">
+              <div class="bind-box__head t-xs">{{ t.instDrawer.addSecondaryIpTitle }}</div>
+              <div class="priv-form__grid">
+                <div class="field">
+                  <label class="t-2xs muted">{{ t.instDrawer.secondaryIpName }}</label>
+                  <input v-model="privateIpForm.displayName" class="input mono" maxlength="255"
+                         :placeholder="t.instDrawer.secondaryIpNamePlaceholder" />
+                </div>
+                <div class="field">
+                  <label class="t-2xs muted">{{ t.instDrawer.secondaryIpAddr }}</label>
+                  <input v-model="privateIpForm.ipAddress" class="input mono" maxlength="32"
+                         :placeholder="t.instDrawer.secondaryIpAddrPlaceholder" />
+                </div>
+              </div>
+              <p class="t-2xs muted priv-form__hint">{{ t.instDrawer.secondaryIpCreateHint }}</p>
+              <div class="bind-box__acts">
+                <button class="btn btn--sm btn--primary" :disabled="creatingPrivateIp" @click="submitCreatePrivateIp(v)">
+                  {{ creatingPrivateIp ? t.instDrawer.adding : t.instDrawer.add }}
+                </button>
+                <button class="btn btn--sm" :disabled="creatingPrivateIp" @click="addingPrivateVnicId = ''">{{ t.common.cancel }}</button>
+              </div>
+            </div>
+
+            <div class="ip-group">
+              <div class="ip-group__head t-xs">{{ t.instDrawer.primaryPrivateIpTitle }}</div>
+              <div class="ip-slot ip-slot--primary">
+                <div class="ip-slot__top">
+                  <div class="ip-slot__main">
+                    <div class="ip-slot__row">
+                      <span class="ip-slot__k t-xs muted">{{ t.instDrawer.publicV4 }}</span>
+                      <span class="ip-slot__v mono">
+                        <span v-if="v.publicIpUnknown" class="warn-text" :title="t.instDrawer.publicIpUnknownHint">{{ t.instDrawer.publicIpUnknown }}</span>
+                        <MaskedText v-else-if="v.publicIp" :value="v.publicIp" kind="ip" copyable />
+                        <span v-else class="muted">{{ t.instDrawer.unassigned }}</span>
+                        <span v-if="!v.publicIpUnknown && v.publicIp" class="ip-slot__tag t-2xs"
+                              :class="v.publicIpType === 'RESERVED' ? 'ip-slot__tag--reserved' : 'ip-slot__tag--ephemeral'">
+                          {{ v.publicIpType === 'RESERVED' ? t.instDrawer.reservedIp : t.instDrawer.ephemeralIp }}
+                        </span>
+                      </span>
+                    </div>
+                    <div class="ip-slot__row">
+                      <span class="ip-slot__k t-xs muted">{{ t.instDrawer.privateV4 }}</span>
+                      <span class="ip-slot__v mono">
+                        <MaskedText v-if="v.privateIp" :value="v.privateIp" kind="ip" copyable />
+                        <span v-else class="muted">—</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="ip-slot__acts">
+                    <button class="btn btn--sm" :class="{ 'btn--warning': v.publicIp }"
+                            :disabled="ipBusy || !!v.publicIpUnknown"
+                            :title="v.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : ipButtonTitle(v)" @click="changeIp(v)">
+                      {{ changingIpKey === v.vnicId ? t.instDrawer.processing : v.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignPublicIp }}
+                    </button>
+                    <button v-if="v.publicIpType !== 'RESERVED'" class="btn btn--sm"
+                            :disabled="ipBusy || !!v.publicIpUnknown"
+                            :title="v.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : t.instDrawer.bindReservedIpHint" @click="openBindReserved(v)">
+                      {{ v.publicIp ? t.instDrawer.switchReservedIp : t.instDrawer.bindReservedIp }}
+                    </button>
+                    <button v-if="v.publicIp && v.publicIpType === 'RESERVED'" class="btn btn--sm"
+                            :disabled="ipBusy || !!v.publicIpUnknown"
+                            :title="v.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : t.instDrawer.switchEphemeralHint" @click="switchToEphemeral(v)">
+                      {{ switchingEphemeralKey === v.vnicId ? t.instDrawer.processing : t.instDrawer.switchEphemeralIp }}
+                    </button>
+                    <button v-if="v.publicIp" class="btn btn--sm" :class="{ 'btn--warning': v.publicIpType !== 'RESERVED' }"
+                            :disabled="ipBusy || !!v.publicIpUnknown"
+                            :title="v.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : (v.publicIpType === 'RESERVED' ? t.instDrawer.unbindReservedHint : t.instDrawer.unassignEphemeralHint)"
+                            @click="unassignPublicIp(v)">
+                      {{ unassigningKey === v.vnicId ? t.instDrawer.processing : v.publicIpType === 'RESERVED' ? t.instDrawer.unbindIp : t.instDrawer.unassignIp }}
+                    </button>
+                  </div>
+                </div>
+                <div v-if="bindTarget && bindTarget.key === v.vnicId" class="bind-box">
+                  <div class="bind-box__head t-xs">{{ t.instDrawer.bindReservedPanelTitle(bindTarget.where) }}</div>
+                  <p v-if="bindTarget.currentIp" class="t-2xs warn-text">
+                    {{ bindTarget.currentType === 'RESERVED'
+                      ? t.instDrawer.bindWillUnbindReserved(state.privacyMode ? mask(bindTarget.currentIp, 'ip') : bindTarget.currentIp)
+                      : t.instDrawer.bindWillReleaseEphemeral(state.privacyMode ? mask(bindTarget.currentIp, 'ip') : bindTarget.currentIp) }}
+                  </p>
+                  <div class="bind-box__row">
+                    <span v-if="freeReservedLoading" class="t-xs muted">{{ t.instDrawer.loadingReservedIps }}</span>
+                    <SelectMenu v-else-if="freeReservedIps.length > 0" v-model="selectedReservedId"
+                                :groups="freeReservedGroups" :label="t.instDrawer.pickReservedIp" />
+                    <span v-else class="t-xs muted">{{ t.instDrawer.noFreeReservedIps }}</span>
+                    <button class="btn btn--sm" :disabled="quickCreatingReserved" @click="quickCreateReserved">
+                      {{ quickCreatingReserved ? t.instDrawer.creatingReserved : t.instDrawer.quickCreateReserved }}
+                    </button>
+                  </div>
+                  <div class="bind-box__acts">
+                    <button class="btn btn--sm btn--primary" :disabled="bindingReserved || !selectedReservedId" @click="submitBindReserved">
+                      {{ t.instDrawer.confirmBind }}
+                    </button>
+                    <button class="btn btn--sm" @click="bindTarget = null">{{ t.common.cancel }}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="v.secondaryIps?.length" class="ip-group ip-group--secondary">
+              <div class="ip-group__head t-xs muted">{{ t.instDrawer.secondaryIpsTitle(v.secondaryIps.length) }}</div>
+              <div v-for="sip in v.secondaryIps" :key="sip.privateIpId" class="ip-slot">
+                <div class="ip-slot__top">
+                  <div class="ip-slot__main">
+                    <div class="ip-slot__row">
+                      <span class="ip-slot__k t-xs muted">{{ t.instDrawer.publicV4 }}</span>
+                      <span class="ip-slot__v mono">
+                        <span v-if="sip.publicIpUnknown" class="warn-text" :title="t.instDrawer.publicIpUnknownHint">{{ t.instDrawer.publicIpUnknown }}</span>
+                        <MaskedText v-else-if="sip.publicIp" :value="sip.publicIp" kind="ip" copyable />
+                        <span v-else class="muted">{{ t.instDrawer.unassigned }}</span>
+                        <span v-if="!sip.publicIpUnknown && sip.publicIp" class="ip-slot__tag t-2xs"
+                              :class="sip.publicIpType === 'RESERVED' ? 'ip-slot__tag--reserved' : 'ip-slot__tag--ephemeral'">
+                          {{ sip.publicIpType === 'RESERVED' ? t.instDrawer.reservedIp : t.instDrawer.ephemeralIp }}
+                        </span>
+                      </span>
+                    </div>
+                    <div class="ip-slot__row">
+                      <span class="ip-slot__k t-xs muted">{{ t.instDrawer.privateV4 }}</span>
+                      <span class="ip-slot__v mono">
+                        <MaskedText :value="sip.privateIp" kind="ip" copyable />
+                        <span v-if="sip.displayName" class="ip-slot__name t-xs muted">{{ sip.displayName }}</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="ip-slot__acts">
+                    <button class="btn btn--sm" :class="{ 'btn--warning': sip.publicIp }"
+                            :disabled="ipBusy || !!sip.publicIpUnknown"
+                            :title="sip.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : secondaryIpButtonTitle(sip)"
+                            @click="changeSecondaryIp(v, sip)">
+                      {{ changingIpKey === sip.privateIpId ? t.instDrawer.processing : sip.publicIp ? t.instDrawer.changePublicIp : t.instDrawer.assignReservedIp }}
+                    </button>
+                    <button v-if="!sip.publicIp" class="btn btn--sm" :disabled="ipBusy || !!sip.publicIpUnknown"
+                            :title="sip.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : t.instDrawer.bindReservedIpHint" @click="openBindReserved(v, sip)">
+                      {{ t.instDrawer.bindReservedIp }}
+                    </button>
+                    <button v-if="sip.publicIp" class="btn btn--sm"
+                            :disabled="ipBusy || !!sip.publicIpUnknown"
+                            :title="sip.publicIpUnknown ? t.instDrawer.publicIpUnknownHint : t.instDrawer.unbindReservedHint"
+                            @click="unassignPublicIp(v, sip)">
+                      {{ unassigningKey === sip.privateIpId ? t.instDrawer.processing : t.instDrawer.unbindIp }}
+                    </button>
+                    <button class="btn btn--sm btn--warning" :disabled="ipBusy"
+                            :title="t.instDrawer.deleteSecondaryIpHint"
+                            @click="deleteSecondaryPrivateIp(v, sip)">
+                      {{ deletingPrivateIpKey === sip.privateIpId ? t.instDrawer.processing : t.instDrawer.deleteSecondaryIp }}
+                    </button>
+                  </div>
+                </div>
+                <div v-if="bindTarget && bindTarget.key === sip.privateIpId" class="bind-box">
+                  <div class="bind-box__head t-xs">{{ t.instDrawer.bindReservedPanelTitle(bindTarget.where) }}</div>
+                  <p v-if="bindTarget.currentIp" class="t-2xs warn-text">
+                    {{ bindTarget.currentType === 'RESERVED'
+                      ? t.instDrawer.bindWillUnbindReserved(state.privacyMode ? mask(bindTarget.currentIp, 'ip') : bindTarget.currentIp)
+                      : t.instDrawer.bindWillReleaseEphemeral(state.privacyMode ? mask(bindTarget.currentIp, 'ip') : bindTarget.currentIp) }}
+                  </p>
+                  <div class="bind-box__row">
+                    <span v-if="freeReservedLoading" class="t-xs muted">{{ t.instDrawer.loadingReservedIps }}</span>
+                    <SelectMenu v-else-if="freeReservedIps.length > 0" v-model="selectedReservedId"
+                                :groups="freeReservedGroups" :label="t.instDrawer.pickReservedIp" />
+                    <span v-else class="t-xs muted">{{ t.instDrawer.noFreeReservedIps }}</span>
+                    <button class="btn btn--sm" :disabled="quickCreatingReserved" @click="quickCreateReserved">
+                      {{ quickCreatingReserved ? t.instDrawer.creatingReserved : t.instDrawer.quickCreateReserved }}
+                    </button>
+                  </div>
+                  <div class="bind-box__acts">
+                    <button class="btn btn--sm btn--primary" :disabled="bindingReserved || !selectedReservedId" @click="submitBindReserved">
+                      {{ t.instDrawer.confirmBind }}
+                    </button>
+                    <button class="btn btn--sm" @click="bindTarget = null">{{ t.common.cancel }}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="vnic-meta">
+              <KeyValueList :items="vnicItems(v)" />
+            </div>
           </SectionCard>
 
           <SectionCard :title="t.instDrawer.addVnicTitle"
@@ -1169,7 +1697,61 @@ watch(metricHours, () => void loadMetrics())
 </template>
 
 <style scoped>
+.vnic-card :deep(.sec__head) { flex-wrap: wrap; row-gap: 8px; }
 .card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ip-group { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.ip-group--secondary { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+.ip-group__head { font-weight: 600; color: var(--text-primary); letter-spacing: 0.01em; }
+.ip-group--secondary .ip-group__head { font-weight: 500; color: var(--text-secondary); }
+.ip-slot {
+  display: flex; flex-direction: column;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset); border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.ip-slot--primary { border-left: 3px solid var(--accent); }
+.ip-slot__top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; padding: 10px 12px;
+}
+.ip-slot__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 240px; }
+.ip-slot__row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.ip-slot__k { width: 68px; flex: 0 0 auto; }
+.ip-slot__v { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ip-slot__tag {
+  padding: 1px 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default); color: var(--text-secondary);
+  font-family: var(--font-sans, inherit);
+}
+.ip-slot__tag--reserved {
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
+  background: var(--info-soft);
+  color: var(--info);
+}
+.ip-slot__tag--ephemeral {
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+}
+.ip-slot__name { font-family: var(--font-sans, inherit); }
+.ip-slot__acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.vnic-meta { border-top: 1px solid var(--border-subtle); }
+.bind-box {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+.bind-box__head { font-weight: 500; color: var(--text-primary); }
+.bind-box__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bind-box__row :deep(.sm__trigger) { min-width: 240px; }
+.bind-box__acts { display: flex; align-items: center; gap: 8px; }
+.warn-text { margin: 0; color: var(--warning); line-height: 17px; }
+.priv-form {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+}
+.priv-form__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.priv-form__hint { margin: 0; line-height: 17px; }
 .vnic-form { display: flex; flex-direction: column; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
 .vnic-form__actions { display: flex; gap: 8px; }
 .rule { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }

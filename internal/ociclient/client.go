@@ -123,6 +123,9 @@ type Request struct {
 	Query   url.Values
 	// Body 会被序列化为 JSON。为 nil 表示无请求体。
 	Body any
+	// NoConflictRetry 为 true 时，不在底层对 409 Conflict 做长退避重试，
+	// 交由上层（如 netsvc 的冲突重试循环）或调用方自行处理。
+	NoConflictRetry bool
 }
 
 // Response 携带调用方偶尔需要的响应元数据（分页游标、请求 ID）。
@@ -154,7 +157,7 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 		if len(req.Query) > 0 {
 			target += "?" + req.Query.Encode()
 		}
-		return c.doTarget(ctx, req.Method, target, payload, out)
+		return c.doTarget(ctx, req.Method, target, payload, req.NoConflictRetry, out)
 	}
 
 	region := req.Region
@@ -180,11 +183,11 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	if len(req.Query) > 0 {
 		target += "?" + req.Query.Encode()
 	}
-	return c.doTarget(ctx, req.Method, target, payload, out)
+	return c.doTarget(ctx, req.Method, target, payload, req.NoConflictRetry, out)
 }
 
 // doTarget 对一个已经拼好的完整地址执行请求，带重试与退避。
-func (c *Client) doTarget(ctx context.Context, method, target string, payload []byte, out any) (*Response, error) {
+func (c *Client) doTarget(ctx context.Context, method, target string, payload []byte, noConflictRetry bool, out any) (*Response, error) {
 	for attempt := 0; ; attempt++ {
 		resp, err := c.attempt(ctx, method, target, payload, out)
 		if err == nil {
@@ -193,6 +196,11 @@ func (c *Client) doTarget(ctx context.Context, method, target string, payload []
 		// 认证、权限、配额类错误重试多少次都是一样的结果，立刻返回。
 		if attempt >= c.maxRetries || !IsRetryable(err) {
 			return nil, err
+		}
+		if noConflictRetry {
+			if apiErr, ok := AsAPIError(err); ok && apiErr.Class == ClassConflict {
+				return nil, err
+			}
 		}
 		// 退避期间必须尊重 context：用户关掉页面时应立刻停止。
 		wait := backoffFor(err, attempt)
