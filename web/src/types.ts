@@ -40,6 +40,11 @@ export interface Account {
   statusMessage: string
   /** 账号性质：试用 / 升级 / 未知 */
   tier: AccountTier
+  /**
+   * 是否读到了订阅信息。tier 为 unknown 时用来区分两种情况：
+   * 读不到（多半是权限）与读到了但订阅上没有付费模式字段。
+   */
+  subscriptionRead: boolean
   /** 试用到期日（ISO）。仅试用号有 */
   trialEndsAt: string | null
   /** 甲骨文账号开户时刻（ISO）。取不到时为 null */

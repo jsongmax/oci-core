@@ -548,8 +548,13 @@ data: {"type":"instance.updated","at":"…","instanceId":"ocid1…","accountId":
 ```
 
 来源是 `GET https://organizations.{region}.oci.oraclecloud.com/20230401/subscriptions?compartmentId={tenancy}`。
-`paymentModel` 为 `FREE_TRIAL` 即试用号，`PAY_AS_YOU_GO` 即升级号；
-试用订阅的 `endDate` 就是试用到期日。
+`paymentModel` 为 `FREE_TRIAL` 即试用号，其它非空值（实测为 `PAYG`，文档写作 `PAY_AS_YOU_GO`）即升级号；
+试用订阅的 `endDate` 就是试用到期日，升级号订阅上的 `endDate` 不代表到期，不要拿来判断。
+
+一个租户常返回多条订阅（例如 `IDCS` 的 `paymentModel` 为 `null`，`CLOUDCM` 才带付费模式），
+按以下优先级选一条：ACTIVE 且带付费模式的 `CLOUDCM` → ACTIVE 且带付费模式的任意订阅 →
+任意 ACTIVE 订阅 → 第一条。读到了订阅但都没有付费模式时，前端显示"未知（订阅上没有付费模式字段）"，
+与读不到订阅（多半是权限）区分开。
 
 需要 organizations 服务的读权限，精简权限的 IAM 用户会拿到 401/404。
 **取不到时三个字段留空，前端显示"类型未知"——不要回退成猜测。**

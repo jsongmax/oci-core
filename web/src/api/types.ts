@@ -50,7 +50,7 @@ export interface AccountDTO {
   status: AccountStatusDTO
   statusMessage: string
   lastCheckedAt: string | null
-  /** FREE_TRIAL / PAY_AS_YOU_GO，取不到时为空 */
+  /** FREE_TRIAL / PAYG / PAY_AS_YOU_GO，取不到时为空 */
   paymentModel?: string
   subscriptionState?: string
   /** 试用订阅上就是试用到期日 */

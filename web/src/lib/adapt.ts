@@ -205,6 +205,7 @@ export function toAccount(dto: AccountDTO, quota?: AccountQuotaDTO): Account {
     lastCheckedAt: dto.lastCheckedAt,
     statusMessage: dto.statusMessage ?? '',
     tier: accountTier(dto.paymentModel),
+    subscriptionRead: !!dto.subscriptionState,
     trialEndsAt: dto.paymentModel === 'FREE_TRIAL' ? (dto.subscriptionEndsAt ?? null) : null,
     openedAt: dto.subscriptionStartsAt ?? null,
     email: dto.email || dto.tenancyName || '—',

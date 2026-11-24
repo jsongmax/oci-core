@@ -155,6 +155,8 @@ func TestFreeTierFollowsPaymentModel(t *testing.T) {
 		ocpu, memo int
 	}{
 		{"PAY_AS_YOU_GO", "paid", ociclient.LegacyFreeARMOcpus, ociclient.LegacyFreeARMMemoryGB},
+		// 升级号的订阅接口实测返回 PAYG（issue #11）
+		{"PAYG", "paid", ociclient.LegacyFreeARMOcpus, ociclient.LegacyFreeARMMemoryGB},
 		{"FREE_TRIAL", "free", ociclient.AlwaysFreeARMOcpus, ociclient.AlwaysFreeARMMemoryGB},
 		{"", "unknown", ociclient.AlwaysFreeARMOcpus, ociclient.AlwaysFreeARMMemoryGB},
 	}

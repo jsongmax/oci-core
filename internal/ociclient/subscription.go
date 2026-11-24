@@ -9,6 +9,9 @@ import (
 
 // 付费模式。Oracle 返回的原始字符串,不做归一化——枚举值可能新增,
 // 把没见过的值原样透出去也好过悄悄归到"未知"里。
+//
+// 只有 FREE_TRIAL 需要特殊对待；其它非空值一律当升级号。升级号实测返回的是
+// PAYG，文档里写的是 PAY_AS_YOU_GO，两种都会出现。
 const (
 	PaymentFreeTrial = "FREE_TRIAL"
 	PaymentPAYG      = "PAY_AS_YOU_GO"
@@ -24,7 +27,7 @@ type Subscription struct {
 	Name                  string `json:"name"`
 	ServiceName           string `json:"serviceName"`
 	ClassicSubscriptionID string `json:"classicSubscriptionId"`
-	// PaymentModel 是 FREE_TRIAL / PAY_AS_YOU_GO 之类。
+	// PaymentModel 是 FREE_TRIAL / PAYG / PAY_AS_YOU_GO 之类，IDCS 等订阅上为 null。
 	PaymentModel string `json:"paymentModel"`
 	// LifecycleState 常见值 ACTIVE / CANCELED。
 	LifecycleState string `json:"lifecycleState"`
@@ -65,20 +68,53 @@ func (c *Client) ListSubscriptions(ctx context.Context, region string) ([]Subscr
 
 // PrimarySubscription 返回最能代表账号性质的那条订阅。
 //
-// 绝大多数租户只有一条。有多条时优先取 ACTIVE 的——已取消的订阅留在列表里
-// 会把账号误判成过期。
+// 选择规则见 pickPrimarySubscription。
 func (c *Client) PrimarySubscription(ctx context.Context, region string) (*Subscription, error) {
 	subs, err := c.ListSubscriptions(ctx, region)
 	if err != nil {
 		return nil, err
 	}
-	for i := range subs {
-		if subs[i].LifecycleState == "ACTIVE" {
-			return &subs[i], nil
+	return pickPrimarySubscription(subs), nil
+}
+
+// ServiceCloudCM 是承载 OCI 计费的那类订阅。
+const ServiceCloudCM = "CLOUDCM"
+
+// pickPrimarySubscription 从租户的订阅列表里挑出决定账号性质的那条。
+//
+// 一个租户常有多条订阅，并且不止一条是 ACTIVE：实测有租户同时返回
+// IDCS（身份域，paymentModel 为 null）和 CLOUDCM（paymentModel 为 PAYG），
+// 而 IDCS 排在前面。只取第一条 ACTIVE 会选中 IDCS，账号类型就变成"未知"
+// （issue #11）。所以按下面的优先级挑：
+//
+//  1. ACTIVE 且带付费模式的 CLOUDCM——它就是 OCI 计费那条；
+//  2. ACTIVE 且带付费模式的任意订阅；
+//  3. 任意 ACTIVE 订阅——已取消的订阅留在列表里会把账号误判成过期；
+//  4. 列表第一条。
+//
+// 不看 EndDate：升级号的 CLOUDCM 订阅上见过早已过去的 EndDate，
+// 而 lifecycleState 仍是 ACTIVE，EndDate 只在试用订阅上表示到期日。
+func pickPrimarySubscription(subs []Subscription) *Subscription {
+	if len(subs) == 0 {
+		return nil
+	}
+	rank := func(s *Subscription) int {
+		if s.LifecycleState != "ACTIVE" {
+			return 0
+		}
+		if s.PaymentModel == "" {
+			return 1
+		}
+		if s.ServiceName == ServiceCloudCM {
+			return 3
+		}
+		return 2
+	}
+	best := &subs[0]
+	for i := 1; i < len(subs); i++ {
+		if rank(&subs[i]) > rank(best) {
+			best = &subs[i]
 		}
 	}
-	if len(subs) > 0 {
-		return &subs[0], nil
-	}
-	return nil, nil
+	return best
 }

@@ -122,7 +122,7 @@ const state = reactive({
  */
 const PLACEHOLDER_ACCOUNT: Account = {
   id: '', alias: '—', code: '···', colorIndex: 8, tenancyTail: '',
-  regions: [], status: 'checking', lastCheckedAt: null, statusMessage: '', tier: 'unknown', trialEndsAt: null, openedAt: null, email: '', fingerprint: '',
+  regions: [], status: 'checking', lastCheckedAt: null, statusMessage: '', tier: 'unknown', subscriptionRead: false, trialEndsAt: null, openedAt: null, email: '', fingerprint: '',
   quota: {
     ocpuUsed: 0, ocpuLimit: 0, memUsed: 0, memLimit: 0,
     blockUsed: 0, blockLimit: 0, microUsed: 0, microLimit: 0,

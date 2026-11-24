@@ -234,7 +234,7 @@ const instances = computed(() => state.instances.filter(i => i.accountId === pro
 const tierText = computed(() => {
   const a = account.value
   if (!a) return '—'
-  if (a.tier === 'unknown') return t.acctDrawer.tierUnknown
+  if (a.tier === 'unknown') return a.subscriptionRead ? t.acctDrawer.tierUnknownNoModel : t.acctDrawer.tierUnknown
   if (a.tier === 'paid') return t.acctDrawer.tierPaid
   const d = trialDaysLeft(a)
   if (d === null) return t.acctDrawer.tierTrial
