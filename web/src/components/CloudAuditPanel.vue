@@ -109,6 +109,8 @@ const onlyWrite = ref(false)
 const onlyError = ref(false)
 const descOrder = ref(false)
 const expanded = ref<Set<string>>(new Set())
+/** 隐私模式下已单独临时展开原始 JSON 的事件 ID；重新开启隐私模式（revealEpoch 变化）时自动清空 */
+const revealedJson = ref<Set<string>>(new Set())
 
 /* ---------- 下拉选项 ---------- */
 
@@ -133,7 +135,7 @@ const compartmentGroups = computed<SelectGroup[]>(() => [{
   label: '',
   options: compartments.value.map(c => ({
     value: c.id,
-    label: c.isRoot ? `${c.name} (${t.cloudAudit.rootTag})` : c.name
+    label: c.isRoot ? `${c.name} (${t.cloudAudit.rootTag})` : (c.path || c.name)
   }))
 }])
 
@@ -158,6 +160,7 @@ async function loadAccountMeta(id: string) {
   activeWindow.value = null
   loadError.value = null
   expanded.value = new Set()
+  revealedJson.value = new Set()
 
   const acct = accountById(id)
 
@@ -182,10 +185,13 @@ async function loadAccountMeta(id: string) {
   }
 
   if (compRes.status === 'fulfilled' && compRes.value.compartments?.length) {
-    compartments.value = compRes.value.compartments
+    const list = compRes.value.compartments
+    compartments.value = list
     compartmentsPartial.value = !!compRes.value.partial
-    const root = compRes.value.compartments.find(c => c.isRoot)
-    compartmentId.value = root?.id ?? compRes.value.compartments[0].id
+    const defId = compRes.value.defaultCompartmentId
+    const matchedDefault = defId ? list.find(c => c.id === defId) : undefined
+    const root = list.find(c => c.isRoot)
+    compartmentId.value = matchedDefault?.id ?? root?.id ?? list[0].id
   } else {
     compartments.value = []
     compartmentId.value = ''
@@ -306,6 +312,7 @@ async function loadEvents(append = false) {
     } else {
       events.value = incoming
       expanded.value = new Set()
+      revealedJson.value = new Set()
     }
 
     nextPage.value = res.nextPage || ''
@@ -372,6 +379,13 @@ function toggleExpand(eventId: string) {
   expanded.value = next
 }
 
+function toggleJsonReveal(eventId: string) {
+  const next = new Set(revealedJson.value)
+  if (next.has(eventId)) next.delete(eventId)
+  else next.add(eventId)
+  revealedJson.value = next
+}
+
 function clearLocalFilters() {
   keyword.value = ''
   onlyWrite.value = false
@@ -383,6 +397,29 @@ function clearLocalFilters() {
 const hasLocalFilter = computed(() =>
   keyword.value.trim().length > 0 || onlyWrite.value || onlyError.value
 )
+
+/** 已加载事件的时间跨度（后端按 asc 分页，首条为最早、末条为最新） */
+const loadedRange = computed(() => {
+  if (events.value.length === 0) return null
+  const first = events.value[0]?.eventTime
+  const last = events.value[events.value.length - 1]?.eventTime
+  if (!first || !last) return null
+  return { start: formatTime(first), end: formatTime(last) }
+})
+
+const orderButtonLabel = computed(() => {
+  if (!descOrder.value) return t.cloudAudit.orderAsc
+  return hasMore.value ? t.cloudAudit.orderDescPartial : t.cloudAudit.orderDesc
+})
+
+const partialNoticeText = computed(() => {
+  const filteredOrDesc = hasLocalFilter.value || descOrder.value
+  const range = loadedRange.value
+  if (filteredOrDesc) {
+    return range ? t.cloudAudit.moreFilteredHint(range.start, range.end) : t.cloudAudit.moreFilteredShort
+  }
+  return range ? t.cloudAudit.moreUnloadedHint(range.start, range.end) : t.cloudAudit.moreUnloadedShort
+})
 
 const filteredEvents = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -479,6 +516,10 @@ async function copyCode(val: string) {
 
 /* ---------- 监听账号列表变化（首次刷新场景） ---------- */
 
+watch(() => state.revealEpoch, () => {
+  revealedJson.value = new Set()
+})
+
 watch(usableAccounts, list => {
   if (!accountId.value && list.length > 0) {
     accountId.value = list[0].id
@@ -556,9 +597,12 @@ onMounted(() => {
           </div>
         </div>
 
-        <p v-if="compartmentsPartial" class="ca-partial t-2xs dim-3">
-          {{ t.cloudAudit.partialCompartments }}
-        </p>
+        <div class="ca-comp-hints">
+          <p class="ca-partial t-2xs dim-3">{{ t.cloudAudit.singleCompartmentHint }}</p>
+          <p v-if="compartmentsPartial" class="ca-partial t-2xs dim-3">
+            {{ t.cloudAudit.partialCompartments }}
+          </p>
+        </div>
 
         <!-- 时间窗快捷选择 -->
         <div class="ca-row-bar">
@@ -603,8 +647,9 @@ onMounted(() => {
             {{ t.cloudAudit.onlyError }}
           </button>
           <button type="button" class="btn btn--sm btn--ghost"
+                  :title="descOrder && hasMore ? t.cloudAudit.orderDescPartialTitle : undefined"
                   @click="descOrder = !descOrder">
-            {{ descOrder ? t.cloudAudit.orderDesc : t.cloudAudit.orderAsc }}
+            {{ orderButtonLabel }}
           </button>
           <button v-if="hasLocalFilter" type="button" class="btn btn--sm btn--ghost"
                   @click="clearLocalFilters">
@@ -613,6 +658,10 @@ onMounted(() => {
           <span v-if="!loading && !loadError" class="ca-count mono t-2xs dim-3">
             {{ t.cloudAudit.summaryLoaded(filteredEvents.length, events.length, hasLocalFilter) }}
           </span>
+        </div>
+
+        <div v-if="hasMore && !loading && !loadError && events.length > 0" class="ca-partial-bar">
+          <span class="ca-partial-bar__text t-2xs">{{ partialNoticeText }}</span>
         </div>
       </div>
 
@@ -668,7 +717,23 @@ onMounted(() => {
                   :action-label="!isHomeRegionSelected && homeRegion ? t.cloudAudit.switchToHome : undefined"
                   @action="switchToHomeRegion" />
 
-      <!-- 本地筛选无匹配空态 -->
+      <!-- 本地筛选无匹配空态（若仍有后续分页未加载，同时提供继续加载更多入口） -->
+      <div v-else-if="filteredEvents.length === 0 && hasMore" class="ca-empty-more">
+        <div class="ca-empty-more__icon" aria-hidden="true">▤</div>
+        <p class="ca-empty-more__title">{{ t.cloudAudit.emptyFilteredTitle }}</p>
+        <p class="ca-empty-more__sub">{{ t.cloudAudit.emptyFilteredMoreSub }}</p>
+        <div class="ca-empty-more__actions">
+          <button type="button" class="btn btn--sm" @click="clearLocalFilters">
+            {{ t.cloudAudit.clearFilters }}
+          </button>
+          <button type="button" class="btn btn--sm btn--primary" :disabled="loadingMore || loading"
+                  @click="loadEvents(true)">
+            <span v-if="loadingMore" class="btn-spin" aria-hidden="true" />
+            {{ loadingMore ? t.cloudAudit.loadingMore : t.cloudAudit.loadMoreContinue }}
+          </button>
+        </div>
+      </div>
+
       <EmptyState v-else-if="filteredEvents.length === 0"
                   :title="t.cloudAudit.emptyFilteredTitle"
                   :sub="t.cloudAudit.emptyFilteredSub"
@@ -834,8 +899,26 @@ onMounted(() => {
             </div>
 
             <div v-if="detailJson(ev)" class="ca-detail__json">
-              <div class="ca-kv__k">{{ t.cloudAudit.detailRawJson }}</div>
-              <CodeBlock copyable :code="detailJson(ev)" />
+              <div class="ca-detail__json-head">
+                <span class="ca-kv__k">{{ t.cloudAudit.detailRawJson }}</span>
+                <button v-if="state.privacyMode && revealedJson.has(ev.eventId)"
+                        type="button" class="btn btn--sm btn--ghost"
+                        @click="toggleJsonReveal(ev.eventId)">
+                  {{ t.cloudAudit.hideRawJson }}
+                </button>
+              </div>
+              <div v-if="state.privacyMode && !revealedJson.has(ev.eventId)" class="ca-json-masked">
+                <span class="t-xs dim">{{ t.cloudAudit.detailJsonMasked }}</span>
+                <div class="ca-json-masked__actions">
+                  <button type="button" class="btn btn--sm" @click="toggleJsonReveal(ev.eventId)">
+                    {{ t.cloudAudit.showRawJson }}
+                  </button>
+                  <button type="button" class="btn btn--sm btn--ghost" @click="copyCode(detailJson(ev))">
+                    {{ t.cloudAudit.copyRawJson }}
+                  </button>
+                </div>
+              </div>
+              <CodeBlock v-else copyable :code="detailJson(ev)" />
             </div>
           </div>
         </div>
@@ -910,7 +993,36 @@ onMounted(() => {
   color: var(--text-tertiary);
   white-space: nowrap;
 }
+.ca-comp-hints { display: flex; flex-direction: column; gap: 3px; }
 .ca-partial { margin: 0; }
+.ca-partial-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+}
+.ca-partial-bar__text { color: var(--text-secondary); }
+.ca-empty-more {
+  padding: 52px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.ca-empty-more__icon {
+  width: 40px; height: 40px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-default); display: flex; align-items: center; justify-content: center;
+  color: var(--text-tertiary);
+}
+.ca-empty-more__title { margin: 0; font-size: 14px; font-weight: 500; }
+.ca-empty-more__sub { margin: 0; max-width: 520px; font-size: 12px; color: var(--text-secondary); }
+.ca-empty-more__actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 
 .ca-row-bar {
   display: flex;
@@ -1125,6 +1237,25 @@ onMounted(() => {
 .ca-msg-err { color: var(--danger); font-weight: 500; }
 
 .ca-detail__json { margin-top: 12px; }
+.ca-detail__json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ca-json-masked {
+  margin-top: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-default);
+  background: var(--bg-surface);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.ca-json-masked__actions { display: flex; gap: 6px; }
 .ca-detail__json :deep(.code) {
   margin: 6px 0 0;
   max-height: 320px;

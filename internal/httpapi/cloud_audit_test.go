@@ -326,29 +326,68 @@ func TestCloudAuditPermissionHint(t *testing.T) {
 }
 
 func TestAccountCompartmentsNormalAndPartialFallback(t *testing.T) {
-	t.Run("正常返回根区间与子区间", func(t *testing.T) {
+	t.Run("正常返回根区间与多层同名子区间路径", func(t *testing.T) {
+		var gotQuery url.Values
 		h, acc := newCloudAuditHarness(t, func(w http.ResponseWriter, r *http.Request) {
+			gotQuery = r.URL.Query()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`[
+				{"id":"ocid1.compartment.oc1..staging-app","compartmentId":"ocid1.compartment.oc1..staging","name":"app","lifecycleState":"ACTIVE"},
 				{"id":"ocid1.compartment.oc1..prod","compartmentId":"ocid1.tenancy.oc1..exampleuniqueid","name":"prod","lifecycleState":"ACTIVE"},
-				{"id":"ocid1.compartment.oc1..dev","compartmentId":"ocid1.tenancy.oc1..exampleuniqueid","name":"dev","lifecycleState":"ACTIVE"}
+				{"id":"ocid1.compartment.oc1..prod-app","compartmentId":"ocid1.compartment.oc1..prod","name":"app","lifecycleState":"ACTIVE"},
+				{"id":"ocid1.compartment.oc1..staging","compartmentId":"ocid1.tenancy.oc1..exampleuniqueid","name":"staging","lifecycleState":"ACTIVE"}
 			]`))
 		})
 
 		resp := h.get("/api/accounts/" + acc.ID + "/compartments")
 		expectStatus(t, resp, http.StatusOK)
 		out := decode[struct {
-			Compartments []AccountCompartmentItem `json:"compartments"`
-			Partial      bool                     `json:"partial"`
+			Compartments         []AccountCompartmentItem `json:"compartments"`
+			DefaultCompartmentID string                   `json:"defaultCompartmentId"`
+			Partial              bool                     `json:"partial"`
 		}](t, resp)
-		if out.Partial || len(out.Compartments) != 3 {
+		if gotQuery.Get("compartmentIdInSubtree") != "true" || gotQuery.Get("accessLevel") != "ANY" {
+			t.Errorf("OCI /compartments 必须带 compartmentIdInSubtree=true&accessLevel=ANY，实际 %v", gotQuery)
+		}
+		if out.Partial || len(out.Compartments) != 5 {
 			t.Fatalf("区间返回不对: %+v", out)
 		}
-		if !out.Compartments[0].IsRoot || out.Compartments[0].ID != acc.TenancyOCID {
+		if out.DefaultCompartmentID != acc.TenancyOCID {
+			t.Errorf("defaultCompartmentId = %q，期望 %q", out.DefaultCompartmentID, acc.TenancyOCID)
+		}
+		if !out.Compartments[0].IsRoot || out.Compartments[0].ID != acc.TenancyOCID || out.Compartments[0].Path != "demo-tenancy" {
 			t.Errorf("首项应为根区间: %+v", out.Compartments[0])
 		}
-		if out.Compartments[1].Name != "dev" || out.Compartments[2].Name != "prod" {
-			t.Errorf("子区间应按名称排序: %+v", out.Compartments)
+		wantPaths := []string{"prod", "prod / app", "staging", "staging / app"}
+		for i, want := range wantPaths {
+			got := out.Compartments[i+1].Path
+			if got != want {
+				t.Errorf("子区间[%d] path = %q，期望 %q (items=%+v)", i+1, got, want, out.Compartments)
+			}
+		}
+	})
+
+	t.Run("账号配置子区间时defaultCompartmentId对齐该子区间", func(t *testing.T) {
+		h, acc := newCloudAuditHarness(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"id":"ocid1.compartment.oc1..sub","compartmentId":"ocid1.tenancy.oc1..exampleuniqueid","name":"sub","lifecycleState":"ACTIVE"}
+			]`))
+		})
+		subID := "ocid1.compartment.oc1..sub"
+		if _, err := h.store.UpdateAccount(t.Context(), acc.ID, store.AccountUpdate{CompartmentOCID: &subID}); err != nil {
+			t.Fatal(err)
+		}
+
+		resp := h.get("/api/accounts/" + acc.ID + "/compartments")
+		expectStatus(t, resp, http.StatusOK)
+		out := decode[struct {
+			Compartments         []AccountCompartmentItem `json:"compartments"`
+			DefaultCompartmentID string                   `json:"defaultCompartmentId"`
+			Partial              bool                     `json:"partial"`
+		}](t, resp)
+		if out.DefaultCompartmentID != subID {
+			t.Errorf("defaultCompartmentId = %q，期望 %q", out.DefaultCompartmentID, subID)
 		}
 	})
 
@@ -362,11 +401,56 @@ func TestAccountCompartmentsNormalAndPartialFallback(t *testing.T) {
 		resp := h.get("/api/accounts/" + acc.ID + "/compartments")
 		expectStatus(t, resp, http.StatusOK)
 		out := decode[struct {
-			Compartments []AccountCompartmentItem `json:"compartments"`
-			Partial      bool                     `json:"partial"`
+			Compartments         []AccountCompartmentItem `json:"compartments"`
+			DefaultCompartmentID string                   `json:"defaultCompartmentId"`
+			Partial              bool                     `json:"partial"`
 		}](t, resp)
-		if !out.Partial || len(out.Compartments) != 1 || !out.Compartments[0].IsRoot {
+		if !out.Partial || len(out.Compartments) != 1 || !out.Compartments[0].IsRoot || out.DefaultCompartmentID != acc.TenancyOCID {
 			t.Fatalf("无权限时应优雅降级返回根区间并标 partial=true: %+v", out)
 		}
 	})
+}
+
+func TestSanitizeAuditHeaders(t *testing.T) {
+	in := map[string][]string{
+		"Accept":              {"application/json"},
+		"Content-Type":        {"application/json"},
+		"opc-request-id":      {"req-12345"},
+		"opc-retry-token":     {"retry-idempotency-key-1"},
+		"Authorization":       {"Signature secret"},
+		"Proxy-Authorization": {"Basic secret"},
+		"Cookie":              {"session=abc"},
+		"Set-Cookie":          {"session=xyz"},
+		"X-Api-Key":           {"k-123"},
+		"X-Apikey":            {"k-456"},
+		"opc-obo-token":       {"obo-secret"},
+		"X-Auth-Token":        {"tok-secret"},
+		"X-Custom-Secret":     {"s-789"},
+	}
+	got := sanitizeAuditHeaders(in)
+
+	for _, keep := range []string{"Accept", "Content-Type", "opc-request-id", "opc-retry-token"} {
+		if len(got[keep]) != 1 || got[keep][0] != in[keep][0] {
+			t.Errorf("正常头 %s 不应被误脱敏: got=%v want=%v", keep, got[keep], in[keep])
+		}
+	}
+	for _, redact := range []string{
+		"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie",
+		"X-Api-Key", "X-Apikey", "opc-obo-token", "X-Auth-Token", "X-Custom-Secret",
+	} {
+		if len(got[redact]) != 1 || got[redact][0] != "[REDACTED]" {
+			t.Errorf("敏感头 %s 应脱敏为 [REDACTED]，实际 %v", redact, got[redact])
+		}
+	}
+}
+
+func TestResolveCompartmentPathCycleSafe(t *testing.T) {
+	byID := map[string]ociclient.Compartment{
+		"a": {ID: "a", CompartmentID: "b", Name: "comp-a"},
+		"b": {ID: "b", CompartmentID: "a", Name: "comp-b"},
+	}
+	got := resolveCompartmentPath("a", "root", byID, map[string]string{})
+	if got != "comp-b / comp-a" {
+		t.Errorf("存在父子环时应安全中止并返回非空路径，实际 %q", got)
+	}
 }

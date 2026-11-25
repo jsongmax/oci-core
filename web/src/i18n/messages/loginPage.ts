@@ -21,7 +21,6 @@ const zh = {
   enrollSub: '用验证器应用扫描二维码，然后填写它显示的验证码。扫不了时可以手动录入下方密钥。',
   enrollQr: '两步验证绑定二维码',
   openInApp: '在本机验证器中打开',
-  digit: (i: number) => `第 ${i} 位`,
   enrollLater: '稍后再绑定',
   totpTitle: '输入两步验证码',
   totpSub: '来自验证器应用的 6 位数字，填满自动提交'
@@ -49,7 +48,6 @@ const en: typeof zh = {
   enrollSub: 'Scan the QR code with an authenticator app, then enter the code it shows. If you can\'t scan, type in the key below.',
   enrollQr: '2FA setup QR code',
   openInApp: 'Open in an authenticator on this device',
-  digit: (i: number) => `Digit ${i}`,
   enrollLater: 'Set up later',
   totpTitle: 'Enter 2FA code',
   totpSub: 'The 6-digit code from your authenticator app; submits automatically when complete'

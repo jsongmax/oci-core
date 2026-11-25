@@ -695,13 +695,19 @@ on('GET', '/api/accounts/{id}/regions', p => {
 on('GET', '/api/accounts/{id}/compartments', p => {
   const a = acctById(p.id)
   const partial = a.id === 'acc-pho'
+  const rootName = a.tenancyName || 'root'
   const list: D.CompartmentDTO[] = [
-    { id: a.tenancyOcid, name: a.tenancyName || 'root', isRoot: true, lifecycleState: 'ACTIVE' }
+    { id: a.tenancyOcid, name: rootName, path: rootName, isRoot: true, lifecycleState: 'ACTIVE' }
   ]
   if (!partial) {
-    list.push({ id: `ocid1.compartment.oc1..demo${a.id}prod`, name: 'production', isRoot: false, lifecycleState: 'ACTIVE' })
+    list.push(
+      { id: `ocid1.compartment.oc1..demo${a.id}prod`, name: 'prod', path: 'prod', isRoot: false, lifecycleState: 'ACTIVE' },
+      { id: `ocid1.compartment.oc1..demo${a.id}prodweb`, name: 'web', path: 'prod / web', isRoot: false, lifecycleState: 'ACTIVE' },
+      { id: `ocid1.compartment.oc1..demo${a.id}stg`, name: 'staging', path: 'staging', isRoot: false, lifecycleState: 'ACTIVE' },
+      { id: `ocid1.compartment.oc1..demo${a.id}stgweb`, name: 'web', path: 'staging / web', isRoot: false, lifecycleState: 'ACTIVE' }
+    )
   }
-  return { compartments: list, partial }
+  return { compartments: list, defaultCompartmentId: a.compartmentOcid || a.tenancyOcid, partial }
 })
 on('GET', '/api/accounts/{id}/cloud-audit', (p, q) => {
   const a = acctById(p.id)

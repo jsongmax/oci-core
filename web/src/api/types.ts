@@ -1054,12 +1054,14 @@ export interface AccountResourcesDTO {
 export interface CompartmentDTO {
   id: string
   name: string
+  path?: string
   isRoot: boolean
   lifecycleState: string
 }
 
 export interface AccountCompartmentsDTO {
   compartments: CompartmentDTO[]
+  defaultCompartmentId?: string
   partial: boolean
 }
 

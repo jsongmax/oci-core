@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	defaultCloudAuditHours  = 24
-	maxCloudAuditPageLen    = 2048
-	cloudAuditQueryTimeout  = 30 * time.Second
+	defaultCloudAuditHours   = 24
+	maxCloudAuditPageLen     = 2048
+	cloudAuditQueryTimeout   = 30 * time.Second
 	compartmentsQueryTimeout = 20 * time.Second
 )
 
@@ -88,6 +88,7 @@ type CloudAuditResponse struct {
 type AccountCompartmentItem struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
+	Path           string `json:"path,omitempty"`
 	IsRoot         bool   `json:"isRoot"`
 	LifecycleState string `json:"lifecycleState"`
 }
@@ -215,6 +216,7 @@ func (s *Server) handleAccountCompartments(w http.ResponseWriter, r *http.Reques
 		{
 			ID:             acc.TenancyOCID,
 			Name:           rootName,
+			Path:           rootName,
 			IsRoot:         true,
 			LifecycleState: "ACTIVE",
 		},
@@ -231,7 +233,7 @@ func (s *Server) handleAccountCompartments(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 
 	partial := false
-	subs, err := client.ListCompartments(ctx, acc.TenancyOCID)
+	subs, err := client.ListAllCompartments(ctx, acc.TenancyOCID)
 	if err != nil {
 		if apiErr, ok := ociclient.AsAPIError(err); ok && apiErr.Class == ociclient.ClassNotAuthorized {
 			partial = true
@@ -240,36 +242,58 @@ func (s *Server) handleAccountCompartments(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	} else {
-		sort.Slice(subs, func(i, j int) bool {
-			return strings.ToLower(subs[i].Name) < strings.ToLower(subs[j].Name)
-		})
+		byID := make(map[string]ociclient.Compartment, len(subs))
+		for _, cp := range subs {
+			if cp.ID != "" {
+				byID[cp.ID] = cp
+			}
+		}
+		pathCache := make(map[string]string, len(subs))
+		subItems := make([]AccountCompartmentItem, 0, len(subs))
 		for _, cp := range subs {
 			if cp.ID == "" || seen[cp.ID] {
 				continue
 			}
 			seen[cp.ID] = true
-			items = append(items, AccountCompartmentItem{
+			subItems = append(subItems, AccountCompartmentItem{
 				ID:             cp.ID,
 				Name:           cp.Name,
+				Path:           resolveCompartmentPath(cp.ID, acc.TenancyOCID, byID, pathCache),
 				IsRoot:         false,
 				LifecycleState: cp.LifecycleState,
 			})
 		}
+		sort.Slice(subItems, func(i, j int) bool {
+			pi := strings.ToLower(subItems[i].Path)
+			pj := strings.ToLower(subItems[j].Path)
+			if pi != pj {
+				return pi < pj
+			}
+			return subItems[i].ID < subItems[j].ID
+		})
+		items = append(items, subItems...)
 	}
 
-	// 若账号单独配置了子区间且不在结果中（例如无权限列出子区间，或属于更深层级），补入可选列表。
+	// 若账号单独配置了子区间且不在结果中（例如无权限列出子区间），补入可选列表。
 	if acc.CompartmentOCID != "" && !seen[acc.CompartmentOCID] {
 		items = append(items, AccountCompartmentItem{
 			ID:             acc.CompartmentOCID,
 			Name:           acc.CompartmentOCID,
+			Path:           acc.CompartmentOCID,
 			IsRoot:         false,
 			LifecycleState: "ACTIVE",
 		})
 	}
 
+	defaultCompartmentID := acc.CompartmentOCID
+	if defaultCompartmentID == "" {
+		defaultCompartmentID = acc.TenancyOCID
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"compartments": items,
-		"partial":      partial,
+		"compartments":         items,
+		"defaultCompartmentId": defaultCompartmentID,
+		"partial":              partial,
 	})
 }
 
@@ -396,14 +420,59 @@ func sanitizeAuditHeaders(headers map[string][]string) map[string][]string {
 	}
 	out := make(map[string][]string, len(headers))
 	for k, v := range headers {
-		switch strings.ToLower(k) {
-		case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key":
+		if isSensitiveAuditHeader(k) {
 			out[k] = []string{"[REDACTED]"}
-		default:
+		} else {
 			cp := make([]string, len(v))
 			copy(cp, v)
 			out[k] = cp
 		}
 	}
 	return out
+}
+
+func resolveCompartmentPath(id, rootID string, byID map[string]ociclient.Compartment, cache map[string]string) string {
+	if p, ok := cache[id]; ok {
+		return p
+	}
+	visited := make(map[string]bool)
+	var parts []string
+	cur := id
+	for cur != "" && cur != rootID && !visited[cur] {
+		cp, ok := byID[cur]
+		if !ok {
+			break
+		}
+		visited[cur] = true
+		name := strings.TrimSpace(cp.Name)
+		if name == "" {
+			name = cp.ID
+		}
+		parts = append(parts, name)
+		cur = cp.CompartmentID
+	}
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	path := strings.Join(parts, " / ")
+	cache[id] = path
+	return path
+}
+
+func isSensitiveAuditHeader(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch lower {
+	// opc-retry-token 是 OCI 幂等重试标识，不属于认证凭据。
+	case "opc-retry-token":
+		return false
+	case "authorization", "proxy-authorization", "cookie", "set-cookie",
+		"x-api-key", "opc-obo-token", "x-auth-token":
+		return true
+	}
+	for _, needle := range []string{"token", "secret", "cookie", "authorization", "api-key", "apikey"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }

@@ -101,8 +101,20 @@ func (c *Client) ListRegionSubscriptions(ctx context.Context) ([]RegionSubscript
 	return out, nil
 }
 
-// ListCompartments 列出指定分区下的子分区。compartmentOCID 留空则从租户根分区开始。
+// ListCompartments 列出指定分区下的直接子分区（不含深层嵌套子分区）。compartmentOCID 留空则从租户根分区开始。
+//
+// 注意：permsvc 依赖“仅返回直接子分区”这一语义来判断目标区间是否直接挂在根区间下，
+// 请勿改动此函数的查询范围；需要递归全量区间树请调用 ListAllCompartments。
 func (c *Client) ListCompartments(ctx context.Context, compartmentOCID string) ([]Compartment, error) {
+	return c.listCompartments(ctx, compartmentOCID, false)
+}
+
+// ListAllCompartments 递归列出指定分区（留空为租户根分区）下所有活跃子分区，包含深层嵌套子分区。
+func (c *Client) ListAllCompartments(ctx context.Context, compartmentOCID string) ([]Compartment, error) {
+	return c.listCompartments(ctx, compartmentOCID, true)
+}
+
+func (c *Client) listCompartments(ctx context.Context, compartmentOCID string, subtree bool) ([]Compartment, error) {
 	if compartmentOCID == "" {
 		compartmentOCID = c.creds.TenancyOCID
 	}
@@ -110,6 +122,10 @@ func (c *Client) ListCompartments(ctx context.Context, compartmentOCID string) (
 	query.Set("compartmentId", compartmentOCID)
 	query.Set("limit", "100")
 	query.Set("lifecycleState", "ACTIVE")
+	if subtree {
+		query.Set("compartmentIdInSubtree", "true")
+		query.Set("accessLevel", "ANY")
+	}
 
 	// 用空切片而不是 nil：nil 会被序列化成 JSON null，前端拿到 null
 	// 再去 .forEach 就直接抛异常。列表接口永远返回列表。

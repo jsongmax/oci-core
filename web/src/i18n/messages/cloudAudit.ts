@@ -10,6 +10,7 @@ const zh = {
   compartmentLabel: '区间',
   homeTag: '主区域',
   rootTag: '根区间',
+  singleCompartmentHint: 'OCI Audit 按单区间查询，不包含子区间内的事件；如需查看子区间资源，请切换对应区间。',
   partialCompartments: '仅显示根区间/默认区间（账号缺少 ListCompartments 权限）',
   windowLabel: '时间范围',
   presets: {
@@ -32,9 +33,17 @@ const zh = {
   onlyError: '仅看失败请求',
   orderAsc: '时间升序（OCI 分页顺序）',
   orderDesc: '时间倒序（最新在前）',
+  orderDescPartial: '倒序（仅已加载）',
+  orderDescPartialTitle: 'OCI 接口按时间升序分页，倒序仅重排当前已加载事件，时间窗内仍有更晚事件未加载',
   clearFilters: '清除筛选',
   summaryLoaded: (shown: number, total: number, filtered: boolean) =>
     filtered ? `匹配 ${shown} / 已加载 ${total} 条` : `已加载 ${total} 条`,
+  moreUnloadedHint: (start: string, end: string) =>
+    `当前窗口仍有更多较晚事件未加载（已加载 ${start} ~ ${end}）。`,
+  moreUnloadedShort: '当前窗口仍有更多较晚事件未加载。',
+  moreFilteredHint: (start: string, end: string) =>
+    `当前筛选/排序仅作用于已加载部分，仍有更多较晚事件未加载（已加载 ${start} ~ ${end}）。`,
+  moreFilteredShort: '当前筛选/排序仅作用于已加载部分，仍有更多较晚事件未加载。',
   summaryWindow: (start: string, end: string) => `${start} ~ ${end}`,
   loadingHint: (region: string) => `正在从 OCI ${region} 拉取云端审计日志…`,
   noAccountsTitle: '还没有接入任何 Oracle 账号',
@@ -45,6 +54,8 @@ const zh = {
   emptyNotHomeSub: (home: string) => `当前区域暂无事件。IAM 与账号级事件通常记录在主区域（${home}）。`,
   emptyFilteredTitle: '没有符合筛选条件的事件',
   emptyFilteredSub: '尝试放宽关键词或关闭「仅看写操作 / 仅看失败请求」筛选。',
+  emptyFilteredMoreSub: '当前已加载的较早事件中无匹配项，时间窗内仍有更多未加载事件，可继续加载更多或清除筛选。',
+  loadMoreContinue: '继续加载更多',
   noPermTitle: '缺少读取 OCI 云端审计日志的权限',
   noPermBody: '该账号的 IAM 用户缺少 read audit-events（AUDIT_EVENT_READ）权限，无法调用 OCI Audit 接口。请在根区间策略中添加以下语句：',
   noPermLocation: '策略位置：OCI 控制台导航菜单 → Identity & Security → Identity → Policies，区间选择根区间（root compartment）。',
@@ -80,6 +91,10 @@ const zh = {
   detailUserAgent: 'User-Agent',
   detailMessage: '响应消息 / 错误信息',
   detailRawJson: '原始详情 JSON（点击复制）',
+  detailJsonMasked: '隐私模式已开启：原始详情 JSON 可能包含 IP、身份与 OCID，默认隐藏。',
+  showRawJson: '临时显示原始 JSON',
+  hideRawJson: '重新隐藏',
+  copyRawJson: '复制原文',
   expandRow: '展开详情',
   collapseRow: '收起详情'
 }
@@ -95,6 +110,7 @@ const en: typeof zh = {
   compartmentLabel: 'Compartment',
   homeTag: 'Home',
   rootTag: 'Root',
+  singleCompartmentHint: 'OCI Audit queries a single compartment only and excludes child compartments; switch compartment to inspect child resources.',
   partialCompartments: 'Showing root/default compartment only (missing ListCompartments permission)',
   windowLabel: 'Time range',
   presets: {
@@ -117,9 +133,17 @@ const en: typeof zh = {
   onlyError: 'Failures only',
   orderAsc: 'Oldest first (OCI page order)',
   orderDesc: 'Newest first',
+  orderDescPartial: 'Newest first (loaded only)',
+  orderDescPartialTitle: 'OCI paginates in ascending time order; descending only reorders loaded events and newer pages may still exist',
   clearFilters: 'Clear filters',
   summaryLoaded: (shown: number, total: number, filtered: boolean) =>
     filtered ? `${shown} matched / ${total} loaded` : `${total} loaded`,
+  moreUnloadedHint: (start: string, end: string) =>
+    `More later events in this window haven't been loaded yet (loaded ${start} ~ ${end}).`,
+  moreUnloadedShort: "More later events in this window haven't been loaded yet.",
+  moreFilteredHint: (start: string, end: string) =>
+    `Filters and sorting apply to loaded events only; more later events remain unloaded (loaded ${start} ~ ${end}).`,
+  moreFilteredShort: 'Filters and sorting apply to loaded events only; more later events remain unloaded.',
   summaryWindow: (start: string, end: string) => `${start} ~ ${end}`,
   loadingHint: (region: string) => `Fetching cloud audit events from OCI ${region}…`,
   noAccountsTitle: 'No Oracle accounts added yet',
@@ -130,6 +154,8 @@ const en: typeof zh = {
   emptyNotHomeSub: (home: string) => `No events in this region. IAM and tenancy-level events are usually logged in the Home Region (${home}).`,
   emptyFilteredTitle: 'No events match your filters',
   emptyFilteredSub: 'Try clearing the keyword or turning off "Writes only / Failures only".',
+  emptyFilteredMoreSub: 'No matches in the earlier loaded events, but more events remain unloaded in this window. Load more or clear filters.',
+  loadMoreContinue: 'Load more',
   noPermTitle: 'Missing permission to read OCI cloud audit logs',
   noPermBody: 'This API user lacks read audit-events (AUDIT_EVENT_READ) and cannot call the OCI Audit API. Add the following statement to a root compartment policy:',
   noPermLocation: 'Location: OCI Console navigation menu → Identity & Security → Identity → Policies, with the root compartment selected.',
@@ -165,6 +191,10 @@ const en: typeof zh = {
   detailUserAgent: 'User-Agent',
   detailMessage: 'Message / Error',
   detailRawJson: 'Raw detail JSON (click to copy)',
+  detailJsonMasked: 'Privacy mode is on: raw detail JSON may include IPs, principals, and OCIDs, so it is hidden by default.',
+  showRawJson: 'Reveal raw JSON',
+  hideRawJson: 'Hide again',
+  copyRawJson: 'Copy raw',
   expandRow: 'Expand details',
   collapseRow: 'Collapse details'
 }

@@ -288,3 +288,42 @@ func TestListAuditEventsValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestListAllCompartmentsSubtreeVsDirect(t *testing.T) {
+	var queries []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":"ocid1.compartment.oc1..lvl1","compartmentId":"ocid1.tenancy.oc1..exampleuniqueid","name":"lvl1","lifecycleState":"ACTIVE"},
+			{"id":"ocid1.compartment.oc1..lvl2","compartmentId":"ocid1.compartment.oc1..lvl1","name":"lvl2","lifecycleState":"ACTIVE"}
+		]`))
+	}))
+	defer srv.Close()
+
+	target, _ := url.Parse(srv.URL)
+	c, err := New(testCreds(t, testKey(t)), WithHTTPClient(&http.Client{Transport: redirectTransport{target}}), WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.ListCompartments(context.Background(), ""); err != nil {
+		t.Fatalf("ListCompartments 失败: %v", err)
+	}
+	all, err := c.ListAllCompartments(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListAllCompartments 失败: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("期望返回 2 个区间，实际 %d", len(all))
+	}
+	if len(queries) != 2 {
+		t.Fatalf("期望收到 2 次请求，实际 %d", len(queries))
+	}
+	if queries[0].Get("compartmentIdInSubtree") != "" {
+		t.Errorf("ListCompartments 不应携带 compartmentIdInSubtree，实际 %q", queries[0].Get("compartmentIdInSubtree"))
+	}
+	if queries[1].Get("compartmentIdInSubtree") != "true" || queries[1].Get("accessLevel") != "ANY" {
+		t.Errorf("ListAllCompartments 参数不对: %v", queries[1])
+	}
+}

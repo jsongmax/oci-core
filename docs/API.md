@@ -888,7 +888,7 @@ Allow group <你的组> to read usage-report in tenancy
 - **排序与分页**：OCI 固定每页最多返回 100 条并按 `eventTime` 升序排列（`order: "asc"`），通过 `nextPage` / `hasMore` 向后翻页。
 - **区域归属**：各区域独立存储审计事件；IAM 与账号级事件通常记录在主区域（`isHomeRegion: true`）。
 - **所需权限**：`Allow group <组名> to read audit-events in tenancy`（或对应区间）；缺权限时返回 `403 oci_error`（保留 `ociCode` 并在 `advice` 中给出策略建议），同时已接入权限自检能力 `account.audit`。
-- **鉴权头脱敏**：单条事件的 `detail.requestHeaders` / `detail.responseHeaders` 中敏感鉴权头（如 `Authorization`、`Cookie`）已统一替换为 `[REDACTED]`。
+- **鉴权头脱敏**：单条事件的 `detail.requestHeaders` / `detail.responseHeaders` 中敏感鉴权与令牌头（如 `Authorization`、`Cookie`、`opc-obo-token`、`X-Auth-Token` 及含 `token`/`secret`/`cookie`/`authorization`/`api-key`/`apikey` 的头，显式放行幂等标识 `opc-retry-token`）已统一替换为 `[REDACTED]`。
 
 ```json
 {
@@ -950,7 +950,7 @@ Allow group <你的组> to read usage-report in tenancy
 }
 ```
 
-**`GET /api/accounts/{id}/compartments`** — 列出该账号可选区间（首项恒为租户根区间 `isRoot: true`；缺少 `ListCompartments` 权限时优雅降级返回根区间并置 `partial: true`）。
+**`GET /api/accounts/{id}/compartments`** — 递归列出该账号可选活跃区间（`compartmentIdInSubtree=true`，含深层子区间；每项返回层级路径 `path`，例如 `prod / app`，非根区间按 `path` 升序排列以区分多层同名子区间；首项恒为租户根区间 `isRoot: true`，并返回与云端审计查询一致的默认区间 `defaultCompartmentId`；缺少 `ListCompartments` 权限时优雅降级返回根区间/账号配置区间并置 `partial: true`）。
 
 ---
 
