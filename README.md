@@ -2,179 +2,175 @@
 
 # OCI Core
 
-**自托管的 Oracle Cloud 多账号管理面板**
+**自托管的 Oracle Cloud Infrastructure (OCI) 多账号管理面板**
 
-把分散在多个甲骨文账号下的云主机收进一个视图，不用再在官方控制台之间反复切换租户和区域。
+将分散在多个 OCI 租户与区域中的计算、网络、存储、账单与审计资源统一收拢到单一控制台，避免在官方控制台间频繁切换。
 
+[![Release](https://img.shields.io/github/v/release/jsongmax/oci-core?label=Release&color=0ea5e9)](https://github.com/jsongmax/oci-core/releases)
 [![CI](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml/badge.svg)](https://github.com/jsongmax/oci-core/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](#docker-部署)
-[![Demo](https://img.shields.io/badge/在线演示-模拟数据-22d3ee)](https://jsongmax.github.io/oci-core/)
+[![Docker](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](#docker-部署推荐)
 
-**[在线演示 →](https://jsongmax.github.io/oci-core/)** 全部为模拟数据，不连接任何 Oracle 账号，可以随便点
+**[在线演示 →](https://jsongmax.github.io/oci-core/)**（使用内置模拟数据，不连接任何实际 Oracle 账号）
 
 简体中文 · [English](README.en.md)
 
 </div>
 
-<img src="docs/screenshots/overview.png" alt="总览" width="100%">
+<img src="docs/screenshots/overview.png" alt="OCI Core 总览界面" width="100%">
 
 ---
 
 ## 目录
 
-- [这是什么](#这是什么)
-- [功能](#功能)
-- [界面](#界面)
-- [技术栈](#技术栈)
-- [下载预编译二进制](#下载预编译二进制)
-- [Docker 部署](#docker-部署)
-- [本地开发](#本地开发)
-- [配置](#配置)
+- [项目简介](#项目简介)
+- [核心功能](#核心功能)
+- [界面预览](#界面预览)
+- [快速部署](#快速部署)
+  - [Docker 部署（推荐）](#docker-部署推荐)
+  - [预编译二进制部署](#预编译二进制部署)
+  - [部署注意事项](#部署注意事项)
+- [OCI API 密钥与最小权限配置](#oci-api-密钥与最小权限配置)
+- [环境变量配置](#环境变量配置)
 - [安全须知](#安全须知)
-- [架构](#架构)
+- [架构与技术栈](#架构与技术栈)
+- [本地开发](#本地开发)
 - [已知限制](#已知限制)
 - [免责声明](#免责声明)
 - [开源协议](#开源协议)
 
 ---
 
-## 这是什么
+## 项目简介
 
-一个单二进制的 Web 面板，用来管理多个 Oracle Cloud 账号下的云主机。
+OCI Core 是一款面向自托管场景的轻量级单二进制 Web 管理面板，用于集中管理多个 Oracle Cloud 账号下的基础设施资源。
 
-- **单文件部署** —— 前端产物用 `go:embed` 编进二进制，约 11 MB，静态链接，无运行时依赖
-- **不依赖官方 SDK** —— HTTP Signature 自己实现，约 100 行，依赖树极轻
-- **数据留在本地** —— SQLite + 文件系统，不向任何第三方上报
+- **单二进制部署**：前端静态资源通过 `go:embed` 编译进可执行文件，支持静态链接与多架构容器镜像，无额外运行时依赖。
+- **轻量级 OCI 接入**：自行实现 draft-cavage HTTP Signature（RSA-SHA256），不依赖体积庞大的官方 SDK，依赖树精简且重试与错误分类完全可控。
+- **本地化数据存储**：采用纯 Go SQLite（`modernc.org/sqlite`）与本地主密钥加密托管，所有数据与凭据均留存于本地，不向任何第三方上报。
 
-> **不在范围内**：发票与付款记录（Oracle 未开放接口）、多用户 RBAC。
-
-> **关于开发方式**：本项目的代码主要由 AI 编程助手（Claude Code）编写，作者负责需求、审阅与测试。
-> 使用前请按自己的标准评估代码与安全性，尤其是它会持有你的云账号凭据这一点。
+> **当前不在支持范围内**：Oracle 账户中心的发票与付款记录（官方未提供基于 OCI 签名的开放接口）、多用户 Web 后台 RBAC。
 
 ---
 
-## 功能
+## 核心功能
 
-| 域 | 内容 |
-|---|---|
-| **账号管理** | 多租户 API 密钥接入、粘贴 config 自动解析、添加时即选定代理出口（测试连接也走代理）、连通性逐项校验、账号类型识别（试用号 / 升级号）、开户天数、配额查询、定期复查凭据、密钥加密托管与轮换 |
-| **实例管理** | 跨账号聚合列表（带缓存，显示 IPv4 与 IPv6）、按列排序、自定义显示列与列顺序、开关机与重启、改配置（含突发 CPU）、改名、备注、创建向导（免费预设之外可选该可用域的全部规格）、批量操作、终止、按镜像系统推断 SSH 用户、SSE 实时状态推送 |
-| **后台任务** | 创建实例、换公网 IP、改配置、终止、启用 IPv6、增删网卡、批量操作、同步、云盘修改都在后台执行，提交后可以继续做别的；任务页实时显示进度与每一步，失败原因保留可查，同一台实例上的操作按顺序执行 |
-| **网络** | VCN / 子网 / 安全规则可视化编辑、自动建网、更换公网 IP（新旧 IP 留在列表与审计日志里）、启用 IPv6（创建时或为已有实例开启）、添加与分离附属网卡（可带公网 IPv4 / IPv6），按账号分组 |
-| **存储** | 引导卷与块存储的扩容、VPU 调整、分离与挂载；扩容后按系统给出重扫磁盘与扩分区的命令；含**救援模式**（分离引导卷 → 挂到另一台机器改文件 → 挂回） |
-| **资源盘点** | 按账号汇总各区域的卷、公网 IP（含保留 IP）、控制台连接与 VCN；对照 Oracle 限额与永久免费参考额度；单列未挂载的卷、未绑定的保留 IP、遗留的控制台连接与没有互联网网关的 VCN |
-| **登录策略** | 读取并修改身份域的密码有效期。租户默认 120 天到期，管多个账号时每隔几月就要挨个重置；改完立即回读，显示服务端实际存下的值 |
-| **代理** | 代理池：批量导入（认四种常见格式）、存活检测与延迟、逐账号绑定出口。一条代理只能绑一个账号——共用出口反而制造关联信号 |
-| **账单** | 各账号本月与上月费用、日趋势、按服务、区域与计费项分解，单列出站流量，并按自然月对比每月 10 TB 免费出站额度；免费额度账号金额恒为零，转而展示实际用量（OCPU 小时 / GB 月） |
-| **容量监控** | 调 Oracle 官方**只读**容量报告接口，盯住关心的规格什么时候有货，状态变化时推通知 |
-| **容量守候** | 反复尝试创建实例直到成功。默认先查容量再尝试，没货就跳过本轮、不发创建请求 |
-| **监控** | CPU / 内存 / 双向流量时间序列，粒度随跨度自适应；另有本月已用出入站流量（VCN 网卡统计，不依赖 Cloud Agent） |
-| **控制台** | 串行控制台与 VNC 隧道连接串生成 |
-| **通知** | Telegram / 企业微信 / 钉钉 / 邮件 / Webhook + 事件订阅矩阵 |
-| **隐私** | 邮箱、公网 IP、OCID、指纹默认打码，每处带展开按钮，顶栏一键切换全局。复制永远给原文——为截图与录屏而做 |
-| **多语言** | 界面支持简体中文与 English，在设置里切换，首次打开按浏览器语言选择；接口返回的提示、任务步骤与错误信息跟随界面语言，通知语言单独设置 |
-| **安全** | argon2id 口令、TOTP 双因子（扫码绑定）、会话管理与强制下线、CSRF 防护、登录限流、审计日志（游标分页 + 全量导出 + 可选保留策略）、危险操作三级门槛 |
+### 账号与实例管理
+- **多租户账号接入**：支持粘贴 OCI `config` 自动解析、逐项连通性校验、账号类型识别（试用 / 升级）、开户天数与配额查询、定期凭据复查、私钥加密存储与密钥轮换。
+- **功能权限自检**：接入账号时或随时按需结合 IAM 策略解析与只读接口探测，逐项评估各功能权限状态（可用 / 缺失 / 无法判断），并为缺失项生成可直接复制的修复策略。
+- **跨账号实例聚合**：统一展示多账号、多区域实例（SQLite 缓存加速 + SSE 实时状态推送），支持自定义列显隐与排序、生命周期控制（启停 / 重启 / 终止）、在线调整配置（含突发 CPU）、重命名、备注、批量操作、SSH 默认用户推断及创建向导（支持免费预设与可用域内全部可用规格）。
+- **后台任务队列**：创建实例、更换公网 IP、调整配置、增删网卡、修改云盘与批量操作均以异步任务执行，支持实时查看步骤进度与失败详情，同实例操作按序串行避免冲突。
+
+### 网络与存储
+- **虚拟云网络**：可视化编辑 VCN、子网与安全列表规则（支持常用规则模板与一键自动建网），按账号分组管理。
+- **多 IPv4 与预留公网 IP**：支持主网卡与附属网卡增删辅助私网 IPv4，按私网槽位独立管理临时与预留公网 IP（新建、绑定、切换、无损解绑与释放），支持跨账号/区域预留 IP 集中管理与公网 IP 批量更换（含乐观并发校验）。
+- **IPv6 与附属网卡**：支持为创建中的或已有实例的任意网卡分配与移除多个 IPv6 地址（展示创建时间），以及动态添加与分离附属网卡。
+- **块存储与救援模式**：支持引导卷与数据卷扩容、VPU 性能调整、分离与挂载；扩容后按操作系统生成重扫磁盘与扩展分区命令；内置**引导卷救援模式**工作流（分离故障引导卷 → 挂载至救援实例修复 → 挂回原实例）。
+
+### 监控、资源盘点、账单与容量
+- **性能与流量监控**：展示 CPU、内存及双向网络流量时间序列（采样粒度随时间跨度自适应），并基于 VCN 网卡指标统计自然月出入站流量（不依赖 Cloud Agent）。
+- **资源盘点与清理**：按账号汇总各区域卷、公网 IP（含预留 IP）、控制台连接与 VCN，对照 Oracle 限额及 Always Free 参考额度，高亮孤立卷、闲置预留 IP、遗留控制台连接及缺少互联网网关的 VCN 并支持就地清理。
+- **账单与用量分析**：通过 OCI Usage API 聚合本月/上月费用、日趋势以及按服务、区域与计费项的明细分解；单独汇总出站流量并对比每月 10 TB 免费额度；免费账号自动切换展示实际资源用量（OCPU 小时 / GB 月）。
+- **容量监控与容量守候**：通过官方**只读**容量报告接口监测指定规格在各可用域的库存变化并推送通知；容量守候支持在有库存时自动尝试创建实例（默认启用只读容量预检，避免无效创建请求）。
+
+### 安全与审计
+- **认证与防护**：Argon2id 口令哈希、TOTP 双因子认证（支持扫码绑定及 1Password 等密码管理器自动填充）、会话管理与强制下线、自定义请求头 CSRF 防护、登录失败限流、危险操作三级确认与服务端 TOTP 复核。
+- **双轨审计日志**：同时提供**面板本地操作审计**（游标分页、全量 CSV 导出、可选保留天数）与 **OCI 官方云端审计日志（Audit）**（按账号、已订阅区域与多层子区间查询，标注主区域 Home Region，支持游标分页、关键词/写操作/失败筛选、敏感令牌头自动脱敏、隐私模式原始 JSON 遮罩及 365 天保留期提示）。
+- **隐私保护模式**：邮箱、公网 IP、OCID、指纹等敏感字段默认打码，支持单处临时展开与顶栏一键全局切换，复制操作始终输出原文，便于截图与演示。
+- **身份域登录策略**：支持读取与修改租户身份域的密码过期时间，写入后自动回读校验服务端实际生效值。
+
+### 运维与扩展
+- **远程控制台**：快速生成串行控制台与 VNC 隧道连接命令（仅接收用户公钥，不托管私钥）。
+- **独立代理池**：支持四种常见格式批量导入代理、存活与延迟检测，并强制一对一绑定至账号出口（首次连通性测试即走指定代理）。
+- **多渠道通知与双语支持**：支持 Telegram、企业微信、钉钉、邮件与 Webhook 通知及细粒度事件订阅矩阵；界面与接口消息完整支持简体中文与 English，通知语言可独立配置。
 
 ---
 
-## 界面
+## 界面预览
 
-截图均来自[在线演示](https://jsongmax.github.io/oci-core/)，数据为模拟。点击图片看原图，点标题展开其余分组；想看完整交互，直接去演示站点一点。
+以下截图均来自[在线演示站点](https://jsongmax.github.io/oci-core/)（模拟数据）。点击图片可查看原图，点击分组标题可展开其余视图。
 
 <details open>
-<summary><b>实例</b> · 列表 · 创建 · 详情 · 后台任务</summary>
+<summary><b>实例与任务</b> · 实例列表 · 创建向导 · 实例详情 · 后台任务</summary>
 <br>
 
 <table>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/instances.png"><img src="docs/screenshots/instances.png" alt="实例列表"></a><br><b>实例列表</b> · 跨账号聚合，色条与代号标出归属；列可显隐、可拖宽，公网 IP 一键显隐</td><td width="50%" valign="top"><a href="docs/screenshots/create-instance.png"><img src="docs/screenshots/create-instance.png" alt="创建向导"></a><br><b>创建向导</b> · 免费预设之外可选该可用域的全部规格，镜像按架构过滤</td></tr>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-network.png"><img src="docs/screenshots/instance-network.png" alt="网络"></a><br><b>网络</b> · 主网卡与附属网卡并列；更换公网 IP、增删 IPv6、添加 / 分离附属网卡</td><td width="50%" valign="top"><a href="docs/screenshots/instance-storage.png"><img src="docs/screenshots/instance-storage.png" alt="存储与配置"></a><br><b>存储与配置</b> · 引导卷扩容与 VPU 用滑块调，改配置时 OCPU 与内存联动</td></tr>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-rescue.png"><img src="docs/screenshots/instance-rescue.png" alt="救援模式"></a><br><b>救援模式</b> · 把起不来的系统盘挂到另一台机器上改文件，再挂回去</td><td width="50%" valign="top"><a href="docs/screenshots/instance-metrics.png"><img src="docs/screenshots/instance-metrics.png" alt="监控"></a><br><b>监控</b> · CPU / 内存曲线与本月出入站流量，粒度随跨度自适应</td></tr>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/instance-console.png"><img src="docs/screenshots/instance-console.png" alt="串行控制台"></a><br><b>串行控制台</b> · SSH 连不上时排障；只接受 RSA 公钥，不代管私钥</td><td width="50%" valign="top"><a href="docs/screenshots/jobs.png"><img src="docs/screenshots/jobs.png" alt="后台任务"></a><br><b>后台任务</b> · 创建、换 IP、改配置等长耗时操作在后台跑，关掉页面也会跑完</td></tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/instances.png"><img src="docs/screenshots/instances.png" alt="实例列表"></a><br><b>实例列表</b> · 跨账号聚合展示，以色条与短代号标识归属，支持自定义列与公网 IP 一键显隐</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/create-instance.png"><img src="docs/screenshots/create-instance.png" alt="创建向导"></a><br><b>创建向导</b> · 提供免费预设及目标可用域内全部可选规格，镜像按 CPU 架构自动过滤</td>
+</tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/instance-network.png"><img src="docs/screenshots/instance-network.png" alt="实例网络"></a><br><b>实例网络</b> · 主网卡与附属网卡统一管理，支持多 IPv4、预留/临时公网 IP 切换与 IPv6 增删</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/instance-storage.png"><img src="docs/screenshots/instance-storage.png" alt="存储与配置"></a><br><b>存储与配置</b> · 引导卷扩容与 VPU 滑块调节，实例改配时自动联动 OCPU 与内存规格</td>
+</tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/instance-rescue.png"><img src="docs/screenshots/instance-rescue.png" alt="救援模式"></a><br><b>救援模式</b> · 引导分离故障系统盘、挂载至救援实例修复文件后再安全挂回</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/instance-metrics.png"><img src="docs/screenshots/instance-metrics.png" alt="性能监控"></a><br><b>性能监控</b> · CPU、内存时序曲线与自然月出入站流量统计，采样粒度随跨度自适应</td>
+</tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/instance-console.png"><img src="docs/screenshots/instance-console.png" alt="串行控制台"></a><br><b>串行控制台</b> · 用于 SSH 异常时的带外排障；仅接受 RSA 公钥，不托管私钥</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/jobs.png"><img src="docs/screenshots/jobs.png" alt="后台任务"></a><br><b>后台任务</b> · 异步执行长耗时操作，实时呈现执行步骤与错误信息</td>
+</tr>
 </table>
 
 </details>
 
 <details>
-<summary><b>账号与资源</b> · 账号 · 资源盘点 · 网络 · 账单</summary>
+<summary><b>账号与资源</b> · 账号管理 · 资源盘点 · 网络安全 · 账单分析</summary>
 <br>
 
 <table>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/accounts.png"><img src="docs/screenshots/accounts.png" alt="账号"></a><br><b>账号</b> · 连通性、试用倒计时、开户天数与 ARM 配额一屏看全</td><td width="50%" valign="top"><a href="docs/screenshots/resources.png"><img src="docs/screenshots/resources.png" alt="资源盘点"></a><br><b>资源盘点</b> · 按账号对照免费额度，单列未挂载的卷、未绑定的保留 IP 并可直接清理</td></tr>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/network.png"><img src="docs/screenshots/network.png" alt="安全规则"></a><br><b>安全规则</b> · 常用规则一键追加，「全部放行」单独警示</td><td width="50%" valign="top"><a href="docs/screenshots/billing.png"><img src="docs/screenshots/billing.png" alt="账单"></a><br><b>账单</b> · 本月与上月费用、按服务与计费项分解；免费号改看用量</td></tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/accounts.png"><img src="docs/screenshots/accounts.png" alt="账号管理"></a><br><b>账号管理</b> · 集中展示连通状态、权限自检概要、试用倒计时、开户天数与配额信息</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/resources.png"><img src="docs/screenshots/resources.png" alt="资源盘点"></a><br><b>资源盘点</b> · 对照免费参考额度，识别并清理孤立存储卷、闲置预留 IP 与遗留连接</td>
+</tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/network.png"><img src="docs/screenshots/network.png" alt="安全规则"></a><br><b>安全规则</b> · 支持规则模板快捷追加，对全网放行规则提供明确风险提示</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/billing.png"><img src="docs/screenshots/billing.png" alt="账单分析"></a><br><b>账单分析</b> · 展示本月与上月费用及明细拆分，免费账号自动切换至实际资源用量视图</td>
+</tr>
 </table>
 
 </details>
 
 <details>
-<summary><b>容量与守候</b> · 容量监控 · 容量守候</summary>
+<summary><b>容量管理</b> · 容量监控 · 容量守候</summary>
 <br>
 
 <table>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/capacity.png"><img src="docs/screenshots/capacity.png" alt="容量监控"></a><br><b>容量监控</b> · 调 Oracle 只读的容量报告，看某规格在各可用域有没有货</td><td width="50%" valign="top"><a href="docs/screenshots/hunt.png"><img src="docs/screenshots/hunt.png" alt="容量守候"></a><br><b>容量守候</b> · 反复尝试创建直到成功，默认先查容量，没货就不发创建请求</td></tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/capacity.png"><img src="docs/screenshots/capacity.png" alt="容量监控"></a><br><b>容量监控</b> · 调用官方只读容量报告接口，实时跟踪目标规格在各可用域的库存状态</td>
+  <td width="50%" valign="top"><a href="docs/screenshots/hunt.png"><img src="docs/screenshots/hunt.png" alt="容量守候"></a><br><b>容量守候</b> · 支持只读预检与退避调度，在检测到可用容量时自动发起实例创建</td>
+</tr>
 </table>
 
 </details>
 
 <details>
-<summary><b>设置</b> · 操作策略 · 两步验证 · 审计</summary>
+<summary><b>系统设置</b> · 账户安全 · 操作策略 · 审计日志</summary>
 <br>
 
 <table>
-<tr><td width="50%" valign="top"><a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="设置"></a><br><b>设置</b> · 危险操作策略、两步验证、审计日志与保留期限</td><td width="50%"></td></tr>
+<tr>
+  <td width="50%" valign="top"><a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="系统设置"></a><br><b>系统设置</b> · 配置两步验证、危险操作策略、本地操作审计与 OCI 官方云端审计日志</td>
+  <td width="50%"></td>
+</tr>
 </table>
 
 </details>
 
 ---
 
-## 技术栈
+## 快速部署
 
-| 层 | 选型 | 说明 |
-|---|---|---|
-| 后端 | **Go 1.26** | 标准库 `net/http`，无 Web 框架 |
-| 数据库 | **SQLite**（`modernc.org/sqlite`） | 纯 Go 实现，免 CGO，可静态编译 |
-| OCI 接入 | **自实现 HTTP Signature** | draft-cavage，RSA-SHA256，不用官方 SDK |
-| 加密 | **AES-256-GCM** 信封加密 · **argon2id** · **RFC 6238 TOTP** | 私钥落库加密，AAD 绑定账号 ID |
-| 前端 | **Vue 3 + TypeScript + Vite** | 组合式 API，无 UI 框架，样式手写；二维码编码用零依赖的 `qrcode-generator` |
-| 实时 | **SSE** | 状态变化服务端推送 |
-| 容器 | **Docker**（三阶段构建） | node → golang → alpine |
+### Docker 部署（推荐）
 
----
+环境要求：Docker 与 Docker Compose。
 
-## 下载预编译二进制
+#### 1. 使用预构建镜像
 
-不想自己编译就去 [Releases](https://github.com/jsongmax/oci-core/releases) 拿。
-每个 tag 由 GitHub Actions 自动构建五个平台，附 `checksums.txt`：
-
-| 平台 | 文件 |
-|---|---|
-| Linux x86_64 | `ocicore_<版本>_linux_amd64.tar.gz` |
-| **Linux ARM64** | `ocicore_<版本>_linux_arm64.tar.gz` |
-| macOS Apple Silicon | `ocicore_<版本>_darwin_arm64.tar.gz` |
-| macOS Intel | `ocicore_<版本>_darwin_amd64.tar.gz` |
-| Windows x86_64 | `ocicore_<版本>_windows_amd64.zip` |
-
-> 甲骨文免费额度给的是 ARM（Ampere A1）。想把面板自托管在自己那台免费机器上，
-> 要的是 **linux_arm64** 那个。
-
-解开直接跑，无运行时依赖：
-
-```bash
-tar xzf ocicore_0.2.1_linux_arm64.tar.gz && ./ocicore
-```
-
----
-
-## Docker 部署
-
-**推荐方式。** 需要 Docker 与 Docker Compose。
-
-### 拉现成镜像（快）
-
-CI 已经构建好多架构镜像推到了 GHCR，服务器上不需要 Node 和 Go：
+CI 自动构建并发布 `linux/amd64` 与 `linux/arm64` 双架构镜像至 GHCR，服务端无需安装 Node.js 或 Go（兼容 Oracle Ampere A1 ARM 实例）：
 
 ```bash
 git clone https://github.com/jsongmax/oci-core.git
@@ -182,323 +178,363 @@ cd oci-core
 docker compose pull && docker compose up -d
 ```
 
-镜像同时提供 `linux/amd64` 与 `linux/arm64`，Docker 会自动挑对应架构——
-甲骨文那台免费 ARM 机器上照样是这条命令。
+可用镜像标签（`ghcr.io/jsongmax/oci-core`）：
 
-| 标签 | 指向 |
+| 标签 | 说明 |
 |---|---|
-| `latest` | 最新发布版本 |
-| `0.2.3` | 具体版本 |
-| `0.2` | 该次版本线的最新补丁 |
-| `edge` | main 的最新提交，未发版 |
+| `latest` | 最新正式发布版本 |
+| `0.7.0` | 指定精确版本 |
+| `0.7` | 对应次版本线的最新补丁版本 |
+| `edge` | `main` 分支最新提交（开发预览版） |
 
-### 自己构建
+#### 2. 从源码构建镜像
 
-改了代码想立刻验证，或者不想依赖 GHCR：
+如需基于本地修改构建或避免依赖外部镜像源：
 
 ```bash
 docker compose up -d --build
 ```
 
-`docker-compose.yml` 里 `image` 与 `build` 都保留着，两条路都能走。
+`docker-compose.yml` 采用三阶段构建（Vite 前端构建 → Go 静态编译 → Alpine 运行时），最终运行时镜像仅包含单一可执行文件与数据目录。
 
-浏览器打开 `http://127.0.0.1:8080`，按引导完成首次设置与两步验证绑定。
+启动完成后，访问 `http://127.0.0.1:8080` 按页面向导完成管理员初始化与 TOTP 两步验证绑定。
 
-镜像分三阶段构建：前端（Vite）→ 后端（静态编译）→ alpine 运行时。
-运行时镜像里只有一个可执行文件加一个数据目录。
+#### 3. 升级服务
 
-### 三件容易出错的事
-
-<details>
-<summary><b>1. 端口不要直接映射成 <code>8080:8080</code></b></summary>
-
-<br>
-
-`docker-compose.yml` 里写的是 `127.0.0.1:8080:8080`，**只绑宿主机回环**。
-这个面板持有你所有甲骨文租户的完整控制权，直接挂到公网 8080 等于把登录页
-交给全世界去撞。远程访问用其中之一：
+使用预构建镜像升级：
 
 ```bash
-# SSH 隧道，最省事
-ssh -L 8080:127.0.0.1:8080 你的服务器
+docker compose pull && docker compose up -d
 ```
 
-或前面放一个带 TLS 的反向代理（Nginx / Caddy / Cloudflare Tunnel），
-**此时才需要**设 `OCICORE_TRUST_PROXY=true`。没有代理却开着，任何人都能靠
-伪造 `X-Forwarded-For` 绕过登录失败限流。
-
-</details>
-
-<details>
-<summary><b>2. 容器内必须绑 <code>0.0.0.0</code></b></summary>
-
-<br>
-
-程序默认监听 `127.0.0.1`，那在容器里等于谁也连不上。镜像已经把
-`OCICORE_ADDR=0.0.0.0:8080` 写进 `ENV`，自己写 `docker run` 时别漏掉。
-
-这不等于暴露到公网——对外与否由 `-p` 决定。
-
-</details>
-
-<details>
-<summary><b>3. <code>ocicore_ocicore-data</code> 卷丢了，所有账号私钥就都解不开了</b></summary>
-
-<br>
-
-卷里是 `master.key` 与加密后的数据库，**两者缺一不可**：
-
-- 只有数据库 → 私钥全是密文，解不开
-- 只有密钥 → 没有数据
-
-更要命的是，`master.key` 缺失时程序**不会报错**：它会生成一把全新的随机密钥，
-服务照常启动、你照常能登录、账号列表还在，但每个账号一用就失败，而且是永久解不开。
-
-备份整个数据目录：
+使用本地源码重新构建升级：
 
 ```bash
-# 卷名带 compose 项目名前缀。先确认实际叫什么：
+git pull && docker compose up -d --build
+```
+
+数据存储在命名卷中，重建容器不会丢失数据，数据库结构迁移会在服务启动时自动执行。
+
+> **重要提示**：升级或停机时**切勿执行 `docker compose down -v`**，`-v` 参数会删除数据卷 `ocicore_ocicore-data`，导致 `master.key` 与所有已加密存储的私钥永久丢失。
+
+---
+
+### 预编译二进制部署
+
+可在 [GitHub Releases](https://github.com/jsongmax/oci-core/releases) 下载对应平台的预编译发布包（每次发版均附带 `checksums.txt` 用于校验）：
+
+| 平台 | 文件名 |
+|---|---|
+| Linux x86_64 | `ocicore_<版本>_linux_amd64.tar.gz` |
+| **Linux ARM64** | `ocicore_<版本>_linux_arm64.tar.gz` |
+| macOS Apple Silicon | `ocicore_<版本>_darwin_arm64.tar.gz` |
+| macOS Intel | `ocicore_<版本>_darwin_amd64.tar.gz` |
+| Windows x86_64 | `ocicore_<版本>_windows_amd64.zip` |
+
+> 若部署在 Oracle Always Free 的 Ampere A1 ARM 实例上，请选择 **`linux_arm64`** 发布包。
+
+解压后直接运行，无运行时依赖：
+
+```bash
+tar xzf ocicore_0.7.0_linux_arm64.tar.gz
+./ocicore
+```
+
+默认监听 `127.0.0.1:8080`，数据写入当前目录下的 `./data/`，首次启动自动生成加密主密钥。
+
+---
+
+### 部署注意事项
+
+<details>
+<summary><b>1. 请勿将端口直接暴露至公网（避免使用 <code>8080:8080</code>）</b></summary>
+<br>
+
+`docker-compose.yml` 默认配置为 `127.0.0.1:8080:8080`，仅绑定宿主机回环地址。由于面板托管了多个 OCI 租户的控制权，请勿将其直接监听在公网端口。推荐使用以下两种远程访问方式之一：
+
+- **SSH 端口转发**：
+  ```bash
+  ssh -L 8080:127.0.0.1:8080 <your-server>
+  ```
+- **TLS 反向代理**：在前端部署 Nginx、Caddy 或 Cloudflare Tunnel，并**仅在此场景下**设置 `OCICORE_TRUST_PROXY=true`（代理层须正确覆写 `X-Forwarded-For`）。若未部署反代而开启该选项，客户端可通过伪造请求头绕过登录限流。
+
+</details>
+
+<details>
+<summary><b>2. 容器内部监听地址须为 <code>0.0.0.0:8080</code></b></summary>
+<br>
+
+程序默认监听 `127.0.0.1:8080`，该地址在容器内部无法被宿主机端口映射访问。官方镜像已在环境变量中预设 `OCICORE_ADDR=0.0.0.0:8080`；若使用自定义 `docker run` 命令，请保留该环境变量，是否对外暴露由宿主机 `-p` 参数控制。
+
+</details>
+
+<details>
+<summary><b>3. 妥善备份数据目录与 <code>master.key</code></b></summary>
+<br>
+
+数据卷中同时保存 `master.key` 与 SQLite 数据库（`oci-tools.db`），**两者缺一不可**：
+- 丢失 `master.key` 后，服务启动时会自动生成新密钥且不会阻断启动，但数据库中原有的加密私钥将**永久无法解密**。
+- 请定期将整个数据目录一并备份，并将备份归档视作敏感私钥严格保管。
+
+Docker 命名卷备份示例：
+
+```bash
+# 确认实际卷名（含 Compose 项目前缀）
 docker volume ls | grep ocicore
 
+# 打包备份整个数据目录
 docker run --rm -v ocicore_ocicore-data:/data -v "$PWD:/backup" \
   alpine tar czf /backup/ocicore-backup.tar.gz -C /data .
 ```
 
-还原时反向解到同一个卷即可。**备份文件本身等同于私钥，请当作密钥保管。**
+恢复时将归档反向解压回目标数据卷即可。
 
 </details>
 
-### 升级
-
-```bash
-docker compose up -d --build
-```
-
-数据在命名卷里，重建容器不会动它。数据库迁移在启动时自动执行。
-
-> **绝对不要加 `-v`**（`docker compose down -v`）—— 那会删掉命名卷 `ocicore_ocicore-data`，
-> 连同 `master.key` 和全部加密私钥一起消失。
-
 ---
 
-## 本地开发
+## OCI API 密钥与最小权限配置
 
-需要 **Go 1.26+** 与 **Node 18+**（CI 镜像用的是 Node 24）。
+OCI 的 API 密钥本身不携带权限，所有访问权限均通过 IAM 策略授予该用户所属的组。**强烈建议为本面板创建专用 IAM 用户与用户组，按最小权限原则授权，避免使用 `Administrators` 组密钥。**
 
-### 直接跑
+### 配置步骤
 
-```bash
-go run ./cmd/server
+1. **创建用户组与专用用户**
+   登录 OCI 控制台，进入 **Identity & Security → Domains**，选择 `Default` 域：
+   - 在 **Groups** 中新建专用组（例如 `OCI Core`）。
+   - 在 **Users** 中创建专用 IAM 用户，并将其加入该组。
+2. **生成 API 密钥对**
+   进入该用户详情页 → **API keys** → **Add API key** → **Generate API key pair**，下载生成的私钥文件（`.pem`）。提交后页面会展示配置预览（包含 `user`、`fingerprint`、`tenancy`、`region`），可直接粘贴到本面板的「添加账号 → 粘贴 OCI config」中自动解析。
+3. **在根区间创建访问策略**
+   进入 **Identity & Security → Identity → Policies**，将左侧区间（Compartment）切换为**根区间（root compartment）** → 点击 **Create Policy** → 开启 **Show manual editor**，粘贴下方策略语句并保存。
+
+### 推荐策略语句
+
+以用户组名为 `OCI Core` 为例（如用户不在 `Default` 域中，组名须写为 `'DomainName'/'GroupName'` 格式）：
+
+```text
+Allow group 'OCI Core' to manage instance-family in tenancy
+Allow group 'OCI Core' to manage virtual-network-family in tenancy
+Allow group 'OCI Core' to manage volume-family in tenancy
+Allow group 'OCI Core' to manage compute-capacity-reports in tenancy
+Allow group 'OCI Core' to read metrics in tenancy
+Allow group 'OCI Core' to inspect limits in tenancy
+Allow group 'OCI Core' to read resource-availability in tenancy
+Allow group 'OCI Core' to read usage-report in tenancy
+Allow group 'OCI Core' to read audit-events in tenancy
+Allow group 'OCI Core' to inspect policies in tenancy
+Allow group 'OCI Core' to inspect users in tenancy
+Allow group 'OCI Core' to inspect groups in tenancy
 ```
 
-默认监听 `127.0.0.1:8080`，数据写入 `./data/`，首次启动自动生成主密钥。
+### 策略用途对照表
 
-### 前端开发
-
-```bash
-cd web && npm install && npm run dev
-```
-
-开发服务器在 `5173`，`/api` 自动代理到 `127.0.0.1:8080`。
-
-也可以让后端直接读磁盘上的产物，改前端不用重编 Go：
-
-```bash
-OCICORE_STATIC_DIR=./internal/web/dist go run ./cmd/server
-```
-
-### 演示站
-
-[在线演示](https://jsongmax.github.io/oci-core/)是前端的一个特殊构建：不需要后端，所有接口由
-`web/src/demo/server.ts` 在浏览器里模拟，数据全是编的（IP 用文档保留段）。
-每次打 `v*` tag 时由 `.github/workflows/pages.yml` 构建并部署到 GitHub Pages。
-
-```bash
-cd web && npm run build:demo   # 产物在 web/dist-demo
-```
-
-正常构建（`npm run build`）会把演示代码整个摇掉，发版的二进制与镜像里没有它。
-新增接口时记得在 `server.ts` 里补一个模拟实现，否则演示站上会提示「不支持」。
-
-### 构建单二进制
-
-前端产物已提交进仓库，直接构建即可：
-
-```bash
-go build -ldflags "-s -w -X main.version=0.1.0" -o dist/ocicore ./cmd/server
-```
-
-改了前端才需要重新构建它：
-
-```bash
-cd web && npm run build
-```
-
-Vite 的输出目录指向 `internal/web/dist`，被 `go:embed` 打进二进制。
-**因为是编译期解析，那个目录不存在的话 Go 会直接编译失败。**
-
-### 测试
-
-```bash
-go test ./... && go vet ./...
-cd web && npm run typecheck
-```
-
-推送后 GitHub Actions 会跑同样的检查，外加 `gofmt` 与一次前端试构建。
-
-### 提交信息
-
-用 [Conventional Commits](https://www.conventionalcommits.org/)：类型前缀用英文，
-描述用中文。
-
-```
-feat(billing): 接入 OCI Usage API
-fix(billing): 补服务名翻译与截断
-ci: 多架构镜像推送到 GHCR
-```
-
-主题行只说**做了什么**，不带解释性从句——GitHub Actions 拿它当运行标题，
-拖着「，服务器不必再本地构建」这种后半句会很难读。原因、权衡、踩过的坑
-写进正文，正文可以尽情写长。
-
-> 若你的 `go env` 把 `GOOS` 设成了 `linux`（便于直接产出部署二进制），
-> 在 Windows 上跑测试需临时覆盖目标平台：
->
-> ```bash
-> GOOS=windows GOARCH=amd64 go test ./...
-> ```
-
----
-
-## 配置
-
-全部通过环境变量。
-
-| 变量 | 默认值 | 说明 |
+| 策略语句 | 类型 | 对应功能 |
 |---|---|---|
-| `OCICORE_ADDR` | `127.0.0.1:8080` | 监听地址。**容器内必须设成 `0.0.0.0:8080`** |
-| `OCICORE_DATA_DIR` | `./data` | 数据库与主密钥目录 |
-| `OCICORE_MASTER_KEY` | 空 | 十六进制主密钥，留空则用 `$DATA_DIR/master.key` |
-| `OCICORE_STATIC_DIR` | 空 | 前端产物目录，非空时优先于嵌入资源（开发用） |
-| `OCICORE_SESSION_TTL` | `12h` | 会话有效期，滑动续期 |
-| `OCICORE_TRUST_PROXY` | `false` | 是否采信 `X-Forwarded-*`。**仅在确实位于反向代理之后才可开启** |
-| `OCICORE_NOTIFY_ALLOWED_NETS` | 空 | 通知 webhook 额外放行的网段，逗号分隔（如 `10.0.0.0/8,192.168.1.5`）。默认禁止访问回环、内网与链路本地地址。通知请求不经过 `HTTP_PROXY`／`HTTPS_PROXY` 等环境代理（经代理时目标由代理解析，面板无法限制） |
+| `manage instance-family` | 核心 | 实例创建、终止、启停、修改配置、串行控制台连接 |
+| `manage virtual-network-family` | 核心 | 安全列表编辑、临时/预留公网 IP 管理、IPv6、附属网卡与辅助私网 IP |
+| `manage volume-family` | 核心 | 引导卷/数据卷扩容、VPU 调整、挂载/分离、删除卷与救援模式 |
+| `manage compute-capacity-reports` | 可选 | 容量查询、容量监控与容量守候的只读预检 |
+| `read metrics` | 可选 | 实例 CPU、内存与网卡流量监控指标 |
+| `inspect limits` / `read resource-availability` | 可选 | 服务配额查询与免费额度参考对比 |
+| `read usage-report` | 可选 | 账单成本、资源用量与出站流量统计 |
+| `read audit-events` | 可选 | OCI 官方云端审计日志（Audit）查询 |
+| `inspect policies` / `users` / `groups` | 可选 | 仅供「权限自检」读取策略与组成员关系，不影响日常操作 |
 
-面板内还可配置：后台同步间隔、凭据复查间隔、审计日志保留期限、危险操作策略。
+### 配置要点
+
+- **动词须使用 `manage`**：对于实例、网络与存储，OCI 的 `use` 动词不包含创建/终止实例、修改安全列表、增删 IPv6 等权限；`compute-capacity-reports` 亦仅由 `manage` 授予。
+- **按需精简可选权限**：若不需要在面板中查看账单、云端审计日志或容量报告，直接省略对应 `read` / `manage` 语句即可，不影响其余功能；缺少权限时面板会给出明确提示。
+- **限定至特定子区间**：如需将权限收窄到指定区间，可将上述语句中的 `in tenancy` 替换为 `in compartment <区间名>`；但 `compute-capacity-reports`、`limits`、`resource-availability` 与 `usage-report` 受 OCI 平台限制，必须保留 `in tenancy`。
+- **内置权限自检**：添加账号通过连通性测试后，面板会自动运行一次权限自检；后续也可在账号详情的「权限自检」页重新检测并获取缺失项的修复语句。若省略了末尾三条 `inspect` 语句，自检将仅依赖只读探测，其余项会标记为「无法判断」。
+
+---
+
+## 环境变量配置
+
+全部运行期配置均通过环境变量注入（同时向后兼容历史前缀 `OCI_TOOLS_*`）：
+
+| 变量名 | 默认值 | 说明 |
+|---|---|---|
+| `OCICORE_ADDR` | `127.0.0.1:8080` | HTTP 监听地址；容器内须设为 `0.0.0.0:8080` |
+| `OCICORE_DATA_DIR` | `./data` | SQLite 数据库与 `master.key` 存储目录 |
+| `OCICORE_MASTER_KEY` | 空 | 十六进制加密主密钥；留空时自动读写 `$OCICORE_DATA_DIR/master.key` |
+| `OCICORE_STATIC_DIR` | 空 | 外部前端静态目录；非空时优先于内置 `go:embed` 资源（开发调试用） |
+| `OCICORE_SESSION_TTL` | `12h` | 登录会话有效期（支持 Go duration 格式，最短 `1m`），活跃请求自动滑动续期 |
+| `OCICORE_TRUST_PROXY` | `false` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`；仅在受控反向代理后开启 |
+| `OCICORE_NOTIFY_ALLOWED_NETS` | 空 | 允许通知 Webhook 访问的额外网段/IP（逗号分隔，如 `10.0.0.0/8,192.168.1.5`）。默认拦截回环、内网与链路本地地址；通知请求不走环境代理 `HTTP_PROXY`/`HTTPS_PROXY` |
+
+其余运行参数（后台同步周期、凭据复查间隔、本地审计日志保留天数、危险操作确认与 TOTP 复核策略等）均可在 Web 设置页动态调整。
 
 ---
 
 ## 安全须知
 
-这个面板持有你**所有** Oracle 租户的完整控制权。
+本面板持有接入租户的 API 控制凭据，生产部署请务必遵循以下安全规范：
 
-1. **为本工具创建专用 IAM 用户**，只授予 compute / vcn / block-storage 的必要策略，不要用 Administrators 组的密钥。**这一条比其余所有加固加起来都管用。** 添加账号页顶部的「如何创建 API 密钥并配置权限」有完整步骤和可直接复制的策略语句。实例、网络、卷都必须用 `manage` 动词：`use` 不包含创建与终止实例、修改安全列表、创建 IPv6 地址等权限。添加账号时，连接测试通过后会自动做一次权限自检，逐项列出可用、缺失（标红并给出补齐语句）或无法判断的功能；之后可在账号详情的「权限自检」页重新检查。自检要读取策略，需要 `inspect policies`、`inspect users`、`inspect groups in tenancy`；不加这三条也能正常使用，只是多数项会显示「无法判断」。账单页额外需要 `read usage-report in tenancy`——**不想让它读账单就别加这条**，其余功能不受影响。容量监控与守候的容量预检需要 `manage compute-capacity-reports in tenancy`，它不含在 `instance-family` 里。组名带空格时要加引号，例如 `Allow group 'OCI Core' to …`。
-2. **默认只监听回环。** 远程访问请置于 TLS 反向代理之后。
-3. **备份 `master.key`。** 它是所有已存 OCI 私钥的唯一解密钥匙，丢失后账号需全部重新录入；同时它绝不能进版本库（`.gitignore` 已覆盖）。
-4. **启用两步验证。** 首次设置后会直接引导绑定，用验证器扫码即可。
-5. **给每个账号配好代理再添加。** 添加账号时选好网络出口，测试连接与之后的请求都会走它；先直连测试、事后再绑代理，抹不掉第一次的访问记录。
-6. 私钥以 AES-256-GCM 加密落库，AAD 绑定账号 ID；**界面上没有任何导出或回显私钥的入口**。
-7. **部署后立刻完成首次设置。** `GET /api/status` 是公开端点（登录页要靠它判断是否需要初始化），会返回 `setupRequired`。一台已上线但还没设置管理员的面板，扫描器发现后可以直接抢注。
-8. **反向代理后才开 `OCICORE_TRUST_PROXY`。** 代理必须自己覆写该头（Nginx 用 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`）。
-9. 前端不加载任何外部资源（无 CDN、无 Google Fonts）。CSP 为 `default-src 'self'`，既是防护，也意味着面板在完全离线的内网里同样能用。
+1. **严格执行最小权限原则**：按[上一节指南](#oci-api-密钥与最小权限配置)创建专用 IAM 用户并仅授予所需策略，避免接入 `Administrators` 组密钥。
+2. **禁止公网明文暴露**：保持默认回环监听，通过 SSH 隧道或配置 TLS 的反向代理访问；仅在反代正确覆写 `X-Forwarded-For` 时开启 `OCICORE_TRUST_PROXY`。
+3. **部署后立即初始化**：`GET /api/status` 为登录页所需的公开只读端点，服务上线后请第一时间完成管理员账户创建与 TOTP 双因子绑定，防止未初始化实例被他人抢注。
+4. **启用两步验证与危险操作复核**：推荐开启 TOTP 2FA 及「危险操作需重新验证 TOTP」，为终止实例、修改安全规则、删卷等不可逆操作提供服务端二次防线。
+5. **在添加账号前选定网络代理**：如需通过代理出口隔离不同账号，请在添加账号阶段即选定代理池出口，确保首次连通性测试与后续请求全程经由该代理。
+6. **严密保管加密主密钥**：所有 OCI 私钥均以 AES-256-GCM 信封加密落库（AAD 绑定账号 ID），前端不提供任何私钥回显或导出入口；请离线备份 `master.key`，严禁将其提交至版本库。
+7. **无外部前端资源依赖**：前端不加载任何外部 CDN 或字体，响应头强制启用 `Content-Security-Policy: default-src 'self'`，可在完全隔离的内网环境中安全运行。
 
 ---
 
-## 架构
+## 架构与技术栈
 
-```
-cmd/server          入口：配置、建连、路由、优雅退出
+### 技术栈
+
+| 层级 | 技术选型 | 说明 |
+|---|---|---|
+| 后端 | **Go 1.26** | 标准库 `net/http`，零 Web 框架依赖 |
+| 数据库 | **SQLite**（`modernc.org/sqlite`） | 纯 Go 实现，免 CGO，支持多平台静态交叉编译 |
+| OCI 客户端 | **自实现 HTTP Signature** | draft-cavage，RSA-SHA256，支持租户级并发限流与精细错误分类 |
+| 密码与安全 | **AES-256-GCM** · **Argon2id** · **RFC 6238 TOTP** | 私钥信封加密落库，AAD 绑定账号 ID |
+| 前端 | **Vue 3 + TypeScript + Vite** | Composition API、手写响应式样式、零依赖 `qrcode-generator` |
+| 实时通信 | **SSE（Server-Sent Events）** | 实例状态与后台任务进度单向实时推送 |
+| 容器交付 | **Docker 多阶段构建** | `node` → `golang` → `alpine`，支持 `amd64` / `arm64` |
+
+### 目录结构
+
+```text
+cmd/server          服务入口：环境变量加载、存储初始化、路由挂载与优雅退出
 internal/
-  ociclient         OCI API 客户端：签名器、错误分类、Compute / 网络 / 存储 / 限额 / 监控 / 容量 / 控制台
-  ociconn           按账号构建客户端（私钥解密的唯一去处）
-  cryptobox         私钥信封加密
-  store             SQLite：账号 / 用户 / 会话 / 实例缓存 / 设置 / 通知渠道 / 审计 / 守候任务 / 容量监控
-  auth              argon2id · TOTP · 会话令牌
-  accountsvc        连通性逐项校验
-  instancesvc       跨账号聚合、生命周期编排、SSE 事件总线
-  netsvc            自动建网、换 IP、启用 IPv6、安全规则模板
-  huntsvc           容量守候调度器：退避、可用域轮换、防重复创建
-  capacitysvc       容量监控轮询
+  config            运行期配置解析与校验
+  ociclient         OCI REST 客户端：签名、限流、错误分类、Compute / 网络 / 存储 / 限额 / 监控 / 容量 / 账单 / 订阅 / 云端审计
+  ociconn           按账号构建与缓存 OCI 客户端（私钥解密的唯一入口）
+  cryptobox         AES-256-GCM 信封加密
+  store             SQLite 持久层：账号 / 用户 / 会话 / 实例缓存 / 任务 / 代理 / 通知 / 审计 / 容量监控 / 守候任务
+  auth              Argon2id 口令散列、TOTP 校验与会话令牌生成
+  i18n              服务端中英文消息目录
+  accountsvc        账号连通性分项校验
+  permsvc           IAM 策略解析与只读探测权限自检
+  instancesvc       跨账号实例聚合、生命周期编排与 SSE 事件总线
+  netsvc            VCN 自动建网、公网 IP 管理、IPv6 与安全规则模板
+  jobsvc            异步后台任务调度与恢复
+  huntsvc           容量守候调度器（退避策略、可用域轮换、防重复创建）
+  capacitysvc       只读容量监控轮询
   billingsvc        用量与成本聚合（Usage API）
-  proxypool         代理解析、存活检测、绑定约束
-  notify            通知渠道分发
-  httpapi           REST 接口层
-  web               前端产物 embed
-web/                前端源码（Vue 3 + TS + Vite）
+  proxypool         代理格式解析、健康检查与绑定约束
+  notify            多渠道通知分发与 SSRF 防护
+  httpapi           REST API 接口层、会话鉴权与危险操作复核
+  web               前端构建产物 go:embed 封装
+web/                前端源码（Vue 3 + TypeScript + Vite）
 docs/
-  API.md                接口参考
-  FRONTEND-DESIGN.md    前端设计规格书
-  CAPACITY-HUNTER.md    容量守候设计文档
+  API.md                HTTP API 接口文档
+  FRONTEND-DESIGN.md    前端视觉与交互设计规范
+  CAPACITY-HUNTER.md    容量守候设计说明
 ```
 
 <details>
-<summary><b>几处刻意的取舍</b></summary>
-
+<summary><b>关键架构设计说明</b></summary>
 <br>
 
-- **自实现签名而非官方 SDK** —— OCI 用的是 draft-cavage HTTP Signatures，约 100 行即可实现。换来极轻的依赖树和完全可控的错误分类。[`internal/ociclient/errors.go`](internal/ociclient/errors.go) 是全项目最重要的一张表：它决定了什么该重试、等多久、什么时候该把账号标成异常。
-
-- **实例列表走缓存** —— 8 个账号 × 4 个区域就是 32 次 API 往返。后台定期同步写入 SQLite，列表读缓存秒开，状态变化用 SSE 推送。同步错误按（账号 × 区域）隔离，一个账号失效不会让整张列表变空。
-
-- **乐观更新只到过渡态** —— 接口返回的一定是 `STOPPING` 而非 `STOPPED`，落定由后台轮询确认后经 SSE 推送。既不让用户以为没反应，也不骗他说已经好了。
-
-- **危险操作在服务端校验** —— 终止实例要回传实例名，删除账号要回传别名，`allowTerminate` 关掉就直接 403。前端的确认框是体验，这些才是防线。
-
-- **SQLite 而非 Postgres** —— 单机单进程、几十个账号。纯 Go 实现，免 CGO，交叉编译无痛。
-
-- **自定义请求头做 CSRF 防护** —— 浏览器不允许跨源请求携带自定义头（本服务从不开启 CORS），因此「存在 `X-OCI-Tools` 头」即等价于「请求来自本站脚本」。比双提交 Cookie 简单，且没有令牌同步问题。
-
-- **容量守候默认先查容量** —— 容量报告是只读接口，`LaunchInstance` 才是 Oracle 风控盯的那个。用一次只读换掉一次创建，能把真正发出去的创建请求降一个数量级。
-
-- **账号身份色 + 短代号** —— 多账号管理的核心认知负担是「这台机器是哪个号的」。代号是必填项而非装饰：可访问性要求颜色不能单独承载信息。
+- **自实现 OCI 签名替代官方 SDK**：OCI 采用标准的 draft-cavage HTTP Signatures，约百行代码即可完整实现。此举大幅精简依赖树，并使重试策略与错误分类完全内聚在 [`internal/ociclient/errors.go`](internal/ociclient/errors.go) 中。
+- **实例列表缓存与故障隔离**：多账号多区域实时查询延迟较高，后台定期同步结果写入 SQLite 供列表快速读取，状态变化经 SSE 推送。同步按「账号 × 区域」隔离，单个账号异常不会影响其余账号视图。
+- **过渡态响应机制**：电源操作接口仅返回 `STARTING` / `STOPPING` 等过渡态，最终状态由后台轮询确认后通过 SSE 推送，确保前端展示与云端真实状态一致。
+- **服务端强制安全校验**：终止实例须回传实例名，删除账号须回传账号别名，禁用危险操作开关后服务端直接返回 `403`，所有关键防护均落于服务端而非依赖前端交互。
+- **基于自定义请求头的 CSRF 防护**：服务端不开启 CORS，所有写接口均强制校验自定义请求头 `X-OCI-Tools: 1`，简洁可靠且无令牌同步开销。
+- **容量守候默认只读预检**：在发起 `LaunchInstance` 前默认先调用只读容量报告接口确认库存，显著降低无效创建请求频率。
+- **身份色与短代号并存**：账号短代号为必填项，配合身份色条在跨账号视图中提供无障碍的归属识别。
 
 </details>
 
 ---
 
+## 本地开发
+
+环境要求：**Go 1.26+**、**Node.js 18+**（CI 与构建镜像使用 Node.js 24）。
+
+### 启动后端
+
+```bash
+go run ./cmd/server
+```
+
+默认监听 `127.0.0.1:8080`，数据目录为 `./data/`。
+
+### 前端开发调试
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Vite 开发服务器默认运行在 `http://127.0.0.1:5173`，`/api` 请求自动代理至 `127.0.0.1:8080`。也可通过 `OCICORE_STATIC_DIR` 让后端直接加载磁盘构建产物，无需重复编译 Go：
+
+```bash
+OCICORE_STATIC_DIR=./internal/web/dist go run ./cmd/server
+```
+
+### 构建前端与单二进制
+
+```bash
+# 仅在修改前端源码后需要重新构建（输出至 internal/web/dist）
+cd web && npm run build
+
+# 编译单二进制（依赖 internal/web/dist 目录存在）
+cd ..
+go build -trimpath -ldflags "-s -w -X main.version=0.7.0" -o dist/ocicore ./cmd/server
+```
+
+### 构建在线演示站
+
+在线演示站为纯前端静态构建，所有接口由 `web/src/demo/server.ts` 在浏览器端使用模拟数据响应（常规 `npm run build` 会自动剔除演示代码），每次推送 `v*` 标签时由 `.github/workflows/pages.yml` 自动部署至 GitHub Pages：
+
+```bash
+cd web && npm run build:demo   # 输出目录：web/dist-demo
+```
+
+### 测试与静态检查
+
+```bash
+gofmt -l internal cmd
+go vet ./...
+go test -count=1 ./...
+cd web && npm run typecheck
+```
+
+> 若本地 `go env` 将 `GOOS` 固定设为 `linux`，在 Windows 环境下运行测试需临时覆盖目标平台：
+> ```bash
+> GOOS=windows GOARCH=amd64 go test -count=1 ./...
+> ```
+
+### 提交规范
+
+项目采用 [Conventional Commits](https://www.conventionalcommits.org/)：类型前缀使用英文，标题使用简洁中文描述变更内容（如 `feat: 支持查看 OCI 官方云端审计日志`、`fix(billing): 修正出站流量统计`）。
+
+---
+
 ## 已知限制
 
-- 监控数据依赖实例内运行的 Oracle Cloud Agent，未安装时接口正常返回但序列为空。
-- 容量报告显示「有容量」时创建**仍可能失败**——它反映的是宿主机池的整体状态，不是那一瞬间的分配结果。
-- 容量监控只能查**已订阅的区域**。永久免费账号的实例只能开在 home region，通常也订阅不了第二个区域。
-- 账单数据由 Oracle 每隔几小时结算一次，最新一天通常不完整，**给不出「实时消费」**。
-- 账单需要额外的 `read usage-report` 权限。缺这项时页面显示「缺查询权限」并给出可照抄的策略——那不是账号故障。
-- **发票与付款记录查不到。** 那部分只在 Oracle 官网的账户中心，走的不是 OCI 的签名体系，没有可用的接口。
-- 引导卷扩容后，扩分区仍要自己登录实例执行面板给出的命令；还没有接 Oracle 的 Run Command 自动执行。
-- 出站流量按计费项名称（Outbound Data Transfer …）归总，单位照 Oracle 返回的显示，不做换算。
-- 存储卷的自动性能调整、实例配置与实例池未实现。
-- 备份与快照策略未实现。
+- 实例监控指标依赖实例内运行的 Oracle Cloud Agent；未安装时接口返回正常但时间序列为空。
+- 容量报告反映的是可用域宿主机池的整体状态，报告显示可用时创建实例仍可能因瞬时并发竞争而失败。
+- 容量监控仅支持查询账号已订阅的区域；Always Free 账号通常仅能使用其主区域（Home Region）。
+- 账单数据由 Oracle 按小时级周期异步结算，当日数据通常存在延迟，无法提供实时计费。
+- Oracle 账户中心的发票与付款记录不走 OCI API 签名体系且无开放接口，因此无法查询。
+- OCI 官方云端审计日志最长保留 **365 天**，且单次查询按单个区间返回（不包含子区间事件）。
+- 引导卷在线扩容后，系统内扩展分区仍需登录实例执行面板生成的命令（暂未接入 OCI Run Command 自动执行）。
+- 出站流量按计费项名称汇总并保留 Oracle 返回的原始单位。
+- 存储卷自动性能调优、实例配置（Instance Configuration）、实例池（Instance Pool）以及自动备份/快照策略暂未实现。
 
 ---
 
 ## 免责声明
 
-**使用本软件前请阅读。**
+**使用本软件前请仔细阅读以下条款：**
 
-1. **本项目与 Oracle 公司无任何关联**，未获得 Oracle 的认可、赞助或背书。
-   Oracle、Oracle Cloud、OCI 是 Oracle 公司的商标。
-
-2. **你必须自行确保使用方式符合 Oracle 的服务条款。**
-   本软件只是把官方 API 包装成一个更好用的界面，但**你**要为通过它发出的每一个
-   请求负责。特别是「容量守候」功能：它会持续调用创建实例接口，
-   **高频调用是 Oracle 明确不欢迎的行为**，可能导致请求被限流、账号被标记，
-   极端情况下账号被停用。软件内置了退避、频率下限与风险提示，
-   但**最终风险由使用者承担**。
-
-3. **本软件持有你的云账号凭据。** 请务必按[安全须知](#安全须知)部署，
-   尤其是不要把面板直接暴露到公网、以及为其创建权限最小化的专用 IAM 用户。
-
-4. **不对数据丢失负责。** 丢失 `master.key` 会导致所有已存 OCI 私钥永久无法解密。
-   终止实例、删除引导卷等操作**不可撤销**。请自行做好备份。
-
-5. **代码主要由 AI 编写。** 本项目的代码主要由 AI 编程助手（Claude Code）编写，
-   作者负责需求、审阅与测试。AI 写的代码可能含有审阅时没发现的错误，
-   请在接入重要账号前自行评估。
-
-6. 本软件按「原样」提供，不提供任何形式的担保。详见 [LICENSE](LICENSE)。
+1. **独立开源项目**：本项目与 Oracle Corporation 无任何隶属、赞助或背书关系。Oracle、Oracle Cloud 与 OCI 均为 Oracle Corporation 的注册商标。
+2. **合规使用责任**：使用者须自行确保所有操作符合 Oracle Cloud 服务条款。特别是「容量守候」功能会周期性发起实例创建请求，高频调用可能触发 Oracle 限流或账号风控；软件虽内置退避机制、频率下限与风险提示，但由此产生的全部风险均由使用者自行承担。
+3. **凭据与部署安全**：本软件会在本地加密托管接入账号的 OCI API 私钥。请严格按照[安全须知](#安全须知)部署，避免将未受保护的服务暴露至公网，并使用最小权限专用 IAM 用户。
+4. **数据不可逆操作与备份**：终止实例、删除存储卷与释放预留 IP 等操作不可撤销；丢失 `master.key` 将导致所有已保存私钥永久无法解密。请自行建立可靠备份。
+5. **AI 辅助开发说明**：本项目代码在开发过程中大量使用了 AI 编程助手辅助生成，由维护者负责架构审阅与测试验证。在接入重要生产或高价值账号前，请按自身安全标准独立审查代码。
+6. **无担保条款**：本软件按「原样（AS IS）」提供，不附带任何明示或暗示的担保，详见 [LICENSE](LICENSE)。
 
 ---
 
 ## 开源协议
 
-[MIT](LICENSE) © 2026 jsongmax
+[MIT License](LICENSE) © 2026 jsongmax
