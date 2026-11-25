@@ -29,6 +29,7 @@ const GRANTS = [
   'inspect limits',
   'read resource-availability',
   'read usage-report',
+  'read audit-events',
   'inspect policies',
   'inspect users',
   'inspect groups'

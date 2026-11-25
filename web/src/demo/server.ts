@@ -689,8 +689,199 @@ on('POST', '/api/accounts/{id}/permissions', p => ({ report: runPermCheck(acctBy
 on('POST', '/api/accounts/{id}/check', p => { const a = acctById(p.id); a.lastCheckedAt = iso(Date.now()); return checkOk(a) })
 on('GET', '/api/accounts/{id}/regions', p => {
   const a = acctById(p.id)
-  return { regions: ['ap-tokyo-1', 'ap-osaka-1', 'ap-singapore-1', 'us-phoenix-1', 'eu-frankfurt-1']
-    .map(r => ({ regionName: r, isHomeRegion: r === a.homeRegion })) }
+  const list = a.subscribedRegions?.length ? a.subscribedRegions : [a.homeRegion]
+  return { regions: list.map(r => ({ regionName: r, isHomeRegion: r === a.homeRegion })) }
+})
+on('GET', '/api/accounts/{id}/compartments', p => {
+  const a = acctById(p.id)
+  const partial = a.id === 'acc-pho'
+  const list: D.CompartmentDTO[] = [
+    { id: a.tenancyOcid, name: a.tenancyName || 'root', isRoot: true, lifecycleState: 'ACTIVE' }
+  ]
+  if (!partial) {
+    list.push({ id: `ocid1.compartment.oc1..demo${a.id}prod`, name: 'production', isRoot: false, lifecycleState: 'ACTIVE' })
+  }
+  return { compartments: list, partial }
+})
+on('GET', '/api/accounts/{id}/cloud-audit', (p, q) => {
+  const a = acctById(p.id)
+  // 法兰克福账号模拟缺少 read audit-events 权限的场景，方便预览无权限引导
+  if (a.status === 'error') {
+    throw new ApiError(403, {
+      code: 'oci_error',
+      ociCode: 'NotAuthorizedOrNotFound',
+      message: L('OCI 拒绝访问云端审计日志（演示数据）', 'OCI denied access to cloud audit logs (demo data)'),
+      advice: L("请为该用户所在组授予：Allow group 'OCI Core' to read audit-events in tenancy", "Grant the user's group: Allow group 'OCI Core' to read audit-events in tenancy")
+    })
+  }
+  const region = q.region || a.homeRegion || a.defaultRegion
+  const compartmentId = q.compartmentId || a.tenancyOcid
+  const compName = compartmentId === a.tenancyOcid ? (a.tenancyName || 'root') : 'production'
+  const hours = Number(q.hours) || 24
+  const endMs = q.endTime ? new Date(q.endTime).getTime() : Date.now()
+  const startMs = q.startTime ? new Date(q.startTime).getTime() : endMs - hours * HOUR
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || startMs >= endMs) {
+    fail(400, 'invalid_time_range', L('时间范围无效：开始时间必须早于结束时间', 'Invalid time range: startTime must be before endTime'))
+  }
+  if (endMs - startMs > 31 * DAY) {
+    fail(400, 'time_range_too_large', L('单次查询时间跨度不能超过 31 天', 'Time range cannot exceed 31 days'))
+  }
+  if (Date.now() - startMs > 365 * DAY) {
+    fail(400, 'beyond_retention', L('开始时间不能早于 365 天前（OCI 官方审计日志保留上限）', 'startTime cannot be older than 365 days'))
+  }
+
+  const mkEvent = (
+    idx: number,
+    offsetMs: number,
+    spec: Partial<D.CloudAuditEventDTO> & Pick<D.CloudAuditEventDTO, 'eventType' | 'eventName' | 'source' | 'action' | 'path' | 'isWrite' | 'status' | 'statusCode' | 'isError' | 'message'>
+  ): D.CloudAuditEventDTO => {
+    const ts = iso(Math.max(startMs + 1000, Math.min(endMs - 1000, endMs - offsetMs)))
+    const reqId = `oci-demo-req/${a.code.toLowerCase()}-${String(idx).padStart(3, '0')}`
+    return {
+      eventId: `demo-evt-${a.id}-${region}-${idx}`,
+      eventTime: ts,
+      compartmentId,
+      compartmentName: compName,
+      resourceId: '',
+      resourceName: '',
+      availabilityDomain: region.endsWith('-1') ? 'AD1' : '',
+      eventGroupingId: `oci-demo-group/${a.code.toLowerCase()}-${String(idx).padStart(3, '0')}`,
+      requestId: reqId,
+      responseTime: ts,
+      principalId: a.userOcid,
+      principalName: a.email,
+      callerId: '',
+      callerName: '',
+      authType: 'natv',
+      ipAddress: idx % 2 === 0 ? '203.0.113.42' : '198.51.100.17',
+      userAgent: 'OCICore/0.1 (+https://github.com/ocicore)',
+      detail: {
+        cloudEventsVersion: '0.1',
+        eventTypeVersion: '2.0',
+        contentType: 'application/json',
+        requestParameters: { compartmentId: [compartmentId], limit: ['100'] },
+        requestHeaders: { Accept: ['application/json'], Date: [new Date(ts).toUTCString()] },
+        responseHeaders: { 'Content-Type': ['application/json'], 'opc-request-id': [reqId] },
+        responsePayload: {},
+        stateChange: { previous: null, current: null },
+        additionalDetails: { 'X-Real-Port': 54000 + idx }
+      },
+      ...spec
+    }
+  }
+
+  const all: D.CloudAuditEventDTO[] = [
+    mkEvent(1, Math.min(5 * HOUR, (endMs - startMs) * 0.85), {
+      eventType: 'com.oraclecloud.computeApi.ListInstances',
+      eventName: 'ListInstances',
+      source: 'computeApi',
+      action: 'GET',
+      path: '/20160918/instances',
+      isWrite: false,
+      status: '200',
+      statusCode: 200,
+      isError: false,
+      message: 'ListInstances succeeded'
+    }),
+    mkEvent(2, Math.min(4 * HOUR, (endMs - startMs) * 0.72), {
+      eventType: 'com.oraclecloud.virtualnetwork.UpdateSecurityList',
+      eventName: 'UpdateSecurityList',
+      source: 'virtualnetwork',
+      resourceId: `ocid1.securitylist.oc1.${region}.demoseclist01`,
+      resourceName: 'Default Security List for ocicore-vcn',
+      action: 'PUT',
+      path: `/20160918/securityLists/ocid1.securitylist.oc1.${region}.demoseclist01`,
+      isWrite: true,
+      status: '200',
+      statusCode: 200,
+      isError: false,
+      message: 'UpdateSecurityList succeeded'
+    }),
+    mkEvent(3, Math.min(3 * HOUR, (endMs - startMs) * 0.58), {
+      eventType: 'com.oraclecloud.computeApi.InstanceAction',
+      eventName: 'InstanceAction',
+      source: 'computeApi',
+      resourceId: `ocid1.instance.oc1.${region}.demoins01`,
+      resourceName: `${a.code.toLowerCase()}-web`,
+      action: 'POST',
+      path: `/20160918/instances/ocid1.instance.oc1.${region}.demoins01?action=SOFTRESET`,
+      isWrite: true,
+      status: '200',
+      statusCode: 200,
+      isError: false,
+      message: 'InstanceAction succeeded'
+    }),
+    mkEvent(4, Math.min(2 * HOUR, (endMs - startMs) * 0.42), {
+      eventType: 'com.oraclecloud.computeApi.TerminateInstance',
+      eventName: 'TerminateInstance',
+      source: 'computeApi',
+      resourceId: `ocid1.instance.oc1.${region}.demoins02`,
+      resourceName: `${a.code.toLowerCase()}-relay`,
+      action: 'DELETE',
+      path: `/20160918/instances/ocid1.instance.oc1.${region}.demoins02`,
+      isWrite: true,
+      status: '403',
+      statusCode: 403,
+      isError: true,
+      message: 'NotAuthorizedOrNotFound: Authorization failed or requested resource not found.',
+      userAgent: 'Oracle-GoSDK/65.0.0'
+    }),
+    mkEvent(5, Math.min(45 * MIN, (endMs - startMs) * 0.25), {
+      eventType: 'com.oraclecloud.blockstorage.GetBootVolume',
+      eventName: 'GetBootVolume',
+      source: 'blockstorage',
+      resourceId: `ocid1.bootvolume.oc1.${region}.demoboot01`,
+      resourceName: `${a.code.toLowerCase()}-web (Boot Volume)`,
+      action: 'GET',
+      path: `/20160918/bootVolumes/ocid1.bootvolume.oc1.${region}.demoboot01`,
+      isWrite: false,
+      status: '200',
+      statusCode: 200,
+      isError: false,
+      message: 'GetBootVolume succeeded'
+    }),
+    ...(region === a.homeRegion ? [
+      mkEvent(6, Math.min(18 * MIN, (endMs - startMs) * 0.1), {
+        eventType: 'com.oraclecloud.identitycontrolplane.ListPolicies',
+        eventName: 'ListPolicies',
+        source: 'identitycontrolplane',
+        action: 'GET',
+        path: '/20160918/policies',
+        isWrite: false,
+        status: '200',
+        statusCode: 200,
+        isError: false,
+        message: 'ListPolicies succeeded'
+      })
+    ] : [])
+  ]
+
+  // 模拟基于 nextPage 的升序两页分页
+  const pageIdx = q.page === 'demo-page-2' ? 1 : 0
+  const pageSize = 4
+  const slice = all.slice(pageIdx * pageSize, (pageIdx + 1) * pageSize)
+  const hasMore = (pageIdx + 1) * pageSize < all.length
+
+  const res: D.CloudAuditResponseDTO = {
+    accountId: a.id,
+    region,
+    homeRegion: a.homeRegion,
+    isHomeRegion: region === a.homeRegion,
+    compartmentId,
+    startTime: iso(startMs),
+    endTime: iso(endMs),
+    retentionDays: 365,
+    maxSpanDays: 31,
+    order: 'asc',
+    nextPage: hasMore ? 'demo-page-2' : '',
+    hasMore,
+    notice: L(
+      'OCI 官方云端审计日志最长保留 365 天；IAM / 账号级事件通常记录在主区域（Home Region）；接口按时间升序分页返回（演示数据）。',
+      'OCI Audit retains events for up to 365 days; IAM/tenancy events are usually recorded in the Home Region; events are paginated in ascending time order (demo data).'
+    ),
+    events: slice
+  }
+  return res
 })
 on('POST', '/api/accounts/parse-config', (_, __, b) => {
   const text: string = b.text ?? ''

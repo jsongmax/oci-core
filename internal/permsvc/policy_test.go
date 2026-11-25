@@ -218,3 +218,34 @@ func TestEvaluateCapabilityProbeWins(t *testing.T) {
 		t.Errorf("探测被拒应判为缺失并给出修复建议: %+v", item)
 	}
 }
+
+func TestEvaluateAuditCapability(t *testing.T) {
+	if got := view(t, "Allow group 'OCI Core' to inspect audit-events in tenancy").evaluate(pAuditEventsRead).Status; got != StatusMissing {
+		t.Errorf("inspect 不满足 AUDIT_EVENT_READ，期望缺失，实际 %s", got)
+	}
+	if got := view(t, "Allow group 'OCI Core' to read audit-events in tenancy").evaluate(pAuditEventsRead).Status; got != StatusOK {
+		t.Errorf("read audit-events 应满足 AUDIT_EVENT_READ，实际 %s", got)
+	}
+	if got := view(t, "Allow group 'OCI Core' to read all-resources in tenancy").evaluate(pAuditEventsRead).Status; got != StatusOK {
+		t.Errorf("read all-resources 应满足 AUDIT_EVENT_READ，实际 %s", got)
+	}
+
+	var capb Capability
+	for _, c := range capabilities {
+		if c.Key == "account.audit" {
+			capb = c
+		}
+	}
+	if capb.Key == "" || capb.Probe != probeAudit {
+		t.Fatalf("未正确注册 account.audit 能力: %+v", capb)
+	}
+	okItem := evaluateCapability(capb, view(t), false, map[string]probeResult{probeAudit: {status: StatusOK}}, nil)
+	if okItem.Status != StatusOK || okItem.Needs[0].Via != "ListEvents" {
+		t.Errorf("probeAudit 成功应判为可用: %+v", okItem)
+	}
+	missItem := evaluateCapability(capb, view(t), false, map[string]probeResult{probeAudit: {status: StatusMissing}}, []string{"OCI Core"})
+	if missItem.Status != StatusMissing || len(missItem.Fix) != 1 ||
+		missItem.Fix[0] != "Allow group 'OCI Core' to read audit-events in tenancy" {
+		t.Errorf("probeAudit 被拒应给出 read audit-events 修复语句: %+v", missItem)
+	}
+}

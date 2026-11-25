@@ -1048,3 +1048,78 @@ export interface AccountResourcesDTO {
   errors?: { region: string; part: string; error: string }[]
   fetchedAt: string
 }
+
+/* ---------- OCI 云端审计日志 ---------- */
+
+export interface CompartmentDTO {
+  id: string
+  name: string
+  isRoot: boolean
+  lifecycleState: string
+}
+
+export interface AccountCompartmentsDTO {
+  compartments: CompartmentDTO[]
+  partial: boolean
+}
+
+export interface CloudAuditEventDetailDTO {
+  cloudEventsVersion?: string
+  eventTypeVersion?: string
+  contentType?: string
+  requestParameters?: Record<string, unknown>
+  requestHeaders?: Record<string, unknown>
+  responseHeaders?: Record<string, unknown>
+  responsePayload?: unknown
+  stateChange?: { previous?: unknown; current?: unknown }
+  additionalDetails?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface CloudAuditEventDTO {
+  eventId: string
+  eventTime: string
+  eventType: string
+  eventName: string
+  source: string
+  compartmentId: string
+  compartmentName: string
+  resourceId: string
+  resourceName: string
+  availabilityDomain: string
+  eventGroupingId: string
+  action: string
+  path: string
+  requestId: string
+  isWrite: boolean
+  status: string
+  statusCode: number
+  isError: boolean
+  message: string
+  responseTime: string
+  principalId: string
+  principalName: string
+  callerId: string
+  callerName: string
+  authType: string
+  ipAddress: string
+  userAgent: string
+  detail?: CloudAuditEventDetailDTO
+}
+
+export interface CloudAuditResponseDTO {
+  accountId: string
+  region: string
+  homeRegion: string
+  isHomeRegion: boolean
+  compartmentId: string
+  startTime: string
+  endTime: string
+  retentionDays: number
+  maxSpanDays: number
+  order: 'asc' | 'desc' | string
+  nextPage: string
+  hasMore: boolean
+  notice: string
+  events: CloudAuditEventDTO[]
+}

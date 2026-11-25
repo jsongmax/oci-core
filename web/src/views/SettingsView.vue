@@ -15,6 +15,7 @@ import KeyValueList from '@/components/KeyValueList.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SkeletonRows from '@/components/SkeletonRows.vue'
 import QrCode from '@/components/QrCode.vue'
+import CloudAuditPanel from '@/components/CloudAuditPanel.vue'
 import { actionLabel, auditTarget } from '@/lib/audit'
 
 const router = useRouter()
@@ -177,6 +178,7 @@ const languageGroups = [{ label: '', options: LOCALES.map(l => ({ value: l.value
 
 /* ---------- 审计日志 ---------- */
 
+const auditSource = ref<'panel' | 'cloud'>('panel')
 const audit = ref<AuditEntryDTO[]>([])
 const auditLoading = ref(false)
 const auditMore = ref(false)
@@ -381,7 +383,7 @@ watch(active, tab => { if (tab === 'audit') void loadAudit() })
               <button class="btn btn--sm btn--danger" @click="askDisable()">{{ t.settingsPage.disableTitle }}</button>
             </template>
 
-            <div v-else class="sub-form">
+            <form v-else class="sub-form" @submit.prevent="confirmDisable">
               <p class="t-xs dim">{{ t.settingsPage.disableHint }}</p>
               <div class="field">
                 <label for="dp">{{ t.settingsPage.currentPw }}</label>
@@ -389,17 +391,19 @@ watch(active, tab => { if (tab === 'audit') void loadAudit() })
                        autocomplete="current-password" />
               </div>
               <div class="field">
-                <label for="dc">{{ t.settingsPage.code }}</label>
-                <input id="dc" v-model="disableCode" class="input mono" maxlength="6"
-                       inputmode="numeric" :placeholder="t.settingsPage.sixDigits" />
+                <label for="disable-totp-code">{{ t.settingsPage.code }}</label>
+                <input id="disable-totp-code" v-model="disableCode" name="totp" type="text" class="input mono"
+                       maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+                       spellcheck="false" autocapitalize="off" :placeholder="t.settingsPage.sixDigits"
+                       @paste.prevent="disableCode = ($event.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, 6)" />
               </div>
               <div class="sub-form__foot">
-                <button class="btn btn--sm" @click="showDisable = false">{{ t.common.cancel }}</button>
-                <button class="btn btn--sm btn--danger" :disabled="totpBusy" @click="confirmDisable()">
+                <button type="button" class="btn btn--sm" @click="showDisable = false">{{ t.common.cancel }}</button>
+                <button type="submit" class="btn btn--sm btn--danger" :disabled="totpBusy">
                   {{ totpBusy ? t.common.submitting : t.settingsPage.confirmDisable }}
                 </button>
               </div>
-            </div>
+            </form>
           </template>
 
           <!-- 未启用：就地绑定，不必退出登录 -->
@@ -410,28 +414,30 @@ watch(active, tab => { if (tab === 'audit') void loadAudit() })
               {{ totpBusy ? t.settingsPage.generating : t.settingsPage.startEnroll }}
             </button>
 
-            <div v-else class="sub-form">
+            <form v-else class="sub-form" @submit.prevent="confirmEnroll">
               <p class="t-xs dim">
                 {{ t.settingsPage.enrollHint }}
               </p>
               <QrCode v-if="totpUri" :value="totpUri" :label="t.settingsPage.enrollQr" />
               <div class="secret">
                 <code class="secret__value mono">{{ groupedSecret }}</code>
-                <button class="btn btn--sm" @click="copy(totpSecret)">{{ t.common.copy }}</button>
+                <button type="button" class="btn btn--sm" @click="copy(totpSecret)">{{ t.common.copy }}</button>
               </div>
               <a class="t-xs" :href="totpUri" style="color: var(--accent)">{{ t.settingsPage.openInApp }}</a>
               <div class="field">
-                <label for="ec">{{ t.settingsPage.code }}</label>
-                <input id="ec" v-model="enrollCode" class="input mono" maxlength="6"
-                       inputmode="numeric" :placeholder="t.settingsPage.sixDigits" />
+                <label for="enroll-totp-code">{{ t.settingsPage.code }}</label>
+                <input id="enroll-totp-code" v-model="enrollCode" name="totp" type="text" class="input mono"
+                       maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+                       spellcheck="false" autocapitalize="off" :placeholder="t.settingsPage.sixDigits"
+                       @paste.prevent="enrollCode = ($event.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, 6)" />
               </div>
               <div class="sub-form__foot">
-                <button class="btn btn--sm" @click="totpSecret = ''">{{ t.common.cancel }}</button>
-                <button class="btn btn--sm btn--primary" :disabled="totpBusy" @click="confirmEnroll()">
+                <button type="button" class="btn btn--sm" @click="totpSecret = ''">{{ t.common.cancel }}</button>
+                <button type="submit" class="btn btn--sm btn--primary" :disabled="totpBusy">
                   {{ totpBusy ? t.common.submitting : t.settingsPage.finishEnroll }}
                 </button>
               </div>
-            </div>
+            </form>
           </template>
         </div>
       </SectionCard>
@@ -581,41 +587,60 @@ watch(active, tab => { if (tab === 'audit') void loadAudit() })
       </SectionCard>
     </template>
 
-    <SectionCard v-else-if="active === 'audit'" :title="t.settingsPage.audit" :note="auditNote">
-      <template #action>
-        <button class="btn btn--sm" :disabled="auditLoading" @click="loadAudit(false)">{{ t.common.refresh }}</button>
-        <button class="btn btn--sm" @click="exportCsv">{{ t.settingsPage.exportCsv }}</button>
-      </template>
+    <template v-else-if="active === 'audit'">
+      <div class="audit-switch" role="tablist">
+        <button type="button" class="pill" role="tab"
+                :aria-selected="auditSource === 'panel'"
+                :class="{ 'is-active': auditSource === 'panel' }"
+                @click="auditSource = 'panel'">
+          {{ t.settingsPage.auditPanelTab }}
+        </button>
+        <button type="button" class="pill" role="tab"
+                :aria-selected="auditSource === 'cloud'"
+                :class="{ 'is-active': auditSource === 'cloud' }"
+                @click="auditSource = 'cloud'">
+          {{ t.settingsPage.auditCloudTab }}
+        </button>
+      </div>
 
-      <SkeletonRows v-if="auditLoading && audit.length === 0" :rows="6" />
-      <EmptyState v-else-if="audit.length === 0" :title="t.settingsPage.noAudit"
-                  :body="t.settingsPage.noAuditBody" />
-      <template v-else>
-        <div class="head cols-audit">
-          <span>{{ t.settingsPage.colTime }}</span><span>{{ t.settingsPage.colAction }}</span><span>{{ t.settingsPage.colAccount }}</span><span>{{ t.settingsPage.colTarget }}</span><span>{{ t.settingsPage.colDetail }}</span><span>{{ t.settingsPage.colIp }}</span><span>{{ t.settingsPage.colResult }}</span>
-        </div>
-        <div v-for="r in audit" :key="r.id" class="row cols-audit">
-          <span class="acct-bar" :style="{ background: colorOf(r.accountId) }" />
-          <span class="mono t-xs dim">{{ auditTime(r.createdAt) }}</span>
-          <span class="t-xs">{{ actionLabel(r.action) }}</span>
-          <span class="mono t-xs" :style="{ color: colorOf(r.accountId), fontWeight: 600 }">{{ codeOf(r.accountId) }}</span>
-          <span class="mono t-xs dim" :title="r.target">{{ r.target ? auditTarget(r.target) : '—' }}</span>
-          <span class="t-xs dim-3">{{ r.detail || '—' }}</span>
-          <span class="mono t-xs dim-3"><MaskedText :value="r.ip || '—'" kind="ip" /></span>
-          <span class="t-xs" :style="{ color: r.result === 'ok' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
-            {{ r.result === 'ok' ? t.settingsPage.ok : t.settingsPage.failed }}
-          </span>
-        </div>
+      <SectionCard v-if="auditSource === 'panel'" :title="t.settingsPage.audit" :note="auditNote">
+        <template #action>
+          <button class="btn btn--sm" :disabled="auditLoading" @click="loadAudit(false)">{{ t.common.refresh }}</button>
+          <button class="btn btn--sm" @click="exportCsv">{{ t.settingsPage.exportCsv }}</button>
+        </template>
 
-        <div class="more">
-          <button v-if="auditMore" class="btn btn--sm" :disabled="auditLoading"
-                  @click="loadAudit(true)">
-            <span v-if="auditLoading" class="btn-spin" aria-hidden="true" />{{ auditLoading ? t.settingsPage.loadingShort : t.settingsPage.loadEarlier(AUDIT_PAGE) }}
-          </button>
-          <span v-else class="t-2xs dim-3">{{ t.settingsPage.earliest }}</span>
-        </div>
-      </template>
-    </SectionCard>
+        <SkeletonRows v-if="auditLoading && audit.length === 0" :rows="6" />
+        <EmptyState v-else-if="audit.length === 0" :title="t.settingsPage.noAudit"
+                    :sub="t.settingsPage.noAuditBody" />
+        <template v-else>
+          <div class="head cols-audit">
+            <span>{{ t.settingsPage.colTime }}</span><span>{{ t.settingsPage.colAction }}</span><span>{{ t.settingsPage.colAccount }}</span><span>{{ t.settingsPage.colTarget }}</span><span>{{ t.settingsPage.colDetail }}</span><span>{{ t.settingsPage.colIp }}</span><span>{{ t.settingsPage.colResult }}</span>
+          </div>
+          <div v-for="r in audit" :key="r.id" class="row cols-audit">
+            <span class="acct-bar" :style="{ background: colorOf(r.accountId) }" />
+            <span class="mono t-xs dim">{{ auditTime(r.createdAt) }}</span>
+            <span class="t-xs">{{ actionLabel(r.action) }}</span>
+            <span class="mono t-xs" :style="{ color: colorOf(r.accountId), fontWeight: 600 }">{{ codeOf(r.accountId) }}</span>
+            <span class="mono t-xs dim" :title="r.target">{{ r.target ? auditTarget(r.target) : '—' }}</span>
+            <span class="t-xs dim-3">{{ r.detail || '—' }}</span>
+            <span class="mono t-xs dim-3"><MaskedText :value="r.ip || '—'" kind="ip" /></span>
+            <span class="t-xs" :style="{ color: r.result === 'ok' ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }">
+              {{ r.result === 'ok' ? t.settingsPage.ok : t.settingsPage.failed }}
+            </span>
+          </div>
+
+          <div class="more">
+            <button v-if="auditMore" class="btn btn--sm" :disabled="auditLoading"
+                    @click="loadAudit(true)">
+              <span v-if="auditLoading" class="btn-spin" aria-hidden="true" />{{ auditLoading ? t.settingsPage.loadingShort : t.settingsPage.loadEarlier(AUDIT_PAGE) }}
+            </button>
+            <span v-else class="t-2xs dim-3">{{ t.settingsPage.earliest }}</span>
+          </div>
+        </template>
+      </SectionCard>
+
+      <CloudAuditPanel v-else />
+    </template>
 
     <SectionCard v-else :title="t.settingsPage.about">
       <KeyValueList :items="aboutItems" />
@@ -674,6 +699,11 @@ watch(active, tab => { if (tab === 'audit') void loadAudit() })
   align-items: center;
   justify-content: center;
   padding: 14px 0 4px;
+}
+.audit-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 </style>

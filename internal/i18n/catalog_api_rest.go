@@ -138,6 +138,16 @@ func init() {
 		"api.saved":              {"已保存", "Saved"},
 		"api.resize_notice":      {"云盘已扩容到 %d GB。还需要登录实例扩展分区与文件系统，容量才会真正可用。", "The volume was grown to %d GB. Sign in to the instance and extend the partition and file system to use the space."},
 		"api.rename_only":        {"仅改名", "Renamed only"},
-		"api.traffic_notice":     {"取自 VCN 网卡指标，包含 VCN 内网与同区域 OCI 服务的流量，比账单里的计费出站流量偏大。计费口径以账单页为准。", "From VCN VNIC metrics, which include traffic inside the VCN and to OCI services in the region, so it's higher than billed outbound traffic. See the Billing page for billed figures."},
+		"api.traffic_notice":                   {"取自 VCN 网卡指标，包含 VCN 内网与同区域 OCI 服务的流量，比账单里的计费出站流量偏大。计费口径以账单页为准。", "From VCN VNIC metrics, which include traffic inside the VCN and to OCI services in the region, so it's higher than billed outbound traffic. See the Billing page for billed figures."},
+		// cloud_audit.go
+		"api.cloud_audit.notice":               {"OCI 官方云端审计日志最长保留 365 天；IAM / 账号级事件通常记录在主区域（Home Region）；接口按时间升序分页返回。", "OCI Cloud Audit retains events for up to 365 days; IAM and account-level events are typically logged in the Home Region; results are paginated in ascending chronological order."},
+		"api.cloud_audit.invalid_region":       {"区域名不合法: %q", "Invalid region name: %q"},
+		"api.cloud_audit.invalid_compartment":  {"区间 OCID 格式无效，应以 ocid1.tenancy. 或 ocid1.compartment. 开头", "Invalid compartment OCID: expected ocid1.tenancy. or ocid1.compartment. prefix"},
+		"api.cloud_audit.invalid_time":         {"时间参数 %s 格式无效，请使用 RFC3339 时间戳", "Invalid %s timestamp: expected RFC3339 format"},
+		"api.cloud_audit.invalid_hours":        {"hours 参数必须为正整数（1–%d）", "hours must be a positive integer (1–%d)"},
+		"api.cloud_audit.range_order":          {"结束时间必须晚于开始时间", "End time must be after start time"},
+		"api.cloud_audit.span_limit":           {"单次查询跨度不能超过 %d 天", "Query span cannot exceed %d days"},
+		"api.cloud_audit.beyond_retention":     {"OCI 官方云端审计日志仅保留 %d 天，开始时间不能早于 %d 天前", "OCI Cloud Audit retains logs for %d days; start time cannot be older than %d days ago"},
+		"api.cloud_audit.invalid_page":         {"分页游标无效或过长", "Invalid or overly long page token"},
 	})
 }

@@ -30,6 +30,9 @@ var (
 	ServiceOrganizations = Service{Host: "organizations", Version: "20230401", OCIInfix: true}
 	// 用量与成本。数据是租户全局的,但请求仍要发往一个已订阅的区域。
 	ServiceUsage = Service{Host: "usageapi", Version: "20200107", OCIInfix: true}
+	// 云端审计日志。实测 audit.{region}.oraclecloud.com/20190901/auditEvents 可直接连通，
+	// 每个区域独立存储该区域的审计事件，IAM/账号级事件通常记录在主区域（Home Region）。
+	ServiceAudit = Service{Host: "audit", Version: "20190901"}
 )
 
 // realmOf 返回区域所属 realm 的域名后缀。绝大多数商业区域属于 OC1。

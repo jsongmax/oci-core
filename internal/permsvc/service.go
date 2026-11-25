@@ -19,6 +19,7 @@ const (
 	probeCapacity  = "capacity"
 	probeLimits    = "limits"
 	probeUsage     = "usage"
+	probeAudit     = "audit"
 )
 
 // probeProves 是每个探测能直接证明的权限（官方文档里该接口要求的权限）。
@@ -29,13 +30,14 @@ var probeProves = map[string]Need{
 	probeCapacity:  pCapacityReport, // CreateComputeCapacityReport：COMPUTE_CAPACITY_REPORT_CREATE
 	probeLimits:    pLimitsInspect,  // ListLimitValues：inspect limits
 	probeUsage:     pUsageReportRead,
+	probeAudit:     pAuditEventsRead, // ListEvents：AUDIT_EVENT_READ
 }
 
 // probeAPI 是探测调用的接口名，展示给用户核对。
 var probeAPI = map[string]string{
 	probeInstances: "ListInstances", probeVcns: "ListVcns", probeVolumes: "ListVolumes",
 	probeCapacity: "CreateComputeCapacityReport", probeLimits: "ListLimitValues",
-	probeUsage: "RequestSummarizedUsages",
+	probeUsage: "RequestSummarizedUsages", probeAudit: "ListEvents",
 }
 
 // checkTimeout 是一次权限自检的上限。探测与读策略并发进行，正常几秒内完成。
@@ -218,6 +220,15 @@ func probeFuncs(client *ociclient.Client, tenancy, compartment string) map[strin
 			_, err := client.SummarizeUsage(ctx, ociclient.UsageQuery{
 				TenantID: tenancy, Start: today, End: today.Add(24 * time.Hour),
 				Granularity: ociclient.GranularityTotal,
+			})
+			return err
+		},
+		probeAudit: func(ctx context.Context) error {
+			now := time.Now().UTC()
+			_, err := client.ListAuditEvents(ctx, ociclient.ListAuditEventsOptions{
+				CompartmentID: compartment,
+				StartTime:     now.Add(-5 * time.Minute),
+				EndTime:       now,
 			})
 			return err
 		},

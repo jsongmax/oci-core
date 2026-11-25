@@ -63,6 +63,7 @@ const zh = {
       ['read metrics', '监控指标'],
       ['inspect limits / read resource-availability', '配额与用量'],
       ['read usage-report', '账单与出站流量'],
+      ['read audit-events', 'OCI 官方云端审计日志'],
       ['inspect policies / users / groups', '仅供权限自检读取策略与用户所在的组，可省略']
     ] as [string, string][],
     notes: [
@@ -138,6 +139,7 @@ const en: typeof zh = {
       ['read metrics', 'Monitoring metrics'],
       ['inspect limits / read resource-availability', 'Service limits and usage'],
       ['read usage-report', 'Billing and outbound traffic'],
+      ['read audit-events', 'OCI cloud audit logs'],
       ['inspect policies / users / groups', 'Only used by the permission self-check to read policies and group memberships; optional']
     ] as [string, string][],
     notes: [

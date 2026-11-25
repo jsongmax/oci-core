@@ -109,6 +109,8 @@ X-OCI-Tools: 1
 | DELETE | `/api/accounts/{id}?confirm={alias}` | 删除账号，**需回传别名** |
 | POST | `/api/accounts/{id}/check` | 重新校验连通性 |
 | GET | `/api/accounts/{id}/regions` | 该账号已订阅的区域 |
+| GET | `/api/accounts/{id}/compartments` | 该账号的根区间与活跃子区间（缺权限时降级返回根区间） |
+| GET | `/api/accounts/{id}/cloud-audit` | 查询 OCI 官方云端审计日志（只读、按页返回） |
 | GET | `/api/accounts/{id}/resources` | 资源盘点：各区域的卷、公网 IP、控制台连接、VCN 与额度用量 |
 | DELETE | `/api/accounts/{id}/resources/volumes/{volumeId}?region=&kind=&confirm={name}` | 删除未挂载的引导卷 / 块存储，**需回传卷名** |
 | DELETE | `/api/accounts/{id}/resources/public-ips/{ipId}?region=&confirm={ip}` | 释放未绑定的预留 IP，**需回传 IP 地址** |
@@ -871,6 +873,84 @@ Allow group <你的组> to read usage-report in tenancy
 `attention` 为空时整块隐藏——无异常时不该占用注意力。
 
 **`GET /api/audit`** — `?accountId=` `?action=` `?limit=`（默认 200，上限 500）
+
+**`GET /api/accounts/{id}/cloud-audit`** — 查询 OCI 官方云端审计日志（`GET /20190901/auditEvents`，纯只读）
+
+查询参数（均可选）：
+- `region`：区域全名或三字母代号（如 `us-phoenix-1` / `phx`），留空默认账号 `homeRegion`（若无则 `defaultRegion`）。
+- `compartmentId`：目标区间 OCID（`ocid1.tenancy.*` 或 `ocid1.compartment.*`），留空默认账号配置区间或租户根区间。
+- `startTime` / `endTime`：RFC3339 时间戳；翻页传 `page` 时应与首页响应返回的 `startTime` / `endTime` / `region` / `compartmentId` 保持一致。
+- `hours`：便捷时间窗小时数（1–744），仅在未传 `startTime` 时生效，默认 `24`。
+- `page`：上一页返回的 `nextPage` 游标（对应 OCI `opc-next-page` 响应头）。
+
+约束与行为：
+- **保留期 365 天**：OCI 仅保留最近 365 天的审计日志，早于 365 天返回 `400 beyond_retention`；单次跨度上限 31 天（超限返回 `400 time_range_too_large`）。
+- **排序与分页**：OCI 固定每页最多返回 100 条并按 `eventTime` 升序排列（`order: "asc"`），通过 `nextPage` / `hasMore` 向后翻页。
+- **区域归属**：各区域独立存储审计事件；IAM 与账号级事件通常记录在主区域（`isHomeRegion: true`）。
+- **所需权限**：`Allow group <组名> to read audit-events in tenancy`（或对应区间）；缺权限时返回 `403 oci_error`（保留 `ociCode` 并在 `advice` 中给出策略建议），同时已接入权限自检能力 `account.audit`。
+- **鉴权头脱敏**：单条事件的 `detail.requestHeaders` / `detail.responseHeaders` 中敏感鉴权头（如 `Authorization`、`Cookie`）已统一替换为 `[REDACTED]`。
+
+```json
+{
+  "accountId": "a3f1c2d4",
+  "region": "us-phoenix-1",
+  "homeRegion": "us-phoenix-1",
+  "isHomeRegion": true,
+  "compartmentId": "ocid1.tenancy.oc1..exampleuniqueid",
+  "startTime": "2026-11-24T08:16:04Z",
+  "endTime": "2026-11-25T08:16:04Z",
+  "retentionDays": 365,
+  "maxSpanDays": 31,
+  "order": "asc",
+  "nextPage": "",
+  "hasMore": false,
+  "notice": "…",
+  "events": [
+    {
+      "eventId": "89452f46-04dc-4ccb-8259-e386a7f5c051",
+      "eventTime": "2026-11-25T08:16:04.670Z",
+      "eventType": "com.oraclecloud.computeApi.ListInstances",
+      "eventName": "ListInstances",
+      "source": "computeApi",
+      "compartmentId": "ocid1.tenancy.oc1..exampleuniqueid",
+      "compartmentName": "demo-tenancy",
+      "resourceId": "",
+      "resourceName": "",
+      "availabilityDomain": "AD2",
+      "eventGroupingId": "oci-demo-group/req-001",
+      "action": "GET",
+      "path": "/20160918/instances",
+      "requestId": "oci-demo-req/req-001",
+      "isWrite": false,
+      "status": "200",
+      "statusCode": 200,
+      "isError": false,
+      "message": "ListInstances succeeded",
+      "responseTime": "2026-11-25T08:16:04.670Z",
+      "principalId": "ocid1.user.oc1..exampleuniqueid",
+      "principalName": "admin@example.com",
+      "callerId": "",
+      "callerName": "",
+      "authType": "natv",
+      "ipAddress": "203.0.113.42",
+      "userAgent": "OCICore/0.1 (+https://github.com/ocicore)",
+      "detail": {
+        "cloudEventsVersion": "0.1",
+        "eventTypeVersion": "2.0",
+        "contentType": "application/json",
+        "requestParameters": { "compartmentId": ["ocid1.tenancy.oc1..exampleuniqueid"] },
+        "requestHeaders": { "Accept": ["application/json"] },
+        "responseHeaders": { "Content-Type": ["application/json"] },
+        "responsePayload": {},
+        "stateChange": { "previous": null, "current": null },
+        "additionalDetails": { "X-Real-Port": 56010 }
+      }
+    }
+  ]
+}
+```
+
+**`GET /api/accounts/{id}/compartments`** — 列出该账号可选区间（首项恒为租户根区间 `isRoot: true`；缺少 `ListCompartments` 权限时优雅降级返回根区间并置 `partial: true`）。
 
 ---
 

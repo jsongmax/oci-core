@@ -77,7 +77,21 @@ export const accounts = {
     http.post<{ report: D.PermReportDTO }>(`/api/accounts/${encodeURIComponent(id)}/permissions`),
 
   regions: (id: string) =>
-    http.get<{ regions: { regionName: string; isHomeRegion: boolean }[] }>(`/api/accounts/${id}/regions`),
+    http.get<{ regions: { regionName: string; isHomeRegion: boolean }[] }>(`/api/accounts/${encodeURIComponent(id)}/regions`),
+
+  compartments: (id: string) =>
+    http.get<D.AccountCompartmentsDTO>(`/api/accounts/${encodeURIComponent(id)}/compartments`),
+
+  /** OCI 官方云端审计日志（纯只读）。翻页传 page 时需与首页响应中的 region/compartmentId/startTime/endTime 保持一致 */
+  cloudAudit: (id: string, query: {
+    region?: string
+    compartmentId?: string
+    startTime?: string
+    endTime?: string
+    hours?: number
+    page?: string
+  } = {}) =>
+    http.get<D.CloudAuditResponseDTO>(`/api/accounts/${encodeURIComponent(id)}/cloud-audit`, { query }),
 
   /** 删除未挂载的卷。confirm 回传卷名（没有名字时回传 OCID），走两步验证复核 */
   deleteVolume: (id: string, volumeId: string, region: string, kind: 'boot' | 'block', confirm: string) =>

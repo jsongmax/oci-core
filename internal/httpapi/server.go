@@ -18,6 +18,7 @@ import (
 	"ocicore/internal/instancesvc"
 	"ocicore/internal/jobsvc"
 	"ocicore/internal/notify"
+	"ocicore/internal/ociclient"
 	"ocicore/internal/ociconn"
 	"ocicore/internal/store"
 )
@@ -64,6 +65,9 @@ type Server struct {
 
 	// elevations 记录通过了危险操作复核的会话，见 danger.go。
 	elevations *dangerElevations
+
+	// testClientFor 仅用于单元测试替换 OCI 客户端工厂，生产环境恒为 nil。
+	testClientFor func(context.Context, *store.Account) (*ociclient.Client, error)
 }
 
 // New 构造服务并注册全部路由。
@@ -139,6 +143,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/accounts/{id}/permissions", s.requireAuth(s.handleGetPermissions))
 	s.mux.HandleFunc("POST /api/accounts/{id}/permissions", s.guard(s.requireAuth(s.handleCheckPermissions)))
 	s.mux.HandleFunc("GET /api/accounts/{id}/regions", s.requireAuth(s.handleAccountRegions))
+	s.mux.HandleFunc("GET /api/accounts/{id}/compartments", s.requireAuth(s.handleAccountCompartments))
+	s.mux.HandleFunc("GET /api/accounts/{id}/cloud-audit", s.requireAuth(s.handleAccountCloudAudit))
 	// 资源页：按账号汇总卷、公网 IP、控制台连接、VCN 与免费额度用量。只读。
 	s.mux.HandleFunc("GET /api/accounts/{id}/resources", s.requireAuth(s.handleAccountResources))
 	// 资源页的清理操作。删卷、释放保留 IP 不可恢复，走 danger 并要求回传名称；

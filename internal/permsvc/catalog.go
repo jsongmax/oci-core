@@ -107,6 +107,7 @@ var (
 	pAvailRead       = Need{Perm: "read resource-availability", Type: "resource-availability", Verb: VerbRead}
 	pMetricRead      = perm("METRIC_READ", "metrics", VerbRead)
 	pUsageReportRead = Need{Perm: "read usage-report", Type: "usage-report", Verb: VerbRead, TenancyOnly: true}
+	pAuditEventsRead = perm("AUDIT_EVENT_READ", "audit-events", VerbRead)
 )
 
 // families 是聚合资源类型包含的单项资源类型（官方文档"Resource-Types"一节）。
@@ -220,4 +221,6 @@ var capabilities = []Capability{
 	{Key: "account.metrics", Category: "account", Needs: []Need{pMetricRead}},
 	// Usage API：read usage-report in tenancy
 	{Key: "account.billing", Category: "account", Probe: probeUsage, Needs: []Need{pUsageReportRead}},
+	// Audit ListEvents：read audit-events（AUDIT_EVENT_READ）
+	{Key: "account.audit", Category: "account", Probe: probeAudit, Needs: []Need{pAuditEventsRead}},
 }

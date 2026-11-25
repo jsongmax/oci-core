@@ -22,6 +22,7 @@ func init() {
 		"perm.cap.account.quota":      {"查看配额与用量", "View service limits and usage"},
 		"perm.cap.account.metrics":    {"查看监控指标", "View monitoring metrics"},
 		"perm.cap.account.billing":    {"查看账单与出站流量", "View billing and outbound traffic"},
+		"perm.cap.account.audit":      {"查看 OCI 云端审计日志", "View OCI cloud audit logs"},
 
 		"perm.why.probe_denied":  {"只读探测 %s 返回 NotAuthorizedOrNotFound。", "The read-only probe %s returned NotAuthorizedOrNotFound."},
 		"perm.why.not_granted":   {"没有任何适用于该用户的策略语句授予此权限。", "No policy statement that applies to this user grants this permission."},

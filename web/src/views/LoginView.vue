@@ -23,11 +23,15 @@ const mode = ref<Mode>('login')
 const username = ref('admin')
 const password = ref('')
 const passwordConfirm = ref('')
-const digits = ref<string[]>(['', '', '', '', '', ''])
-const boxes = ref<HTMLInputElement[]>([])
+const totpCode = ref('')
+const totpInput = ref<HTMLInputElement | null>(null)
+const totpFocused = ref(false)
 const error = ref('')
 const busy = ref(false)
 const shakeKey = ref(0)
+
+/** 当前输入焦点所在的视觉格下标（0..5） */
+const activeSlot = computed(() => Math.min(totpCode.value.length, 5))
 
 /** 绑定验证器时后端下发的密钥与 otpauth URI */
 const totpSecret = ref('')
@@ -42,7 +46,7 @@ onMounted(async () => {
   if (state.authed === null) await useStore().loadStatus()
   mode.value = state.setupRequired ? 'setup' : state.totpRequired ? 'totp' : 'login'
   await nextTick()
-  if (mode.value === 'totp') boxes.value[0]?.focus()
+  if (mode.value === 'totp') totpInput.value?.focus()
 })
 
 function fail(message: string) {
@@ -50,9 +54,10 @@ function fail(message: string) {
   shakeKey.value++
 }
 
-function resetDigits() {
-  digits.value = ['', '', '', '', '', '']
-  nextTick(() => boxes.value[0]?.focus())
+function resetCode() {
+  totpCode.value = ''
+  if (totpInput.value) totpInput.value.value = ''
+  nextTick(() => totpInput.value?.focus())
 }
 
 /* ---------- 首次设置 ---------- */
@@ -72,10 +77,11 @@ async function doSetup() {
     const setup = await auth.totpSetup()
     totpSecret.value = setup.secret
     totpUri.value = setup.uri
+    totpCode.value = ''
     mode.value = 'enroll'
     passwordConfirm.value = ''
     await nextTick()
-    boxes.value[0]?.focus()
+    totpInput.value?.focus()
   } catch (err) {
     fail(errorText(err))
   } finally {
@@ -94,9 +100,10 @@ async function doLogin() {
     const result = await auth.login(username.value.trim(), password.value)
     password.value = ''
     if (result.totpRequired) {
+      totpCode.value = ''
       mode.value = 'totp'
       await nextTick()
-      boxes.value[0]?.focus()
+      totpInput.value?.focus()
       return
     }
     await enter()
@@ -112,7 +119,7 @@ async function doLogin() {
 /* ---------- 两步验证 ---------- */
 
 async function submitCode() {
-  const code = digits.value.join('')
+  const code = totpCode.value.replace(/\D/g, '').slice(0, 6)
   if (code.length !== 6 || busy.value) return
 
   busy.value = true
@@ -130,7 +137,7 @@ async function submitCode() {
       ? t.loginPage.codeReused
       : errorText(err)
     fail(hint)
-    resetDigits()
+    resetCode()
   } finally {
     busy.value = false
   }
@@ -151,28 +158,25 @@ async function skipEnroll() {
   await enter()
 }
 
-/* ---------- 六格验证码输入 ---------- */
+/* ---------- 六格验证码输入（单真实 input 覆盖六格视觉，兼容 1Password 等自动填充） ---------- */
 
-function onDigit(i: number, e: Event) {
-  const el = e.target as HTMLInputElement
-  const v = el.value.replace(/\D/g, '')
-  if (v.length > 1) { onPaste(v, i); return }
-  digits.value[i] = v
+function setTotpCode(raw: string) {
+  const cleaned = raw.replace(/\D/g, '').slice(0, 6)
+  totpCode.value = cleaned
+  if (totpInput.value && totpInput.value.value !== cleaned) {
+    totpInput.value.value = cleaned
+  }
   error.value = ''
-  if (v && i < 5) boxes.value[i + 1]?.focus()
-  if (digits.value.every(d => d)) submitCode()
+  if (cleaned.length === 6) void submitCode()
 }
 
-function onPaste(text: string, from = 0) {
-  const chars = text.replace(/\D/g, '').slice(0, 6 - from).split('')
-  chars.forEach((c, n) => { digits.value[from + n] = c })
-  const next = Math.min(5, from + chars.length)
-  boxes.value[next]?.focus()
-  if (digits.value.every(d => d)) submitCode()
+function onTotpInput(e: Event) {
+  const el = e.target as HTMLInputElement
+  setTotpCode(el.value)
 }
 
-function onBackspace(i: number) {
-  if (!digits.value[i] && i > 0) boxes.value[i - 1]?.focus()
+function onTotpPaste(e: ClipboardEvent) {
+  setTotpCode(e.clipboardData?.getData('text') ?? '')
 }
 </script>
 
@@ -224,7 +228,7 @@ function onBackspace(i: number) {
       </form>
 
       <!-- 绑定验证器 -->
-      <div v-else-if="mode === 'enroll'" class="login__form">
+      <form v-else-if="mode === 'enroll'" class="login__form" @submit.prevent="submitCode">
         <p class="login__step-title">{{ t.loginPage.enrollTitle }}</p>
         <p class="login__step-sub">
           {{ t.loginPage.enrollSub }}
@@ -238,28 +242,44 @@ function onBackspace(i: number) {
         </div>
         <a class="login__uri mono" :href="totpUri">{{ t.loginPage.openInApp }}</a>
 
-        <div class="login__totp" @paste.prevent="onPaste(($event.clipboardData?.getData('text') ?? ''))">
-          <input v-for="(d, i) in digits" :key="i" ref="boxes" :value="d" class="login__box mono"
-                 inputmode="numeric" maxlength="1" :aria-label="t.loginPage.digit(i + 1)"
-                 :class="{ 'is-error': error }"
-                 @input="onDigit(i, $event)" @keydown.backspace="onBackspace(i)" />
+        <label class="sr-only" for="totp-code">{{ t.loginPage.totpTitle }}</label>
+        <div class="login__totp">
+          <div class="login__boxes" aria-hidden="true">
+            <span v-for="i in 6" :key="i" class="login__box mono"
+                  :class="{ 'is-active': totpFocused && activeSlot === i - 1, 'is-error': error }">
+              {{ totpCode[i - 1] ?? '' }}
+            </span>
+          </div>
+          <input id="totp-code" ref="totpInput" :value="totpCode" class="login__totp-input mono"
+                 name="totp" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                 autocomplete="one-time-code" spellcheck="false" autocapitalize="off"
+                 @focus="totpFocused = true" @blur="totpFocused = false"
+                 @input="onTotpInput" @paste.prevent="onTotpPaste" />
         </div>
         <p v-if="error" class="login__error" role="alert">{{ error }}</p>
         <button class="btn login__skip" type="button" @click="skipEnroll">{{ t.loginPage.enrollLater }}</button>
-      </div>
+      </form>
 
       <!-- 两步验证 -->
-      <div v-else class="login__form">
+      <form v-else class="login__form" @submit.prevent="submitCode">
         <p class="login__step-title">{{ t.loginPage.totpTitle }}</p>
         <p class="login__step-sub">{{ t.loginPage.totpSub }}</p>
-        <div class="login__totp" @paste.prevent="onPaste(($event.clipboardData?.getData('text') ?? ''))">
-          <input v-for="(d, i) in digits" :key="i" ref="boxes" :value="d" class="login__box mono"
-                 inputmode="numeric" maxlength="1" :aria-label="t.loginPage.digit(i + 1)"
-                 :class="{ 'is-error': error }"
-                 @input="onDigit(i, $event)" @keydown.backspace="onBackspace(i)" />
+        <label class="sr-only" for="totp-code">{{ t.loginPage.totpTitle }}</label>
+        <div class="login__totp">
+          <div class="login__boxes" aria-hidden="true">
+            <span v-for="i in 6" :key="i" class="login__box mono"
+                  :class="{ 'is-active': totpFocused && activeSlot === i - 1, 'is-error': error }">
+              {{ totpCode[i - 1] ?? '' }}
+            </span>
+          </div>
+          <input id="totp-code" ref="totpInput" :value="totpCode" class="login__totp-input mono"
+                 name="totp" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                 autocomplete="one-time-code" spellcheck="false" autocapitalize="off"
+                 @focus="totpFocused = true" @blur="totpFocused = false"
+                 @input="onTotpInput" @paste.prevent="onTotpPaste" />
         </div>
         <p v-if="error" class="login__error" role="alert">{{ error }}</p>
-      </div>
+      </form>
 
       <footer class="login__foot">
         <!-- 这里原来写着"本面板持有你的 OCI 密钥"。登录页对未认证的访客
@@ -317,14 +337,27 @@ function onBackspace(i: number) {
 .login__copy { flex: none; height: 28px; font-size: 11px; }
 .login__qr { align-self: center; }
 .login__uri { margin-top: -6px; font-size: 11px; color: var(--accent); }
-.login__totp { display: flex; gap: 8px; }
-.login__box {
-  flex: 1 1 auto; width: 100%; height: 52px; text-align: center;
-  border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--bg-inset);
-  color: var(--text-primary); font-size: 22px; font-weight: 600; outline: none;
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-.login__box:focus { border-color: var(--accent); box-shadow: var(--glow-accent); }
+.login__totp { position: relative; }
+.login__boxes { display: flex; gap: 8px; }
+.login__box {
+  flex: 1 1 0; height: 52px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--bg-inset);
+  color: var(--text-primary); font-size: 22px; font-weight: 600;
+  transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+}
+.login__box.is-active { border-color: var(--accent); box-shadow: var(--glow-accent); }
 .login__box.is-error { border-color: var(--danger); }
+/* 保持 opacity: 1 与完整宽高覆盖六格，避免 1Password 等密码管理器跳过隐藏输入框 */
+.login__totp-input {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: 1;
+  color: transparent; background: transparent; border: 0; outline: none; caret-color: transparent;
+  font-size: 22px; letter-spacing: 0.5em;
+}
+.login__totp-input::selection { background: transparent; color: transparent; }
 .login__error {
   margin: 0; padding: 9px 12px; border-radius: var(--radius-md);
   border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger);

@@ -23,6 +23,9 @@ watch(req, async (r) => {
 })
 
 function cancel() { req.value?.resolve(null) }
+function onPaste(e: ClipboardEvent) {
+  code.value = (e.clipboardData?.getData('text') ?? '').replace(/\D/g, '').slice(0, 6)
+}
 function submit() {
   if (!req.value || !valid.value) return
   req.value.resolve(code.value)
@@ -37,8 +40,10 @@ function submit() {
         <h2 id="danger-totp-title" class="dlg__title">{{ t.ui.totpTitle }}</h2>
         <p class="dlg__body">{{ t.ui.totpBody(req.message) }}</p>
         <label class="dlg__label" for="danger-totp-code">{{ t.ui.totpCode }}</label>
-        <input id="danger-totp-code" ref="input" v-model="code" class="input mono dlg__input"
-               maxlength="6" inputmode="numeric" autocomplete="one-time-code" :placeholder="t.ui.totpPlaceholder" />
+        <input id="danger-totp-code" ref="input" v-model="code" name="totp" type="text" class="input mono dlg__input"
+               maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+               spellcheck="false" autocapitalize="off" :placeholder="t.ui.totpPlaceholder"
+               @paste.prevent="onPaste" />
         <footer class="dlg__foot">
           <button type="button" class="btn" @click="cancel">{{ t.common.cancel }}</button>
           <button type="submit" class="btn btn--primary" :disabled="!valid">{{ t.ui.confirm }}</button>

@@ -27,6 +27,7 @@ import createInst from './createInst'
 import settingsPage from './settingsPage'
 import instDrawer from './instDrawer'
 import perm from './perm'
+import cloudAudit from './cloudAudit'
 
 const zh = {
   common: common.zh,
@@ -54,7 +55,8 @@ const zh = {
   createInst: createInst.zh,
   settingsPage: settingsPage.zh,
   instDrawer: instDrawer.zh,
-  perm: perm.zh
+  perm: perm.zh,
+  cloudAudit: cloudAudit.zh
 }
 
 export type Messages = typeof zh
@@ -85,7 +87,8 @@ const en: Messages = {
   createInst: createInst.en,
   settingsPage: settingsPage.en,
   instDrawer: instDrawer.en,
-  perm: perm.en
+  perm: perm.en,
+  cloudAudit: cloudAudit.en
 }
 
 export const messages = { 'zh-CN': zh, en } as const

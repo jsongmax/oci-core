@@ -40,7 +40,9 @@ const CAPS: { key: string; category: D.PermItemDTO['category']; zh: string; en: 
     needs: [['inspect limits', 'limits', 'inspect'], ['read resource-availability', 'resource-availability', 'read']] },
   { key: 'account.metrics', category: 'account', zh: '查看监控指标', en: 'View monitoring metrics', needs: [['METRIC_READ', 'metrics', 'read']] },
   { key: 'account.billing', category: 'account', zh: '查看账单与出站流量', en: 'View billing and outbound traffic', probe: 'RequestSummarizedUsages',
-    needs: [['read usage-report', 'usage-report', 'read']] }
+    needs: [['read usage-report', 'usage-report', 'read']] },
+  { key: 'account.audit', category: 'account', zh: '查看 OCI 云端审计日志', en: 'View OCI cloud audit logs', probe: 'ListEvents',
+    needs: [['AUDIT_EVENT_READ', 'audit-events', 'read']] }
 ]
 
 const NET_TYPES = new Set(['vcns', 'subnets', 'security-lists', 'internet-gateways', 'route-tables', 'private-ips', 'ipv6s', 'vnics', 'vnic-attachments'])
